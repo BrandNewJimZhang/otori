@@ -35,6 +35,8 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori curate <file>` / `otori curate --all` | Mark existing values as protected | the onboarding oath |
 | `otori undo <txid>` | Roll back an applied transaction | fails if already undone |
 | `otori journal [--json]` | List applied transactions | newest first |
+| `otori status [--json]` | Vital signs: counts, completeness, curation coverage, journal | start here to orient |
+| `otori schema-version` | CLI JSON schema version | breaking JSON changes bump it; additive fields do not — tolerate unknown fields |
 | `--db <path>` (global) | Use a specific library db | default: `~/Library/Application Support/otori/library.db` |
 
 ## Exit codes
@@ -73,3 +75,17 @@ otori journal --json                                     # what happened before 
 
 The index SQLite schema is readable directly (read-only!) at the
 `--db` path; writes go through the CLI only.
+
+## This file cannot rot
+
+Every workflow above is exercised by `scripts/acceptance.sh` (run it
+with `cargo build -p otori-cli && scripts/acceptance.sh`). If this doc
+and the binary disagree, the script fails — trust the script, then fix
+whichever side is wrong.
+
+## Coexistence with the GUI
+
+The desktop app watches the library via SQLite `data_version` polling
+and emits a `library-changed` Tauri event (no payload) whenever another
+connection — you, through the CLI — commits. You don't need to notify
+anyone after `--apply`: a running GUI refreshes itself within ~1s.

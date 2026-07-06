@@ -60,6 +60,7 @@ pub fn run() {
             let path = db::default_path()?;
             let conn = db::open(&path)?;
             app.manage(Library(Mutex::new(conn)));
+            spawn_library_watcher(app.handle().clone(), path);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -70,4 +71,39 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// L5 coexistence, shell side: when an agent edits the library from the
+/// CLI, the GUI must reflect it live. SQLite's `PRAGMA data_version`
+/// increments (per connection) whenever *another* connection commits,
+/// which is exactly the external-writer signal — so this watcher uses
+/// its own read-only connection and polls cheaply (~1s, one PRAGMA).
+/// Contract for the frontend: listen for the `library-changed` Tauri
+/// event (no payload) and re-fetch whatever it displays.
+fn spawn_library_watcher(app: tauri::AppHandle, db_path: std::path::PathBuf) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        let Ok(conn) = db::open(&db_path) else {
+            // Watcher is an enhancement; its absence must not kill the app.
+            eprintln!("library watcher: cannot open {}", db_path.display());
+            return;
+        };
+        let read_version =
+            |c: &otori_core::Connection| c.query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0));
+        let Ok(mut last) = read_version(&conn) else { return };
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            match read_version(&conn) {
+                Ok(v) if v != last => {
+                    last = v;
+                    let _ = app.emit("library-changed", ());
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("library watcher stopped: {e}");
+                    return;
+                }
+            }
+        }
+    });
 }

@@ -91,14 +91,14 @@ pub fn scan(conn: &mut Connection, root: &Path) -> rusqlite::Result<ScanReport> 
         };
 
         match read_file(path) {
-            Ok((duration_secs, fields)) => {
+            Ok(scanned) => {
                 // Duration is a file property, not a tag: no provenance,
                 // refreshed on every scan.
                 tx.execute(
                     "UPDATE tracks SET duration_secs = ?1 WHERE id = ?2",
-                    rusqlite::params![duration_secs, track_id],
+                    rusqlite::params![scanned.duration_secs, track_id],
                 )?;
-                for (field, value) in fields {
+                for (field, value) in scanned.fields {
                     // Scan never overwrites: only fills fields the index
                     // doesn't know yet. Conflict reporting is a later cut.
                     tx.execute(
@@ -122,9 +122,13 @@ fn has_audio_extension(name: &str) -> bool {
         .is_some_and(|(_, ext)| AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
 }
 
-fn read_file(
-    path: &Path,
-) -> Result<(f64, Vec<(&'static str, String)>), lofty::error::LoftyError> {
+/// What one file yields at scan time: duration plus readable tag fields.
+struct ScannedFile {
+    duration_secs: f64,
+    fields: Vec<(&'static str, String)>,
+}
+
+fn read_file(path: &Path) -> Result<ScannedFile, lofty::error::LoftyError> {
     let tagged = lofty::read_from_path(path)?;
     let duration_secs = tagged.properties().duration().as_secs_f64();
     let mut fields = Vec::new();
@@ -139,5 +143,5 @@ fn read_file(
             fields.push(("album", v.into_owned()));
         }
     }
-    Ok((duration_secs, fields))
+    Ok(ScannedFile { duration_secs, fields })
 }
