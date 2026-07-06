@@ -1,6 +1,21 @@
+<div align="center">
+
+<img src="docs/assets/logo.png" alt="Ōtori logo" width="128" height="128">
+
 # Ōtori
 
 **The final stop for your local music files.**
+
+Organize · Enjoy · Delegate — one library, with stage presence.
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
+![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+
+</div>
 
 Everything you collect — doujin albums, BMS contest tracks, Vocaloid
 releases, rips — gets organized into one clean, trustworthy library,
@@ -10,19 +25,20 @@ can be delegated to an AI agent, *safely*.
 Named after 鳳 (ōtori, the phoenix). Also reads as 音鳥 — the bird of
 sound.
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
-![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
-
 > Pre-alpha. macOS-first. APIs, schemas, and UI are all still moving.
 
 ## Why another music player?
 
 Every existing tool makes you choose: organize *or* enjoy *or*
-automate. Swinsian manages but doesn't perform; Music.app is hostile to
-file collectors; Mp3tag edits but doesn't play; Plexamp plays
-beautifully but treats your tags as read-only. None of them gives an AI
-agent a real seat at the table.
+automate.
+
+|  | Manages tags | Performs | Agent-operable |
+|---|:---:|:---:|:---:|
+| Swinsian | ✅ | ❌ | ❌ |
+| Music.app | ⚠️ hostile to files | ✅ | ❌ |
+| Mp3tag | ✅ | ❌ doesn't play | ❌ |
+| Plexamp | ❌ read-only tags | ✅ | ❌ |
+| **Ōtori** | **✅** | **✅** | **✅ with a trust stack** |
 
 Ōtori's three promises:
 
@@ -55,6 +71,14 @@ agent a real seat at the table.
   provenance rules.
 - **A real CLI** — everything above is scriptable through the `otori`
   binary.
+
+<div align="center">
+<img src="docs/assets/screenshot-stage.png" alt="Stage mode — cover art under gel lighting, live spectrum, synced lyrics" width="800">
+<br><em>Stage — pressing play starts a show.</em>
+<br><br>
+<img src="docs/assets/screenshot-backstage.png" alt="Backstage — dense sortable library table with BPM column" width="800">
+<br><em>Backstage — information density wins.</em>
+</div>
 
 ## The two structural bets
 
@@ -114,6 +138,17 @@ speak shell already speak Ōtori.
   library); structured errors on stderr
 - the SQLite index schema is documented and open for reads; writes go
   through the CLI only
+
+What delegation looks like in practice:
+
+```console
+$ otori set track.mp3 --artist "サカナクション" --agent tagger --apply
+skipped: field 'artist' is human-curated (--override-curated to force)
+
+$ otori fetch-lyrics track.mp3            # dry-run: shows the LRCLIB match
+$ otori fetch-lyrics track.mp3 --apply    # journaled write, undoable
+$ otori undo <tx-id>                      # ...and back
+```
 
 Pointing an agent at Ōtori? [AGENTS.md](AGENTS.md) is the operating
 contract.
