@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -24,6 +24,7 @@ CREATE TABLE tracks (
     path         TEXT NOT NULL UNIQUE,
     file_hash    TEXT,             -- move/exact-dup detection, NOT format linking
     format       TEXT NOT NULL,
+    duration_secs REAL,            -- file property, no provenance; refreshed each scan
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
     first_seen   TEXT NOT NULL,
@@ -130,6 +131,11 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
             "ALTER TABLE tx_changes ADD COLUMN old_curated INTEGER NOT NULL DEFAULT 0;",
         )?;
         conn.pragma_update(None, "user_version", 2)?;
+    }
+    if (1..=2).contains(&version) {
+        // v3: duration for the player seek bar; backfilled by the next scan.
+        conn.execute_batch("ALTER TABLE tracks ADD COLUMN duration_secs REAL;")?;
+        conn.pragma_update(None, "user_version", 3)?;
     }
     Ok(conn)
 }

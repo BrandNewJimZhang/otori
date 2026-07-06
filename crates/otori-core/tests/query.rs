@@ -28,6 +28,20 @@ fn lists_tracks_with_their_tags() {
 }
 
 #[test]
+fn lists_track_duration() {
+    let conn = db::open_in_memory().unwrap();
+    conn.execute(
+        "INSERT INTO tracks (path, format, duration_secs, first_seen, last_scanned)
+         VALUES ('/lib/a.mp3', 'mp3', 245.5, datetime('now'), datetime('now'))",
+        [],
+    )
+    .unwrap();
+
+    let tracks = query::list_tracks(&conn).unwrap();
+    assert_eq!(tracks[0].duration_secs, Some(245.5));
+}
+
+#[test]
 fn missing_tags_are_none_not_errors() {
     let conn = db::open_in_memory().unwrap();
     conn.execute(

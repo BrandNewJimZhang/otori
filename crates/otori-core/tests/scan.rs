@@ -54,6 +54,26 @@ fn indexes_audio_files_with_import_provenance() {
 }
 
 #[test]
+fn scan_records_duration_from_file_properties() {
+    let lib = tempfile::tempdir().unwrap();
+    write_tagged_mp3(&lib.path().join("song.mp3"), "Iris", "Camellia");
+
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+
+    // Duration is a file property, not a tag: no provenance, always
+    // refreshed on scan (player seek bar now, multi-format linking later).
+    let duration: f64 = conn
+        .query_row(
+            "SELECT duration_secs FROM tracks WHERE path LIKE '%song.mp3'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(duration > 0.0, "duration must be read from the audio file");
+}
+
+#[test]
 fn skips_and_reports_icloud_placeholders() {
     let lib = tempfile::tempdir().unwrap();
     write_tagged_mp3(&lib.path().join("real.mp3"), "A", "B");

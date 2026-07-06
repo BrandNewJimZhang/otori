@@ -90,8 +90,14 @@ pub fn scan(conn: &mut Connection, root: &Path) -> rusqlite::Result<ScanReport> 
             }
         };
 
-        match read_tags(path) {
-            Ok(fields) => {
+        match read_file(path) {
+            Ok((duration_secs, fields)) => {
+                // Duration is a file property, not a tag: no provenance,
+                // refreshed on every scan.
+                tx.execute(
+                    "UPDATE tracks SET duration_secs = ?1 WHERE id = ?2",
+                    rusqlite::params![duration_secs, track_id],
+                )?;
                 for (field, value) in fields {
                     // Scan never overwrites: only fills fields the index
                     // doesn't know yet. Conflict reporting is a later cut.
@@ -116,8 +122,11 @@ fn has_audio_extension(name: &str) -> bool {
         .is_some_and(|(_, ext)| AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
 }
 
-fn read_tags(path: &Path) -> Result<Vec<(&'static str, String)>, lofty::error::LoftyError> {
+fn read_file(
+    path: &Path,
+) -> Result<(f64, Vec<(&'static str, String)>), lofty::error::LoftyError> {
     let tagged = lofty::read_from_path(path)?;
+    let duration_secs = tagged.properties().duration().as_secs_f64();
     let mut fields = Vec::new();
     if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
         if let Some(v) = tag.title() {
@@ -130,5 +139,5 @@ fn read_tags(path: &Path) -> Result<Vec<(&'static str, String)>, lofty::error::L
             fields.push(("album", v.into_owned()));
         }
     }
-    Ok(fields)
+    Ok((duration_secs, fields))
 }
