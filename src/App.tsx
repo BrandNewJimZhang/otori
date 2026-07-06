@@ -471,6 +471,34 @@ function App() {
     };
   }, [togglePause, step]);
 
+  // Native menu-bar items (src-tauri setup_app_menu) arrive as
+  // `menu-command` events — the third front-end for the same handlers.
+  useEffect(() => {
+    const unlisten = listen<string>("menu-command", (e) => {
+      switch (e.payload) {
+        case "playpause":
+          if (currentRef.current) togglePause();
+          break;
+        case "next":
+          step(1);
+          break;
+        case "prev":
+          step(-1);
+          break;
+        case "stage":
+          setMode((m) => (m === "backstage" ? "stage" : "backstage"));
+          break;
+        case "scan":
+          void pickAndScan();
+          break;
+      }
+    });
+    return () => {
+      unlisten.then((off) => off());
+    };
+    // pickAndScan is stable in practice (closes over setters only).
+  }, [togglePause, step]);
+
   // Keyboard, routed through the uikeys decision table (audit P0): a
   // focused button keeps native Enter/Space activation, sliders keep
   // their arrows, inputs own everything but Escape; ⌘←/→ steps tracks,
@@ -929,14 +957,20 @@ function App() {
         <button
           className={`crossfade-toggle ${crossfadeSec ? "on" : ""}`}
           onClick={() => setCrossfadeSec((s) => (s ? 0 : 8))}
+          onWheel={(e) => {
+            // Wheel adjusts the fade length 2–16s while enabled.
+            setCrossfadeSec((s) =>
+              s ? Math.max(2, Math.min(16, s + (e.deltaY < 0 ? 1 : -1))) : s,
+            );
+          }}
           title={
             crossfadeSec
-              ? `DJ crossfade: ${crossfadeSec}s (beat-matched when tempos allow)`
+              ? `DJ crossfade: ${crossfadeSec}s (scroll to adjust; beat-matched when tempos allow)`
               : "DJ crossfade: off (gapless)"
           }
           aria-pressed={crossfadeSec > 0}
         >
-          MIX
+          MIX{crossfadeSec ? ` ${crossfadeSec}s` : ""}
         </button>
 
         <Spectrum analyser={engine.analyser} />
