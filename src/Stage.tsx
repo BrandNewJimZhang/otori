@@ -14,12 +14,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LyricsDoc, TrackRow } from "./types";
+import type { RepeatMode } from "./playorder";
 import { bandEnergy, Smoother } from "./energy";
 import { extractGels } from "./gel";
 import { displayTitle } from "./library";
 import { formatTime } from "./format";
 import { seekMax, seekShown } from "./seekbar";
-import { NextIcon, PauseIcon, PlayIcon, PrevIcon } from "./icons";
+import { NextIcon, PauseIcon, PlayIcon, PrevIcon, RepeatIcon, ShuffleIcon } from "./icons";
 import { Spectrum } from "./Spectrum";
 
 interface StageProps {
@@ -32,9 +33,13 @@ interface StageProps {
   /** Track length in seconds; NaN until engine metadata loads. */
   duration: number;
   paused: boolean;
+  shuffle: boolean;
+  repeat: RepeatMode;
   onSeek: (secs: number) => void;
   onTogglePause: () => void;
   onStep: (offset: 1 | -1) => void;
+  onToggleShuffle: () => void;
+  onCycleRepeat: () => void;
 }
 
 /** Index of the last line at or before `positionMs`; -1 before the first. */
@@ -55,9 +60,13 @@ export function Stage({
   positionMs,
   duration,
   paused,
+  shuffle,
+  repeat,
   onSeek,
   onTogglePause,
   onStep,
+  onToggleShuffle,
+  onCycleRepeat,
 }: StageProps) {
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -182,6 +191,74 @@ export function Stage({
             <div className="stage-artist">{track.artist ?? "—"}</div>
             {track.album && <div className="stage-album">{track.album}</div>}
           </div>
+
+          {/* Apple Music-style: transport + seek live under the track
+              meta in the left column, not on a bottom bar. They still
+              retreat with the chrome. stopPropagation: rapid control
+              clicks must not hit the app-level double-click that exits
+              Stage. */}
+          <div className={`stage-controls ${chromeVisible ? "" : "chrome-hidden"}`}>
+            <div className="stage-seek" onDoubleClick={(e) => e.stopPropagation()}>
+              <span className="time">{formatTime(scrub ?? positionMs / 1000)}</span>
+              <input
+                type="range"
+                min={0}
+                max={seekMax(duration)}
+                step={0.1}
+                value={seekShown(scrub, positionMs / 1000, seekMax(duration))}
+                disabled={!Number.isFinite(duration)}
+                onChange={(e) => setScrub(Number(e.target.value))}
+                onPointerUp={() => {
+                  if (scrub != null) {
+                    onSeek(scrub);
+                    setScrub(null);
+                  }
+                }}
+                onBlur={() => {
+                  if (scrub != null) {
+                    onSeek(scrub);
+                    setScrub(null);
+                  }
+                }}
+                aria-label="Seek"
+              />
+              <span className="time">
+                {formatTime(Number.isFinite(duration) ? duration : null)}
+              </span>
+            </div>
+            <div className="stage-transport" onDoubleClick={(e) => e.stopPropagation()}>
+              <button
+                className={`mode-btn ${shuffle ? "on" : ""}`}
+                onClick={onToggleShuffle}
+                aria-label="Shuffle"
+                aria-pressed={shuffle}
+                title={shuffle ? "Shuffle on" : "Shuffle off"}
+              >
+                <ShuffleIcon />
+              </button>
+              <button className="step-btn" onClick={() => onStep(-1)} aria-label="Previous track">
+                <PrevIcon />
+              </button>
+              <button
+                className="play-btn"
+                onClick={onTogglePause}
+                aria-label={paused ? "Play" : "Pause"}
+              >
+                {paused ? <PlayIcon /> : <PauseIcon />}
+              </button>
+              <button className="step-btn" onClick={() => onStep(1)} aria-label="Next track">
+                <NextIcon />
+              </button>
+              <button
+                className={`mode-btn ${repeat !== "off" ? "on" : ""}`}
+                onClick={onCycleRepeat}
+                aria-label={`Repeat: ${repeat}`}
+                title={`Repeat: ${repeat}`}
+              >
+                <RepeatIcon one={repeat === "one"} />
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Synced lyric lines are seek targets (audit P1), Apple Music-style. */}
@@ -222,50 +299,7 @@ export function Stage({
         )}
       </div>
 
-      <div className={`stage-lighting ${chromeVisible ? "" : "chrome-hidden"}`}>
-        {/* stopPropagation: rapid control clicks must not hit the
-            app-level double-click that exits Stage. */}
-        <div className="stage-transport" onDoubleClick={(e) => e.stopPropagation()}>
-          <button className="step-btn" onClick={() => onStep(-1)} aria-label="Previous track">
-            <PrevIcon />
-          </button>
-          <button
-            className="play-btn"
-            onClick={onTogglePause}
-            aria-label={paused ? "Play" : "Pause"}
-          >
-            {paused ? <PlayIcon /> : <PauseIcon />}
-          </button>
-          <button className="step-btn" onClick={() => onStep(1)} aria-label="Next track">
-            <NextIcon />
-          </button>
-        </div>
-        <div className="stage-seek" onDoubleClick={(e) => e.stopPropagation()}>
-          <span className="time">{formatTime(scrub ?? positionMs / 1000)}</span>
-          <input
-            type="range"
-            min={0}
-            max={seekMax(duration)}
-            step={0.1}
-            value={seekShown(scrub, positionMs / 1000, seekMax(duration))}
-            disabled={!Number.isFinite(duration)}
-            onChange={(e) => setScrub(Number(e.target.value))}
-            onPointerUp={() => {
-              if (scrub != null) {
-                onSeek(scrub);
-                setScrub(null);
-              }
-            }}
-            onBlur={() => {
-              if (scrub != null) {
-                onSeek(scrub);
-                setScrub(null);
-              }
-            }}
-            aria-label="Seek"
-          />
-          <span className="time">{formatTime(Number.isFinite(duration) ? duration : null)}</span>
-        </div>
+      <div className="stage-lighting">
         <Spectrum analyser={analyser} mirror />
       </div>
 

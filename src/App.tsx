@@ -723,9 +723,13 @@ function App() {
           positionMs={positionMs}
           duration={duration}
           paused={paused}
+          shuffle={shuffle}
+          repeat={repeat}
           onSeek={seekTo}
           onTogglePause={togglePause}
           onStep={step}
+          onToggleShuffle={toggleShuffle}
+          onCycleRepeat={() => setRepeat(cycleRepeat)}
         />
       </div>
     );
