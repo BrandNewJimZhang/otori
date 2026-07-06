@@ -63,15 +63,36 @@ fn list_tracks(state: tauri::State<'_, Library>) -> Result<Vec<query::TrackRow>,
     query::list_tracks(&conn).map_err(|e| e.to_string())
 }
 
-/// BPM sweep, shell half: the GUI decodes and detects (Web Audio is
-/// the only decoder in the stack); these two commands let it pull the
-/// worklist and persist outcomes into the index.
+/// Analysis sweep, shell half: the GUI decodes and detects (Web Audio
+/// is the only decoder in the stack); these commands let it pull the
+/// worklist and persist outcomes (BPM verdict + mix anchors) into the
+/// index.
 #[tauri::command]
-fn list_bpm_pending(
+fn list_analysis_pending(
     state: tauri::State<'_, Library>,
 ) -> Result<Vec<analysis::PendingTrack>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    analysis::list_bpm_pending(&conn).map_err(|e| e.to_string())
+    analysis::list_analysis_pending(&conn).map_err(|e| e.to_string())
+}
+
+/// Mirror of analysis::MixAnchor for IPC deserialization.
+#[derive(serde::Deserialize)]
+struct MixAnchorArg {
+    bpm: f64,
+    beat_sec: f64,
+}
+
+#[tauri::command]
+fn set_mix_anchors(
+    state: tauri::State<'_, Library>,
+    track_id: i64,
+    head: Option<MixAnchorArg>,
+    tail: Option<MixAnchorArg>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let anchor = |a: MixAnchorArg| analysis::MixAnchor { bpm: a.bpm, beat_sec: a.beat_sec };
+    analysis::set_mix_anchors(&conn, track_id, head.map(anchor), tail.map(anchor))
+        .map_err(|e| e.to_string())
 }
 
 /// Mirror of analysis::DetectedBpm for IPC deserialization.
@@ -280,8 +301,9 @@ pub fn run() {
             get_artwork,
             update_tray,
             set_display_awake,
-            list_bpm_pending,
-            set_bpm
+            list_analysis_pending,
+            set_bpm,
+            set_mix_anchors
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

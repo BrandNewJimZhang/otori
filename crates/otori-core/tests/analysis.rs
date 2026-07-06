@@ -44,9 +44,10 @@ fn seeded_library() -> (otori_core::Connection, i64) {
 #[test]
 fn fresh_tracks_are_pending_with_no_hint() {
     let (conn, id) = seeded_library();
-    let pending = analysis::list_bpm_pending(&conn).unwrap();
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, id);
+    assert!(pending[0].needs_bpm);
     assert_eq!(pending[0].hint_bpm, None);
 }
 
@@ -70,8 +71,9 @@ fn tbpm_tag_becomes_a_hint_and_stays_pending() {
     assert_eq!(bpm, None);
     assert_eq!(hint, 185.0);
     assert_eq!(source, "tag");
-    let pending = analysis::list_bpm_pending(&conn).unwrap();
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
     assert_eq!(pending.len(), 1);
+    assert!(pending[0].needs_bpm);
     assert_eq!(pending[0].hint_bpm, Some(185.0));
 }
 
@@ -94,13 +96,15 @@ fn provider_hint_reopens_analysis_for_verification() {
     let (conn, id) = seeded_library();
     // Old detection exists…
     analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 87.0, bpm_max: None, confidence: 0.6 })).unwrap();
-    assert!(analysis::list_bpm_pending(&conn).unwrap().is_empty());
+    analysis::set_mix_anchors(&conn, id, None, None).unwrap();
+    assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
 
     // …then a wiki/provider hint arrives: analysis re-opens so the
     // detector can re-fold against the anchor.
     analysis::set_bpm_hint(&conn, id, 174.0, None, "provider:wiki").unwrap();
-    let pending = analysis::list_bpm_pending(&conn).unwrap();
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
     assert_eq!(pending.len(), 1);
+    assert!(pending[0].needs_bpm);
     assert_eq!(pending[0].hint_bpm, Some(174.0));
 }
 
@@ -153,7 +157,11 @@ fn recording_a_steady_detection_stores_confidence() {
     assert_eq!(bpm_max, None);
     assert!((conf - 0.87).abs() < 1e-9);
     assert_eq!(source, "detected");
-    assert!(analysis::list_bpm_pending(&conn).unwrap().is_empty());
+    // BPM recorded, but mix anchors haven't been: still in the
+    // worklist, flagged anchors-only.
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(!pending[0].needs_bpm);
 }
 
 #[test]
@@ -175,7 +183,9 @@ fn beatless_result_is_recorded_as_analyzed_without_a_bpm() {
     let (conn, id) = seeded_library();
     analysis::set_bpm(&conn, id, None).unwrap();
 
-    assert!(analysis::list_bpm_pending(&conn).unwrap().is_empty());
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(!pending[0].needs_bpm);
     let bpm: Option<f64> = conn
         .query_row("SELECT bpm FROM tracks WHERE id = ?1", [id], |r| r.get(0))
         .unwrap();
@@ -183,10 +193,59 @@ fn beatless_result_is_recorded_as_analyzed_without_a_bpm() {
 }
 
 #[test]
+fn mix_anchors_persist_and_clear_the_worklist() {
+    let (conn, id) = seeded_library();
+    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.8 })).unwrap();
+    analysis::set_mix_anchors(
+        &conn,
+        id,
+        Some(analysis::MixAnchor { bpm: 128.2, beat_sec: 0.31 }),
+        Some(analysis::MixAnchor { bpm: 127.9, beat_sec: 231.4 }),
+    )
+    .unwrap();
+
+    assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
+    let (hb, hs, tb, ts): (f64, f64, f64, f64) = conn
+        .query_row(
+            "SELECT mix_head_bpm, mix_head_beat_sec, mix_tail_bpm, mix_tail_beat_sec
+             FROM tracks WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert!((hb - 128.2).abs() < 1e-9 && (hs - 0.31).abs() < 1e-9);
+    assert!((tb - 127.9).abs() < 1e-9 && (ts - 231.4).abs() < 1e-9);
+}
+
+#[test]
+fn unstable_ends_are_recorded_as_anchorless_not_retried() {
+    let (conn, id) = seeded_library();
+    // Both ends unusable (variable tempo / beatless / too long): NULLs,
+    // but analyzed — the sweeper must not revisit every launch.
+    analysis::set_mix_anchors(&conn, id, None, None).unwrap();
+
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1); // still needs the BPM verdict...
+    assert!(pending[0].needs_bpm);
+    analysis::set_bpm(&conn, id, None).unwrap();
+    assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
+
+    let anchors: (Option<f64>, Option<f64>) = conn
+        .query_row(
+            "SELECT mix_head_bpm, mix_tail_bpm FROM tracks WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(anchors, (None, None));
+}
+
+#[test]
 fn unknown_track_fails_fast() {
     let (conn, _) = seeded_library();
     assert!(analysis::set_bpm(&conn, 9999, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.5 })).is_err());
     assert!(analysis::set_bpm_hint(&conn, 9999, 120.0, None, "tag").is_err());
+    assert!(analysis::set_mix_anchors(&conn, 9999, None, None).is_err());
 }
 
 #[test]
