@@ -95,6 +95,34 @@ describe("filterTracks", () => {
   it("blank query returns everything", () => {
     expect(filterTracks(rows, "  ")).toEqual(rows);
   });
+
+  it("multi-word queries AND across fields", () => {
+    // "kurousa vocalo" spans artist + album of the same track.
+    expect(filterTracks(rows, "kurousa vocalo").map((t) => t.id)).toEqual([1]);
+    // Words matching different tracks only → no result.
+    expect(filterTracks(rows, "kurousa ryo")).toEqual([]);
+  });
+
+  it("matches across Unicode width variants (NFKC)", () => {
+    const jp = [
+      track(10, { title: "メルト", artist: "ｒｙｏ" }), // fullwidth latin artist
+      track(11, { title: "Ｓｅｎｂｏｎ", artist: null }), // fullwidth title
+    ];
+    // Halfwidth query finds fullwidth-tagged artist.
+    expect(filterTracks(jp, "ryo").map((t) => t.id)).toEqual([10]);
+    expect(filterTracks(jp, "senbon").map((t) => t.id)).toEqual([11]);
+    // Katakana query still exact-matches katakana.
+    expect(filterTracks(jp, "メルト").map((t) => t.id)).toEqual([10]);
+  });
+
+  it("field-qualified queries restrict to one field", () => {
+    expect(filterTracks(rows, "artist:ryo").map((t) => t.id)).toEqual([2]);
+    // "ryo" appears in no title, so qualifying flips the result off.
+    expect(filterTracks(rows, "title:ryo")).toEqual([]);
+    expect(filterTracks(rows, "album:vocalo").map((t) => t.id)).toEqual([1]);
+    // Qualifier mixes with free words (AND).
+    expect(filterTracks(rows, "artist:kurousa senbon").map((t) => t.id)).toEqual([1]);
+  });
 });
 
 describe("contextTargets", () => {

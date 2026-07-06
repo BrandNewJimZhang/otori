@@ -222,6 +222,7 @@ thead {
 }
 
 th {
+  position: relative;
   text-align: left;
   font-weight: 600;
   color: var(--text-dim);
@@ -230,6 +231,21 @@ th {
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Column resize handle: a grabbable strip on the header's right edge. */
+.col-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.col-resize:hover {
+  background: linear-gradient(to right, transparent 3px, var(--library) 3px 5px, transparent 5px);
 }
 
 th:hover {
@@ -247,6 +263,62 @@ td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Row density: compact tightens vertical rhythm for long-list triage. */
+.density-compact td {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: 12px;
+}
+
+.density-compact th {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+/* Now-playing indicator: three dancing bars, frozen when paused. */
+.np-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 22px;
+  height: 12px;
+  vertical-align: -1px;
+}
+
+.np-bars i {
+  width: 3px;
+  background: var(--playback);
+  animation: np-dance 0.9s ease-in-out infinite;
+}
+
+.np-bars i:nth-child(1) {
+  height: 60%;
+  animation-delay: -0.3s;
+}
+
+.np-bars i:nth-child(2) {
+  height: 100%;
+}
+
+.np-bars i:nth-child(3) {
+  height: 75%;
+  animation-delay: -0.6s;
+}
+
+.np-bars.paused i {
+  animation-play-state: paused;
+}
+
+@keyframes np-dance {
+  0%,
+  100% {
+    transform: scaleY(0.5);
+  }
+  50% {
+    transform: scaleY(1);
+  }
 }
 
 tbody tr {
@@ -432,6 +504,35 @@ tbody tr:hover .row-play {
   gap: 8px;
   flex: 2;
   min-width: 180px;
+}
+
+.time-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.time-toggle:hover {
+  color: var(--text);
+}
+
+.mute-btn {
+  display: grid;
+  place-items: center;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.mute-btn.muted {
+  opacity: 0.35;
+}
+
+.mute-btn:hover {
+  color: var(--text);
 }
 
 .time {
