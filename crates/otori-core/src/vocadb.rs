@@ -7,17 +7,10 @@
 //! thin network calls (`search_song`, `download_cover`).
 
 use serde::Deserialize;
-use unicode_normalization::UnicodeNormalization;
 
-/// NFC-normalize before comparing: tags written on macOS are often NFD
-/// (バ = ハ + combining voicing mark) while VocaDB serves NFC — equal
-/// glyphs, unequal bytes (found the hard way: 裏表ラバーズ).
-fn nfc(s: &str) -> String {
-    s.trim().nfc().collect()
-}
+use crate::provider::{nfc, urlencode, USER_AGENT};
 
 pub const API_BASE: &str = "https://vocadb.net";
-const USER_AGENT: &str = concat!("Otori/", env!("CARGO_PKG_VERSION"), " (music library manager)");
 
 #[derive(Debug)]
 pub struct Match {
@@ -262,15 +255,4 @@ fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
         .body_mut()
         .read_to_vec()
         .map_err(|e| format!("read {url}: {e}"))
-}
-
-fn urlencode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            other => format!("%{other:02X}"),
-        })
-        .collect()
 }

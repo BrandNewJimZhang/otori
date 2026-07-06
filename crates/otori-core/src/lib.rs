@@ -11,7 +11,9 @@ pub mod analysis;
 pub mod artwork;
 pub mod backup;
 pub mod db;
+pub mod lrclib;
 pub mod lyrics;
+mod provider;
 pub mod query;
 pub mod scan;
 pub mod status;
@@ -44,4 +46,12 @@ pub fn read_track_tags(path: &std::path::Path) -> Result<TrackTags, lofty::error
         artist: tag.and_then(|t| t.artist().map(|v| v.into_owned())),
         album: tag.and_then(|t| t.album().map(|v| v.into_owned())),
     })
+}
+
+/// Duration straight from the file (a property, not a tag). Used by
+/// lyrics signature lookup (LRCLIB matches on it) without requiring
+/// the track to be indexed.
+pub fn read_duration_secs(path: &std::path::Path) -> Result<f64, lofty::error::LoftyError> {
+    use lofty::prelude::*;
+    Ok(lofty::read_from_path(path)?.properties().duration().as_secs_f64())
 }

@@ -46,6 +46,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Fetch lyrics from LRCLIB and save them as a sidecar .lrc
+    FetchLyrics {
+        path: PathBuf,
+        /// Actually write the sidecar; default reports the match only
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Locate cover art (embedded -> sidecar image -> folder cover)
     Artwork {
         path: PathBuf,
@@ -355,6 +364,91 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 );
             } else {
                 println!("backed up to {} ({size} bytes)", dest.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::FetchLyrics { path, apply, json } => {
+            if !path.is_file() {
+                return Err(CliError::bad_input(format!(
+                    "not a file: {}",
+                    path.display()
+                )));
+            }
+            // Refuse when lyrics already exist — replacing is a human
+            // decision (delete the sidecar / clear the tag first).
+            if otori_core::lyrics::resolve(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?
+                .is_some()
+            {
+                return Err(CliError::bad_input(
+                    "track already has lyrics; remove them first to refetch",
+                ));
+            }
+            let tags = otori_core::read_track_tags(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            let title = tags
+                .title
+                .as_deref()
+                .map(strip_category_markers)
+                .ok_or_else(|| CliError::bad_input("track has no title tag to search by"))?;
+            let artist = tags
+                .artist
+                .as_deref()
+                .ok_or_else(|| CliError::bad_input("track has no artist tag to search by"))?;
+            let duration = otori_core::read_duration_secs(&path).ok();
+
+            let response =
+                otori_core::lrclib::get_lyrics(&title, artist, tags.album.as_deref(), duration)
+                    .map_err(CliError::library)?;
+            let fetched = match response {
+                Some(body) => {
+                    otori_core::lrclib::pick_lyrics(&body).map_err(CliError::library)?
+                }
+                None => None,
+            };
+            let Some(fetched) = fetched else {
+                if json {
+                    println!("{}", serde_json::json!({ "matched": false, "title": title }));
+                } else {
+                    println!("no LRCLIB record for \"{title}\" — {artist} (or instrumental)");
+                }
+                return Ok(ExitCode::from(EXIT_PARTIAL));
+            };
+
+            if !apply {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "matched": true, "synced": fetched.synced,
+                            "lines": fetched.text.lines().count(),
+                            "applied": false,
+                        })
+                    );
+                } else {
+                    let kind = if fetched.synced { "synced" } else { "plain (static)" };
+                    println!(
+                        "match: {kind} lyrics, {} lines",
+                        fetched.text.lines().count()
+                    );
+                    println!("dry run — pass --apply to write the sidecar .lrc");
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+
+            let sidecar =
+                otori_core::lyrics::write_sidecar(&path, &fetched.text, "agent:lrclib")
+                    .map_err(|e| CliError::bad_input(format!("write sidecar: {e}")))?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "matched": true, "applied": true,
+                        "synced": fetched.synced, "sidecar": sidecar,
+                    })
+                );
+            } else {
+                println!("lyrics saved: {}", sidecar.display());
             }
             Ok(ExitCode::SUCCESS)
         }

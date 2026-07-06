@@ -140,3 +140,41 @@ fn no_lyrics_resolves_to_none_not_error() {
     write_mp3(&audio);
     assert!(lyrics::resolve(&audio).unwrap().is_none());
 }
+
+// ---- sidecar delivery (fetched lyrics land as .lrc, PRODUCT.md) ----
+
+#[test]
+fn write_sidecar_records_provenance_and_resolves() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+
+    let sidecar =
+        lyrics::write_sidecar(&audio, "[00:01.00]Fetched line", "agent:lrclib").unwrap();
+    assert_eq!(sidecar, dir.path().join("song.lrc"));
+
+    // Provenance rides in the standard [by:] creator tag.
+    let content = fs::read_to_string(&sidecar).unwrap();
+    assert!(content.starts_with("[by:agent:lrclib]"), "{content}");
+
+    // The chain picks it up; the header is metadata, not a lyric line.
+    let doc = lyrics::resolve(&audio).unwrap().expect("sidecar must resolve");
+    assert_eq!(doc.source, "sidecar");
+    assert_eq!(doc.lines.len(), 1);
+    assert_eq!(doc.lines[0].text, "Fetched line");
+}
+
+#[test]
+fn write_sidecar_refuses_to_overwrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+    fs::write(dir.path().join("song.lrc"), "[00:01.00]Hand-made").unwrap();
+
+    let err = lyrics::write_sidecar(&audio, "[00:02.00]Fetched", "agent:lrclib")
+        .expect_err("must refuse");
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    // The existing file is untouched.
+    let content = fs::read_to_string(dir.path().join("song.lrc")).unwrap();
+    assert_eq!(content, "[00:01.00]Hand-made");
+}
