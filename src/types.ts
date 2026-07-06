@@ -6,6 +6,7 @@ export interface TrackRow {
   id: number;
   path: string;
   format: string;
+  duration_secs: number | null;
   title: string | null;
   artist: string | null;
   album: string | null;

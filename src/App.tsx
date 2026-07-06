@@ -8,6 +8,8 @@ import { getArtwork, getLyrics, listTracks, scanLibrary } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
+import { formatTime } from "./format";
+import { NextIcon, PauseIcon, PlayIcon, PrevIcon, VolumeIcon } from "./icons";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 import "./App.css";
 
@@ -24,6 +26,8 @@ function App() {
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<ScanReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [position, setPosition] = useState(0);
+  const [volume, setVolume] = useState(1);
   const engine = useMemo(createEngine, []);
   const tracksRef = useRef(tracks);
   tracksRef.current = tracks;
@@ -43,6 +47,7 @@ function App() {
         await engine.play(track.path);
         setCurrent(track);
         setPaused(false);
+        setPosition(0);
         // Companion surfaces load after playback starts; failures there
         // must never interrupt the music.
         getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
@@ -54,16 +59,26 @@ function App() {
     [engine],
   );
 
-  useEffect(() => {
-    engine.onEnded(() => {
+  // Step through the current listing order; wraps nothing, just stops.
+  const step = useCallback(
+    (offset: number) => {
       const list = tracksRef.current;
       const cur = currentRef.current;
       const idx = list.findIndex((t) => t.id === cur?.id);
-      if (idx >= 0 && idx + 1 < list.length) void play(list[idx + 1]);
-      else setPaused(true);
+      const next = idx >= 0 ? list[idx + offset] : undefined;
+      if (next) void play(next);
+      return Boolean(next);
+    },
+    [play],
+  );
+
+  useEffect(() => {
+    engine.onEnded(() => {
+      if (!step(1)) setPaused(true);
     });
     engine.onError(setError);
-  }, [engine, play]);
+    engine.onTimeUpdate(setPosition);
+  }, [engine, step]);
 
   // Position sampling at rAF rate while in Stage mode (lyrics sync).
   useEffect(() => {
@@ -129,9 +144,24 @@ function App() {
     );
   }
 
+  function seekTo(secs: number) {
+    engine.seek(secs);
+    setPosition(secs);
+  }
+
+  function changeVolume(v: number) {
+    engine.volume = v;
+    setVolume(v);
+  }
+
+  // Engine duration once metadata loads; index duration until then.
+  const duration = Number.isFinite(engine.duration)
+    ? engine.duration
+    : current?.duration_secs ?? NaN;
+
   return (
     <div className="app">
-      <header className="toolbar">
+      <header className="toolbar" data-tauri-drag-region>
         <h1 className="brand">Ōtori</h1>
         <button onClick={pickAndScan} disabled={scanning}>
           {scanning ? "Scanning…" : "Scan folder…"}
@@ -149,11 +179,23 @@ function App() {
         </span>
       </header>
 
-      {error && <div className="error-bar">{error}</div>}
+      {error && (
+        <div className="error-bar">
+          <span>{error}</span>
+          <button className="error-dismiss" onClick={() => setError(null)} aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
 
       <main className="library">
         {tracks.length === 0 ? (
-          <div className="empty">Scan a folder to build your library.</div>
+          <div className="empty">
+            <p>Your library is empty.</p>
+            <button onClick={pickAndScan} disabled={scanning}>
+              {scanning ? "Scanning…" : "Scan a folder"}
+            </button>
+          </div>
         ) : (
           <table>
             <thead>
@@ -161,6 +203,7 @@ function App() {
                 <th>Title</th>
                 <th>Artist</th>
                 <th>Album</th>
+                <th className="col-duration">Time</th>
                 <th className="col-format">Format</th>
               </tr>
             </thead>
@@ -171,9 +214,15 @@ function App() {
                   className={t.id === current?.id ? "playing" : ""}
                   onDoubleClick={() => play(t)}
                 >
-                  <td>{t.title ?? basename(t.path)}</td>
+                  <td>
+                    <span className="row-play" onClick={() => play(t)} aria-label="Play">
+                      <PlayIcon />
+                    </span>
+                    {t.title ?? basename(t.path)}
+                  </td>
                   <td>{t.artist ?? "—"}</td>
                   <td>{t.album ?? "—"}</td>
+                  <td className="col-duration">{formatTime(t.duration_secs)}</td>
                   <td className="col-format">{t.format}</td>
                 </tr>
               ))}
@@ -183,9 +232,33 @@ function App() {
       </main>
 
       <footer className="player-bar">
-        <button className="play-btn" onClick={togglePause} disabled={!current}>
-          {paused ? "▶" : "⏸"}
-        </button>
+        <div className="transport">
+          <button
+            className="step-btn"
+            onClick={() => step(-1)}
+            disabled={!current}
+            aria-label="Previous track"
+          >
+            <PrevIcon />
+          </button>
+          <button
+            className="play-btn"
+            onClick={togglePause}
+            disabled={!current}
+            aria-label={paused ? "Play" : "Pause"}
+          >
+            {paused ? <PlayIcon /> : <PauseIcon />}
+          </button>
+          <button
+            className="step-btn"
+            onClick={() => step(1)}
+            disabled={!current}
+            aria-label="Next track"
+          >
+            <NextIcon />
+          </button>
+        </div>
+
         <div className="now-playing">
           {current ? (
             <>
@@ -196,6 +269,35 @@ function App() {
             <div className="np-title idle">Double-click a track to play</div>
           )}
         </div>
+
+        <div className="seek">
+          <span className="time">{formatTime(current ? position : null)}</span>
+          <input
+            type="range"
+            min={0}
+            max={Number.isFinite(duration) ? duration : 0}
+            step={0.1}
+            value={Math.min(position, Number.isFinite(duration) ? duration : 0)}
+            disabled={!current || !Number.isFinite(duration)}
+            onChange={(e) => seekTo(Number(e.target.value))}
+            aria-label="Seek"
+          />
+          <span className="time">{formatTime(current ? duration : null)}</span>
+        </div>
+
+        <div className="volume">
+          <VolumeIcon />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => changeVolume(Number(e.target.value))}
+            aria-label="Volume"
+          />
+        </div>
+
         <Spectrum analyser={engine.analyser} />
       </footer>
     </div>

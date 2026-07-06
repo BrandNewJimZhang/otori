@@ -30,6 +30,15 @@ body {
   -webkit-user-select: none;
 }
 
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--library);
+  outline-offset: 1px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -42,7 +51,8 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 10px 16px;
+  /* Left padding clears the macOS traffic lights (title bar overlay). */
+  padding: 10px 16px 10px 84px;
   background: var(--bg-raised);
   border-bottom: 1px solid var(--border);
 }
@@ -55,7 +65,8 @@ body {
   margin-right: 6px;
 }
 
-.toolbar button {
+.toolbar button,
+.empty button {
   background: var(--bg-hover);
   color: var(--text);
   border: 1px solid var(--border);
@@ -63,13 +74,21 @@ body {
   padding: 6px 14px;
   font-size: 13px;
   cursor: pointer;
+  transition: border-color 120ms;
 }
 
-.toolbar button:hover:not(:disabled) {
+.toolbar button:hover:not(:disabled),
+.empty button:hover:not(:disabled) {
   border-color: var(--library);
 }
 
-.toolbar button:disabled {
+.toolbar button:active:not(:disabled),
+.empty button:active:not(:disabled) {
+  background: var(--bg);
+}
+
+.toolbar button:disabled,
+.empty button:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -78,14 +97,29 @@ body {
 .scan-report {
   font-size: 12px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .error-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 16px;
   background: #3b1b1f;
   color: #fda4af;
   font-size: 13px;
   border-bottom: 1px solid #52252c;
+}
+
+.error-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
 }
 
 /* ---- library table ---- */
@@ -98,6 +132,8 @@ body {
 .empty {
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 14px;
   height: 100%;
   color: var(--text-dim);
   font-size: 14px;
@@ -105,6 +141,7 @@ body {
 
 table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -113,6 +150,7 @@ thead {
   position: sticky;
   top: 0;
   background: var(--bg-raised);
+  z-index: 1;
 }
 
 th {
@@ -129,7 +167,6 @@ td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 320px;
 }
 
 tbody tr {
@@ -149,8 +186,30 @@ tbody tr.playing td:first-child {
   padding-left: 10px;
 }
 
+/* Hover affordance: a play glyph slides in before the title. */
+.row-play {
+  display: inline-flex;
+  vertical-align: -3px;
+  width: 0;
+  overflow: hidden;
+  color: var(--playback);
+  cursor: pointer;
+  transition: width 100ms;
+}
+
+tbody tr:hover .row-play {
+  width: 22px;
+}
+
+.col-duration {
+  width: 64px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 .col-format {
-  width: 60px;
+  width: 68px;
   color: var(--text-dim);
   text-transform: uppercase;
   font-size: 11px;
@@ -167,31 +226,58 @@ tbody tr.playing td:first-child {
   border-top: 1px solid var(--border);
 }
 
-.play-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--bg-hover);
-  color: var(--playback);
-  font-size: 15px;
-  cursor: pointer;
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.play-btn:hover:not(:disabled) {
+.transport button {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--playback);
+  cursor: pointer;
+  transition: border-color 120ms;
+}
+
+.transport button:hover:not(:disabled) {
   border-color: var(--playback);
 }
 
-.play-btn:disabled {
+.transport button:active:not(:disabled) {
+  background: var(--bg);
+}
+
+.transport button:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
+.play-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.step-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.step-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
 .now-playing {
-  min-width: 180px;
-  max-width: 260px;
+  min-width: 160px;
+  max-width: 240px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .np-title {
@@ -213,6 +299,65 @@ tbody tr.playing td:first-child {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---- seek + volume sliders ---- */
+
+.seek {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 2;
+  min-width: 180px;
+}
+
+.time {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: center;
+}
+
+.volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.volume input[type="range"] {
+  width: 80px;
+}
+
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--playback);
+  border: none;
+}
+
+input[type="range"]:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+input[type="range"]:disabled::-webkit-slider-thumb {
+  background: var(--text-dim);
 }
 
 .spectrum {

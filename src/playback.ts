@@ -10,13 +10,20 @@ export interface PlaybackEngine {
   /** Start playing a local file; resolves when playback begins. */
   play(path: string): Promise<void>;
   togglePause(): void;
+  seek(secs: number): void;
   readonly paused: boolean;
   /** Current playback position in milliseconds. */
   readonly positionMs: number;
+  readonly currentTime: number;
+  /** NaN until the engine has loaded metadata for the current file. */
+  readonly duration: number;
+  volume: number;
   /** Analyser for visualizers; null until first play(). */
   readonly analyser: AnalyserNode | null;
   onEnded(cb: () => void): void;
   onError(cb: (message: string) => void): void;
+  /** ~4Hz progress ticks while playing (media timeupdate cadence). */
+  onTimeUpdate(cb: (secs: number) => void): void;
 }
 
 class AudioElementEngine implements PlaybackEngine {
@@ -25,9 +32,13 @@ class AudioElementEngine implements PlaybackEngine {
   private analyserNode: AnalyserNode | null = null;
   private endedCb: (() => void) | null = null;
   private errorCb: ((message: string) => void) | null = null;
+  private timeCb: ((secs: number) => void) | null = null;
 
   constructor() {
     this.audio.addEventListener("ended", () => this.endedCb?.());
+    this.audio.addEventListener("timeupdate", () =>
+      this.timeCb?.(this.audio.currentTime),
+    );
     this.audio.addEventListener("error", () => {
       const err = this.audio.error;
       // MEDIA_ERR_SRC_NOT_SUPPORTED (4) is the WKWebView format ceiling.
@@ -60,12 +71,32 @@ class AudioElementEngine implements PlaybackEngine {
     else this.audio.pause();
   }
 
+  seek(secs: number): void {
+    this.audio.currentTime = secs;
+  }
+
   get paused(): boolean {
     return this.audio.paused;
   }
 
   get positionMs(): number {
     return this.audio.currentTime * 1000;
+  }
+
+  get currentTime(): number {
+    return this.audio.currentTime;
+  }
+
+  get duration(): number {
+    return this.audio.duration;
+  }
+
+  get volume(): number {
+    return this.audio.volume;
+  }
+
+  set volume(v: number) {
+    this.audio.volume = v;
   }
 
   get analyser(): AnalyserNode | null {
@@ -78,6 +109,10 @@ class AudioElementEngine implements PlaybackEngine {
 
   onError(cb: (message: string) => void): void {
     this.errorCb = cb;
+  }
+
+  onTimeUpdate(cb: (secs: number) => void): void {
+    this.timeCb = cb;
   }
 }
 
