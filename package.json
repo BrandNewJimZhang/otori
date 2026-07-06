@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "bench": "vitest bench --run",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
