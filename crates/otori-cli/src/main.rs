@@ -409,12 +409,20 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let response =
                 otori_core::lrclib::get_lyrics(&title, artist, tags.album.as_deref(), duration)
                     .map_err(CliError::library)?;
-            let fetched = match response {
+            let mut fetched = match response {
                 Some(body) => {
                     otori_core::lrclib::pick_lyrics(&body).map_err(CliError::library)?
                 }
                 None => None,
             };
+            // Signature miss → title search. Doujin artist tags rarely
+            // match LRCLIB's; duration (a file property) disambiguates.
+            if fetched.is_none() {
+                let search =
+                    otori_core::lrclib::search_lyrics(&title).map_err(CliError::library)?;
+                fetched = otori_core::lrclib::pick_search_hit(&search, &title, duration)
+                    .map_err(CliError::library)?;
+            }
             let Some(fetched) = fetched else {
                 if json {
                     println!("{}", serde_json::json!({ "matched": false, "title": title }));
