@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LyricsDoc, TrackRow } from "./types";
+import { displayTitle } from "./library";
 import { Spectrum } from "./Spectrum";
 
 interface StageProps {
@@ -29,6 +30,23 @@ function currentLineIndex(doc: LyricsDoc, positionMs: number): number {
 export function Stage({ track, artwork, lyrics, analyser, positionMs }: StageProps) {
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
+  // Exit affordance: visible on mouse movement, fades after 2s idle.
+  const [hintVisible, setHintVisible] = useState(true);
+  const hintTimer = useRef<number>(0);
+
+  useEffect(() => {
+    const wake = () => {
+      setHintVisible(true);
+      window.clearTimeout(hintTimer.current);
+      hintTimer.current = window.setTimeout(() => setHintVisible(false), 2000);
+    };
+    wake();
+    window.addEventListener("mousemove", wake);
+    return () => {
+      window.removeEventListener("mousemove", wake);
+      window.clearTimeout(hintTimer.current);
+    };
+  }, []);
 
   const synced = lyrics !== null && lyrics.kind !== "static";
   const lineIdx = synced ? currentLineIndex(lyrics, positionMs) : -1;
@@ -51,11 +69,11 @@ export function Stage({ track, artwork, lyrics, analyser, positionMs }: StagePro
             <img className="stage-art" src={artwork} alt="" />
           ) : (
             <div className="stage-art placeholder">
-              <span>{(track.title ?? track.path).slice(0, 1)}</span>
+              <span>{displayTitle(track).slice(0, 1)}</span>
             </div>
           )}
           <div className="stage-track">
-            <div className="stage-title">{track.title ?? track.path}</div>
+            <div className="stage-title">{displayTitle(track)}</div>
             <div className="stage-artist">{track.artist ?? "—"}</div>
             {track.album && <div className="stage-album">{track.album}</div>}
           </div>
@@ -75,6 +93,9 @@ export function Stage({ track, artwork, lyrics, analyser, positionMs }: StagePro
               >
                 {line.words && i === activeLine ? (
                   // Word-level: highlight words whose time has come.
+                  // Word text keeps its trailing whitespace (core's
+                  // parse_word_tags preserves it), so plain concatenation
+                  // renders correct spacing for spaced languages.
                   line.words.map((w, wi) => (
                     <span key={wi} className={w.time_ms <= positionMs ? "sung" : ""}>
                       {w.text}
@@ -95,6 +116,10 @@ export function Stage({ track, artwork, lyrics, analyser, positionMs }: StagePro
 
       <div className="stage-lighting">
         <Spectrum analyser={analyser} />
+      </div>
+
+      <div className={`stage-hint ${hintVisible ? "" : "hidden"}`}>
+        Esc → Backstage · Space → play/pause
       </div>
     </div>
   );

@@ -45,10 +45,17 @@ export function LibraryTable({
             <th
               key={c.key}
               className={c.className}
+              tabIndex={0}
               aria-sort={
                 sort?.key === c.key ? (sort.dir === 1 ? "ascending" : "descending") : undefined
               }
               onClick={() => onSort(c.key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSort(c.key);
+                }
+              }}
             >
               {c.label}
               {sort?.key === c.key && (

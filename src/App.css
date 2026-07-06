@@ -614,3 +614,20 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   height: 80px;
   display: block;
 }
+
+/* Exit affordance: fades in on mouse movement, out after idle. */
+.stage-hint {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(16, 16, 20, 0.7);
+  padding: 5px 10px;
+  border-radius: 6px;
+  transition: opacity 400ms;
+}
+
+.stage-hint.hidden {
+  opacity: 0;
+}

@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clickSelect,
+  contextTargets,
   displayTitle,
   emptySelection,
   filterTracks,
@@ -92,6 +93,31 @@ describe("filterTracks", () => {
 
   it("blank query returns everything", () => {
     expect(filterTracks(rows, "  ")).toEqual(rows);
+  });
+});
+
+describe("contextTargets", () => {
+  const rows = [track(1), track(2), track(3)];
+  const none = { shift: false, meta: false };
+
+  it("right-click outside the selection targets just the clicked row", () => {
+    const sel = clickSelect(emptySelection, rows, 1, none);
+    expect(contextTargets(sel, rows, 3).map((t) => t.id)).toEqual([3]);
+  });
+
+  it("right-click inside a multi-selection targets all selected rows in visible order", () => {
+    let sel = clickSelect(emptySelection, rows, 3, none);
+    sel = clickSelect(sel, rows, 1, { shift: false, meta: true });
+    expect(contextTargets(sel, rows, 3).map((t) => t.id)).toEqual([1, 3]);
+  });
+
+  it("single selection behaves like a plain click", () => {
+    const sel = clickSelect(emptySelection, rows, 2, none);
+    expect(contextTargets(sel, rows, 2).map((t) => t.id)).toEqual([2]);
+  });
+
+  it("clicked row missing from the visible list yields nothing", () => {
+    expect(contextTargets(emptySelection, rows, 99)).toEqual([]);
   });
 });
 
