@@ -12,7 +12,7 @@ import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { LibraryTable } from "./LibraryTable";
+import { LibraryTable, type ColumnWidths } from "./LibraryTable";
 import { formatTime } from "./format";
 import {
   clickSelect,
@@ -29,6 +29,7 @@ import {
 } from "./library";
 import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
 import {
+  DensityIcon,
   MoonIcon,
   NextIcon,
   PauseIcon,
@@ -41,7 +42,7 @@ import {
 } from "./icons";
 import { beatGridFor } from "./beatservice";
 import { planTransition } from "./djmix";
-import { loadPrefs, savePrefs, type Theme } from "./prefs";
+import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 import "./App.css";
 
@@ -76,6 +77,10 @@ function App() {
   const [theme, setTheme] = useState<Theme>(initialPrefs.theme);
   const [fullscreen, setFullscreen] = useState(false);
   const [crossfadeSec, setCrossfadeSec] = useState(initialPrefs.crossfadeSec);
+  const [density, setDensity] = useState<Density>(initialPrefs.density);
+  const [columnWidths, setColumnWidths] = useState<ColumnWidths>(initialPrefs.columnWidths);
+  const [muted, setMuted] = useState(false);
+  const [showRemaining, setShowRemaining] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -125,8 +130,17 @@ function App() {
   }, [engine]);
 
   useEffect(() => {
-    savePrefs(localStorage, { volume, sort, shuffle, repeat, theme, crossfadeSec });
-  }, [volume, sort, shuffle, repeat, theme, crossfadeSec]);
+    savePrefs(localStorage, {
+      volume,
+      sort,
+      shuffle,
+      repeat,
+      theme,
+      crossfadeSec,
+      density,
+      columnWidths,
+    });
+  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths]);
 
   // Theme rides a root attribute so CSS owns the palettes; Stage stays
   // dark regardless (a lit stage is not a stage).
@@ -504,6 +518,19 @@ function App() {
   function changeVolume(v: number) {
     engine.volume = v;
     setVolume(v);
+    if (v > 0 && muted) setMuted(false);
+  }
+
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    engine.volume = next ? 0 : volume;
+  }
+
+  /** Scroll wheel over the volume cluster nudges ±2%. */
+  function wheelVolume(e: React.WheelEvent) {
+    const v = Math.max(0, Math.min(1, volume + (e.deltaY < 0 ? 0.02 : -0.02)));
+    changeVolume(v);
   }
 
   function onSort(key: SortKey) {
@@ -539,6 +566,14 @@ function App() {
           {current ? "S → Stage · Space → play/pause" : ""}
         </span>
         <button
+          className="icon-btn density-toggle"
+          onClick={() => setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"))}
+          aria-label={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
+          title={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
+        >
+          <DensityIcon compact={density === "compact"} />
+        </button>
+        <button
           className="icon-btn theme-toggle"
           onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
@@ -559,7 +594,7 @@ function App() {
         </div>
       )}
 
-      <main className="library">
+      <main className={`library density-${density}`}>
         {tracks.length === 0 ? (
           <div className="empty">
             <p>Your library is empty.</p>
@@ -575,8 +610,11 @@ function App() {
           <LibraryTable
             tracks={visible}
             playingId={current?.id ?? null}
+            paused={paused}
             selection={selection}
             sort={sort}
+            columnWidths={columnWidths}
+            onColumnWidths={setColumnWidths}
             onSort={onSort}
             onRowClick={(id, mods) => setSelection((s) => clickSelect(s, visible, id, mods))}
             onRowContextMenu={(track, e) => {
@@ -661,17 +699,33 @@ function App() {
             onChange={(e) => seekTo(Number(e.target.value))}
             aria-label="Seek"
           />
-          <span className="time">{formatTime(current ? duration : null)}</span>
+          <button
+            className="time time-toggle"
+            onClick={() => setShowRemaining((r) => !r)}
+            title={showRemaining ? "Show total duration" : "Show time remaining"}
+          >
+            {current && showRemaining && Number.isFinite(duration)
+              ? `-${formatTime(Math.max(0, duration - position))}`
+              : formatTime(current ? duration : null)}
+          </button>
         </div>
 
-        <div className="volume">
-          <VolumeIcon />
+        <div className="volume" onWheel={wheelVolume}>
+          <button
+            className={`icon-btn mute-btn ${muted ? "muted" : ""}`}
+            onClick={toggleMute}
+            aria-label={muted ? "Unmute" : "Mute"}
+            aria-pressed={muted}
+            title={muted ? "Unmute" : "Mute"}
+          >
+            <VolumeIcon />
+          </button>
           <input
             type="range"
             min={0}
             max={1}
             step={0.01}
-            value={volume}
+            value={muted ? 0 : volume}
             onChange={(e) => changeVolume(Number(e.target.value))}
             aria-label="Volume"
           />

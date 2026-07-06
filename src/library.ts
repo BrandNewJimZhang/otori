@@ -43,12 +43,44 @@ export function sortTracks(rows: TrackRow[], spec: SortSpec | null): TrackRow[] 
 
 // ---- filtering ----
 
+/** NFKC + lowercase: fullwidth Ｌａｔｉｎ, katakana width variants, and
+    case all collapse — doujin tags mix these freely. */
+function norm(s: string): string {
+  return s.normalize("NFKC").toLowerCase();
+}
+
+type FieldKey = "title" | "artist" | "album";
+const FIELD_QUALIFIERS = new Set<FieldKey>(["title", "artist", "album"]);
+
+/**
+ * Multi-word AND search with optional field qualifiers:
+ *   `melt`               any field contains "melt"
+ *   `artist:ryo`         artist contains "ryo"
+ *   `artist:ryo melt`    both conditions on the same track
+ * Unqualified words match title (incl. basename fallback), artist, album.
+ */
 export function filterTracks(rows: TrackRow[], query: string): TrackRow[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return rows;
-  return rows.filter((t) =>
-    [displayTitle(t), t.artist, t.album].some((f) => f?.toLowerCase().includes(q)),
-  );
+  const terms = query.trim().split(/\s+/).filter(Boolean).map((raw) => {
+    const m = raw.match(/^(title|artist|album):(.+)$/i);
+    if (m && FIELD_QUALIFIERS.has(m[1].toLowerCase() as FieldKey)) {
+      return { field: m[1].toLowerCase() as FieldKey, q: norm(m[2]) };
+    }
+    return { field: null, q: norm(raw) };
+  });
+  if (terms.length === 0) return rows;
+
+  return rows.filter((t) => {
+    const fields: Record<FieldKey, string | null> = {
+      title: displayTitle(t),
+      artist: t.artist,
+      album: t.album,
+    };
+    return terms.every(({ field, q }) =>
+      field
+        ? fields[field] != null && norm(fields[field]!).includes(q)
+        : Object.values(fields).some((f) => f != null && norm(f).includes(q)),
+    );
+  });
 }
 
 // ---- selection (single / shift-range / cmd-toggle) ----

@@ -24,6 +24,8 @@ const DEFAULTS = {
   repeat: "off",
   theme: "dark",
   crossfadeSec: 0,
+  density: "comfortable",
+  columnWidths: {},
 } as const;
 
 describe("prefs", () => {
@@ -36,6 +38,8 @@ describe("prefs", () => {
       repeat: "one",
       theme: "light",
       crossfadeSec: 8,
+      density: "compact",
+      columnWidths: { title: 320, artist: 140 },
     } as const;
     savePrefs(s, prefs);
     expect(loadPrefs(s)).toEqual(prefs);
@@ -62,6 +66,15 @@ describe("prefs", () => {
       JSON.stringify({ volume: 1, sort: null, shuffle: "yes", repeat: "twice", theme: "sepia" }),
     );
     expect(loadPrefs(s)).toEqual(DEFAULTS);
+  });
+
+  it("invalid density or column widths degrade individually", () => {
+    const s = fakeStorage();
+    s.setItem(
+      "otori.prefs",
+      JSON.stringify({ volume: 0.6, sort: null, density: "cozy", columnWidths: { title: -5 } }),
+    );
+    expect(loadPrefs(s)).toEqual({ ...DEFAULTS, volume: 0.6 });
   });
 
   it("out-of-range crossfade falls back to 0 without dropping the rest", () => {

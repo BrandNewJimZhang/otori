@@ -111,3 +111,15 @@ export function VolumeIcon() {
     </svg>
   );
 }
+
+/** Row-density toggle: three lines spaced wide (comfortable) or tight (compact). */
+export function DensityIcon({ compact }: { compact: boolean }) {
+  const ys = compact ? [7, 12, 17] : [5, 12, 19];
+  return (
+    <svg {...P}>
+      {ys.map((y) => (
+        <rect key={y} x="4" y={y - 1} width="16" height="2" rx="1" />
+      ))}
+    </svg>
+  );
+}
