@@ -14,6 +14,7 @@ pub mod lyrics;
 pub mod query;
 pub mod scan;
 pub mod status;
+pub mod vocadb;
 pub mod write;
 
 // Consumers hold connections we hand out; they never open their own.

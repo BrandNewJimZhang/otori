@@ -66,6 +66,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Fetch a jacket from VocaDB and save it as a sidecar image
+    Jacket {
+        path: PathBuf,
+        /// Actually download and write the sidecar; default reports the match only
+        #[arg(long)]
+        apply: bool,
+        /// Resolution floor in px (shorter side)
+        #[arg(long, default_value_t = 500)]
+        min_size: u32,
+        #[arg(long)]
+        json: bool,
+    },
     /// Edit tag fields (dry-run by default; --apply to write)
     Set {
         path: PathBuf,
@@ -329,6 +341,126 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Jacket { path, apply, min_size, json } => {
+            if !path.is_file() {
+                return Err(CliError::bad_input(format!(
+                    "not a file: {}",
+                    path.display()
+                )));
+            }
+            // Refuse to fetch when art already exists — replacing is a
+            // human decision (delete the old one first).
+            if otori_core::artwork::resolve(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?
+                .is_some()
+            {
+                return Err(CliError::bad_input(
+                    "track already has artwork; remove it first to refetch",
+                ));
+            }
+            let tags = otori_core::read_track_tags(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            let title = tags
+                .title
+                .as_deref()
+                .map(strip_category_markers)
+                .ok_or_else(|| CliError::bad_input("track has no title tag to search by"))?;
+            let search =
+                otori_core::vocadb::search_song(&title).map_err(CliError::library)?;
+            let matched =
+                otori_core::vocadb::pick_match(&search, &title, tags.artist.as_deref())
+                    .map_err(CliError::library)?;
+
+            let Some(m) = matched else {
+                if json {
+                    println!("{}", serde_json::json!({ "matched": false, "title": title }));
+                } else {
+                    println!("no unambiguous VocaDB match for \"{title}\" — not guessing");
+                }
+                return Ok(ExitCode::from(EXIT_PARTIAL));
+            };
+            let Some(album_id) = m.album_id else {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "matched": true, "song_id": m.song_id,
+                            "album_id": null,
+                        })
+                    );
+                } else {
+                    println!(
+                        "matched song {} ({}) but it has no album with cover art",
+                        m.song_id, m.song_name
+                    );
+                }
+                return Ok(ExitCode::from(EXIT_PARTIAL));
+            };
+
+            if !apply {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "matched": true, "song_id": m.song_id,
+                            "song_name": m.song_name, "artist": m.artist_string,
+                            "album_id": album_id, "album_name": m.album_name,
+                            "cover_url": otori_core::vocadb::cover_url(album_id),
+                            "applied": false,
+                        })
+                    );
+                } else {
+                    println!(
+                        "match: {} — {} (album: {})",
+                        m.song_name,
+                        m.artist_string,
+                        m.album_name.as_deref().unwrap_or("?")
+                    );
+                    println!("dry run — pass --apply to download the jacket");
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+
+            let data = otori_core::vocadb::download_cover(album_id).map_err(CliError::library)?;
+            let dims = otori_core::artwork::probe_dimensions(&data);
+            let below_floor = match dims {
+                Some((w, h)) => w.min(h) < min_size,
+                None => true,
+            };
+            if below_floor {
+                let size = dims
+                    .map(|(w, h)| format!("{w}x{h}"))
+                    .unwrap_or_else(|| "unknown".to_string());
+                return Err(CliError::bad_input(format!(
+                    "cover is below the {min_size}px floor ({size}) — not delivering"
+                )));
+            }
+            let ext = if data.starts_with(&[0x89, b'P']) { "png" } else { "jpg" };
+            let sidecar = path.with_extension(ext);
+            if sidecar.exists() {
+                return Err(CliError::bad_input(format!(
+                    "sidecar already exists: {}",
+                    sidecar.display()
+                )));
+            }
+            std::fs::write(&sidecar, &data)
+                .map_err(|e| CliError::bad_input(format!("write {}: {e}", sidecar.display())))?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "matched": true, "applied": true,
+                        "album_id": album_id, "album_name": m.album_name,
+                        "sidecar": sidecar,
+                        "width": dims.map(|d| d.0), "height": dims.map(|d| d.1),
+                    })
+                );
+            } else {
+                let (w, h) = dims.unwrap();
+                println!("jacket saved: {} ({w}x{h})", sidecar.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Set { path, title, artist, album, apply, agent, override_curated, json } => {
             use otori_core::write::{Actor, FieldChange, PlanOutcome};
             let mut changes = Vec::new();
@@ -503,6 +635,20 @@ fn open_library(db: Option<PathBuf>) -> Result<otori_core::Connection, CliError>
         None => otori_core::db::default_path().map_err(CliError::library)?,
     };
     otori_core::db::open(&path).map_err(CliError::library)
+}
+
+/// Strip the owner's leading category markers from a title before
+/// searching external databases: "[Vocaloid] アマツキツネ" → "アマツキツネ".
+/// The scheme is personal curation, not part of the song's name.
+fn strip_category_markers(title: &str) -> String {
+    let mut rest = title.trim();
+    while rest.starts_with('[') {
+        match rest.split_once(']') {
+            Some((_, tail)) => rest = tail.trim_start(),
+            None => break,
+        }
+    }
+    rest.to_string()
 }
 
 /// Pre-destructive-write safety net: timestamped snapshot into
