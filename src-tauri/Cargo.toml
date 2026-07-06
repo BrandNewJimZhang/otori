@@ -4,6 +4,8 @@ description = "Ōtori desktop shell (Tauri)"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

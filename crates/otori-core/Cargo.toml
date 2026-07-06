@@ -4,6 +4,8 @@ description = "Ōtori core: library index, tag read/write, lyrics parsing"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 lofty = "0.24.0"

@@ -4,6 +4,8 @@ description = "Ōtori CLI: the agent-facing surface of the music library"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "otori"
