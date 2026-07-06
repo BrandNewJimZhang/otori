@@ -48,8 +48,8 @@ commits to all five:
   (`otori --schema-version`), breaking changes follow semver.
 - Semantic exit codes (0 ok / 2 partial / 3 bad input / 4 corrupt
   library); errors are structured JSON on stderr.
-- MCP server is an auto-projection of the CLI (`otori mcp serve`) —
-  one command registry, two surfaces, never maintained separately.
+- The CLI is the only agent surface — no MCP server (ADR-0001 §3).
+  Agents that speak shell already speak Ōtori.
 
 ### L2 — Safety (delegable) ★ the moat
 The founding fear: *"the agent overrides tags I spent years curating."*

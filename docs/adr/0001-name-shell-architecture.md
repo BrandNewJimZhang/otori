@@ -53,7 +53,12 @@ otori-core (Rust) ← otori-cli (agents/scripts)
   and reviews TS; Rust stays a thin, agent-written engine room.
 - CLI contract: `--json` everywhere with stable schemas, dry-run by
   default for destructive ops, semantic exit codes, structured errors
-  on stderr. MCP, if ever needed, wraps the CLI.
+  on stderr.
+- MCP server: considered and dropped (2026-07-07). The CLI is the one
+  and only agent surface; a second protocol surface would double the
+  contract-maintenance cost before a single agent asks for it. Revisit
+  only if a real agent integration is blocked by the lack of a
+  long-lived connection (e.g. realtime playback control).
 
 ### 4. Frontend stack: Vite + React (Next.js considered and rejected)
 
