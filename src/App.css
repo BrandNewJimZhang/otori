@@ -488,10 +488,44 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 }
 
 .stage {
+  --bass: 0;
+  --highs: 0;
   display: flex;
   flex-direction: column;
   height: 100vh;
+  position: relative;
+  overflow: hidden;
   background: radial-gradient(ellipse at 50% 120%, #1a1424 0%, var(--bg) 60%);
+}
+
+/* Room lighting: a floor glow that breathes with the kick and a high
+   shimmer near the ceiling. Opacity-only compositing — GPU cheap. */
+.stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 120% 60% at 50% 115%,
+    rgba(167, 139, 250, 0.5) 0%,
+    transparent 60%
+  );
+  opacity: var(--bass);
+  transition: opacity 60ms linear;
+}
+
+.stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 140% 40% at 50% -15%,
+    rgba(244, 114, 182, 0.28) 0%,
+    transparent 55%
+  );
+  opacity: var(--highs);
+  transition: opacity 80ms linear;
 }
 
 .stage-main {
@@ -501,6 +535,8 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   gap: 48px;
   padding: 48px 64px 24px;
   min-height: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .stage-art-wrap {
@@ -512,12 +548,21 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   gap: 20px;
 }
 
+/* Kick pulse: scale rides --bass. Wrapper owns the transform so the
+   art's own layout box stays stable. */
+.stage-art-pulse {
+  transform: scale(calc(1 + var(--bass) * 0.03));
+  will-change: transform;
+}
+
 .stage-art {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: 12px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.6),
+    0 0 calc(24px + var(--bass) * 56px) rgba(167, 139, 250, calc(var(--bass) * 0.45));
 }
 
 .stage-art.placeholder {
@@ -607,12 +652,23 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 
 .stage-lighting {
   padding: 0 32px 24px;
+  position: relative;
+  z-index: 1;
 }
 
 .stage-lighting .spectrum {
   width: 100%;
   height: 80px;
   display: block;
+  /* Stage floor lights: brighten with the kick. */
+  filter: brightness(calc(1 + var(--bass) * 0.6))
+    drop-shadow(0 0 calc(var(--bass) * 14px) rgba(167, 139, 250, 0.5));
+}
+
+/* Active lyric line glows with the highs — vocals and hats live there. */
+.stage .lyric-line.active {
+  text-shadow: 0 0 calc(8px + var(--highs) * 18px)
+    rgba(244, 114, 182, calc(0.2 + var(--highs) * 0.5));
 }
 
 /* Exit affordance: fades in on mouse movement, out after idle. */

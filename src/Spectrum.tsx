@@ -14,7 +14,14 @@ const PEAK_FALL = 0.55; // px/frame (in CSS px) the peak cap falls
 const SPECTRUM_COLOR = "#a78bfa"; // purple: the spectrum's accent (PRODUCT.md)
 const PEAK_COLOR = "#f472b6"; // pink flair on the caps
 
-export function Spectrum({ analyser }: { analyser: AnalyserNode | null }) {
+export function Spectrum({
+  analyser,
+  mirror = false,
+}: {
+  analyser: AnalyserNode | null;
+  /** Stage mode: mirrored floor-reflection below the bars. */
+  mirror?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const peaksRef = useRef<Float32Array>(new Float32Array(BAR_COUNT));
 
@@ -55,6 +62,8 @@ export function Spectrum({ analyser }: { analyser: AnalyserNode | null }) {
       ctx2d.clearRect(0, 0, width, height);
       const barW = width / BAR_COUNT;
       const peaks = peaksRef.current;
+      // Mirror mode: bars grow from a floor line, reflection below it.
+      const floor = mirror ? height * 0.72 : height;
 
       for (let i = 0; i < BAR_COUNT; i++) {
         // Max within the bar's bin range: percussive hits stay sharp
@@ -64,18 +73,24 @@ export function Spectrum({ analyser }: { analyser: AnalyserNode | null }) {
           if (data[b] > db) db = data[b];
         }
         const norm = Math.max(0, Math.min(1, (db - DB_FLOOR) / (DB_CEIL - DB_FLOOR)));
-        const h = norm * height;
+        const h = norm * floor;
 
         ctx2d.fillStyle = SPECTRUM_COLOR;
         ctx2d.globalAlpha = 0.35 + norm * 0.65;
-        ctx2d.fillRect(i * barW + 1, height - h, barW - 2, h);
+        ctx2d.fillRect(i * barW + 1, floor - h, barW - 2, h);
+
+        if (mirror) {
+          // Floor reflection: dim, vertically squashed.
+          ctx2d.globalAlpha = (0.35 + norm * 0.65) * 0.25;
+          ctx2d.fillRect(i * barW + 1, floor, barW - 2, h * 0.35);
+        }
         ctx2d.globalAlpha = 1;
 
         // Peak-hold cap with gravity.
         peaks[i] = Math.max(h, peaks[i] - PEAK_FALL);
         if (peaks[i] > 1) {
           ctx2d.fillStyle = PEAK_COLOR;
-          ctx2d.fillRect(i * barW + 1, height - peaks[i] - 2, barW - 2, 2);
+          ctx2d.fillRect(i * barW + 1, floor - peaks[i] - 2, barW - 2, 2);
         }
       }
     };
@@ -84,7 +99,7 @@ export function Spectrum({ analyser }: { analyser: AnalyserNode | null }) {
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [analyser]);
+  }, [analyser, mirror]);
 
   return <canvas ref={canvasRef} className="spectrum" />;
 }
