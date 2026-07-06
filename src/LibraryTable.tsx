@@ -28,6 +28,8 @@ interface Props {
   playingId: number | null;
   /** Playing-row indicator animates only while sound is coming out. */
   paused: boolean;
+  /** Track id → 1-based play-next queue position (badge in the title cell). */
+  queuePositions: ReadonlyMap<number, number>;
   selection: Selection;
   sort: SortSpec | null;
   columnWidths: ColumnWidths;
@@ -64,6 +66,7 @@ export function LibraryTable({
   tracks,
   playingId,
   paused,
+  queuePositions,
   selection,
   sort,
   columnWidths,
@@ -176,6 +179,11 @@ export function LibraryTable({
                   </span>
                 )}
                 {displayTitle(t)}
+                {queuePositions.has(t.id) && (
+                  <span className="queue-badge" title={`Playing next (#${queuePositions.get(t.id)})`}>
+                    {queuePositions.get(t.id)}
+                  </span>
+                )}
               </td>
               <td>{t.artist ?? "—"}</td>
               <td>{t.album ?? "—"}</td>

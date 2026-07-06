@@ -321,6 +321,21 @@ td {
   }
 }
 
+/* Play-next queue badge: position number chip after the title. */
+.queue-badge {
+  display: inline-block;
+  margin-left: 8px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--playback) 25%, var(--bg));
+  color: var(--playback);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: 1px;
+}
+
 tbody tr {
   cursor: default;
   transition: background 100ms;
