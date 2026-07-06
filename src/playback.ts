@@ -37,6 +37,9 @@ export interface PlaybackEngine {
   readonly paused: boolean;
   /** Current playback position in milliseconds. */
   readonly positionMs: number;
+  /** Audio-graph output latency in ms (sent but not yet heard); 0
+      until the graph exists. Lyrics subtract this from the clock. */
+  readonly outputLatencyMs: number;
   readonly currentTime: number;
   /** NaN until the engine has loaded metadata for the current file. */
   readonly duration: number;
@@ -360,6 +363,12 @@ class TwoDeckEngine implements PlaybackEngine {
 
   get positionMs(): number {
     return this.activeDeck.audio.currentTime * 1000;
+  }
+
+  get outputLatencyMs(): number {
+    if (!this.ctx) return 0;
+    // outputLatency is absent in some WebViews; baseLatency since ~2018.
+    return ((this.ctx.outputLatency ?? 0) + (this.ctx.baseLatency ?? 0)) * 1000;
   }
 
   get currentTime(): number {

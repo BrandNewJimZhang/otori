@@ -83,6 +83,8 @@ class FakeAudioContext {
   state = "running";
   currentTime = 0;
   destination = {};
+  baseLatency = 0.01;
+  outputLatency = 0.05;
   resume(): Promise<void> {
     return Promise.resolve();
   }
@@ -146,6 +148,18 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.resetModules();
+});
+
+describe("TwoDeckEngine output latency", () => {
+  it("reports the graph's output+base latency in ms", async () => {
+    const engine = await createEngineWithAB();
+    expect(engine.outputLatencyMs).toBeCloseTo(60, 5); // (0.05 + 0.01) s
+  });
+
+  it("is 0 before the graph exists", async () => {
+    const { createEngine } = await import("./playback");
+    expect(createEngine().outputLatencyMs).toBe(0);
+  });
 });
 
 describe("TwoDeckEngine transitions", () => {
