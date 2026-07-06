@@ -6,10 +6,15 @@
 // Beat reactivity: a rAF loop reads band energies and writes CSS custom
 // properties on the root — the art pulses and the room lighting breathes
 // with the kick, with zero React re-renders on the audio path.
+//
+// Gel lighting: the cover picks the rig's colors (--gel-floor/--gel-top),
+// extracted once per track. Colors are static; only intensity moves,
+// and it keeps moving on the --bass/--highs path above.
 
 import { useEffect, useRef, useState } from "react";
 import type { LyricsDoc, TrackRow } from "./types";
 import { bandEnergy, Smoother } from "./energy";
+import { extractGels } from "./gel";
 import { displayTitle } from "./library";
 import { formatTime } from "./format";
 import { Spectrum } from "./Spectrum";
@@ -73,6 +78,35 @@ export function Stage({
     tick();
     return () => cancelAnimationFrame(raf);
   }, [analyser]);
+
+  // Gel change-over on track change. No usable color (grayscale cover,
+  // no artwork) → drop the overrides so the CSS house gels apply: that
+  // rung of the degradation ladder is the current look, already complete.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const clear = () => {
+      stage.style.removeProperty("--gel-floor");
+      stage.style.removeProperty("--gel-top");
+    };
+    if (!artwork) {
+      clear();
+      return;
+    }
+    let stale = false;
+    extractGels(artwork).then((gels) => {
+      if (stale) return;
+      if (gels) {
+        stage.style.setProperty("--gel-floor", gels[0]);
+        stage.style.setProperty("--gel-top", gels[1]);
+      } else {
+        clear();
+      }
+    });
+    return () => {
+      stale = true;
+    };
+  }, [artwork]);
 
   useEffect(() => {
     const wake = () => {
