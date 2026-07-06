@@ -109,7 +109,9 @@ export function LibraryTable({
   }
 
   return (
-    <table>
+    // role="grid": <table> alone doesn't permit aria-selected on rows
+    // (audit P3); the table is an interactive multiselect listing.
+    <table role="grid" aria-multiselectable="true">
       <thead>
         <tr>
           {COLUMNS.map((c) => (

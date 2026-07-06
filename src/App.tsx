@@ -625,6 +625,15 @@ function App() {
           action: () => void revealItemInDir(first.path).catch((e) => setError(String(e))),
         },
         {
+          // user-select:none is deliberate app chrome (P3): copying
+          // metadata goes through the menu instead of text selection.
+          label: "Copy title – artist",
+          action: () =>
+            void navigator.clipboard
+              .writeText(`${displayTitle(first)} – ${first.artist ?? ""}`.trim())
+              .catch(() => {}),
+        },
+        {
           label: "Copy path",
           action: () => void navigator.clipboard.writeText(first.path).catch(() => {}),
         },
@@ -887,6 +896,7 @@ function App() {
           <button
             className="time time-toggle"
             onClick={() => setShowRemaining((r) => !r)}
+            aria-label={showRemaining ? "Show total duration" : "Show time remaining"}
             title={showRemaining ? "Show total duration" : "Show time remaining"}
           >
             {current && showRemaining && Number.isFinite(duration)

@@ -18,20 +18,46 @@ interface Props {
 export function ContextMenu({ x, y, items, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // Keyboard menu semantics (audit P3): focus moves into the menu on
+  // open and returns on close; ↑↓ wrap through items; Enter/Space
+  // activate (native button behavior once focused).
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    ref.current?.querySelector("button")?.focus();
+    return () => previous?.focus();
+  }, []);
+
   // Any click outside, Escape, or window blur dismisses.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.stopPropagation(); // dismiss the menu only, not the selection
+        onClose();
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation(); // arrows navigate the menu, not the table
+        const buttons = [...(ref.current?.querySelectorAll("button") ?? [])];
+        if (buttons.length === 0) return;
+        const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const next =
+          e.key === "ArrowDown"
+            ? (idx + 1) % buttons.length
+            : (idx - 1 + buttons.length) % buttons.length;
+        buttons[next].focus();
+      }
     };
     window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
+    // Capture phase: outrun the app-level keydown router.
+    window.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", onClose);
     return () => {
       window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("blur", onClose);
     };
   }, [onClose]);
