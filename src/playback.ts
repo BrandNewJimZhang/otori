@@ -30,6 +30,8 @@ class AudioElementEngine implements PlaybackEngine {
   private audio = new Audio();
   private ctx: AudioContext | null = null;
   private analyserNode: AnalyserNode | null = null;
+  private gainNode: GainNode | null = null;
+  private volumeValue = 1;
   private endedCb: (() => void) | null = null;
   private errorCb: ((message: string) => void) | null = null;
   private timeCb: ((secs: number) => void) | null = null;
@@ -58,8 +60,13 @@ class AudioElementEngine implements PlaybackEngine {
       this.analyserNode = this.ctx.createAnalyser();
       this.analyserNode.fftSize = 4096; // ~10.8Hz/bin at 44.1kHz — enough lows for log binning
       this.analyserNode.smoothingTimeConstant = 0.75;
+      // WebKit ignores HTMLMediaElement.volume once the element is routed
+      // through Web Audio — a GainNode is the authoritative volume control.
+      this.gainNode = this.ctx.createGain();
+      this.gainNode.gain.value = this.volumeValue;
       source.connect(this.analyserNode);
-      this.analyserNode.connect(this.ctx.destination);
+      this.analyserNode.connect(this.gainNode);
+      this.gainNode.connect(this.ctx.destination);
     }
     if (this.ctx.state === "suspended") await this.ctx.resume();
     this.audio.src = convertFileSrc(path);
@@ -92,11 +99,12 @@ class AudioElementEngine implements PlaybackEngine {
   }
 
   get volume(): number {
-    return this.audio.volume;
+    return this.volumeValue;
   }
 
   set volume(v: number) {
-    this.audio.volume = v;
+    this.volumeValue = v;
+    if (this.gainNode) this.gainNode.gain.value = v;
   }
 
   get analyser(): AnalyserNode | null {
