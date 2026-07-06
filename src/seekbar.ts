@@ -11,3 +11,11 @@ export function seekMax(duration: number): number {
 export function seekShown(scrub: number | null, position: number, max: number): number {
   return Math.min(scrub ?? position, max);
 }
+
+/** Filled-track percent for the range background (audit r5 P0: SOTA
+    players paint the elapsed side of every slider). Dead max → "0%". */
+export function sliderFill(value: number, max: number): string {
+  if (!Number.isFinite(max) || max <= 0) return "0%";
+  const pct = Math.max(0, Math.min(1, value / max)) * 100;
+  return `${pct.toFixed(1)}%`;
+}
