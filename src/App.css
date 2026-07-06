@@ -75,6 +75,17 @@ button {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* Mode transition (audit r5 P0): Backstage↔Stage remount fades the
+     incoming surface in instead of hard-cutting. Keyed remount in App
+     retriggers this per switch; it also softens app launch. */
+  animation: mode-enter 260ms ease-out;
+}
+
+@keyframes mode-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.99);
+  }
 }
 
 /* ---- toolbar ---- */
@@ -629,7 +640,13 @@ input[type="range"] {
   flex: 1;
   height: 4px;
   border-radius: 2px;
-  background: var(--bg-hover);
+  /* Filled track (audit r5 P0): the elapsed side is painted in the
+     playback accent. React writes --fill from sliderFill(). */
+  background: linear-gradient(
+    to right,
+    var(--playback) var(--fill, 0%),
+    var(--bg-hover) var(--fill, 0%)
+  );
   cursor: pointer;
 }
 
@@ -646,6 +663,7 @@ input[type="range"]::-webkit-slider-thumb {
 input[type="range"]:disabled {
   opacity: 0.4;
   cursor: default;
+  background: var(--bg-hover);
 }
 
 input[type="range"]:disabled::-webkit-slider-thumb {
@@ -858,10 +876,15 @@ input[type="range"]:disabled::-webkit-slider-thumb {
    still breathes with the music (opacity/scale ride --bass/--highs).
    The dancing playing-row bars and the scan sweep freeze too (P3). */
 @media (prefers-reduced-motion: reduce) {
+  .app,
   .gel-x,
   .gel-blob,
   .np-bars i {
     animation: none;
+  }
+
+  .lyric-line {
+    --cascade: 0s;
   }
 
   .scan-progress::after {
@@ -967,12 +990,19 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 }
 
 .lyric-line {
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.5;
-  padding: 10px 0;
+  /* Stage subtitles read from across the room (audit r5 P1): bigger,
+     bolder, on a springy ease. --cascade staggers each line's motion
+     by its distance from the active line — the Apple Music "wave". */
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 12px 0;
   color: var(--text-dim);
-  transition: color 0.3s, opacity 0.3s, transform 0.3s, filter 0.3s;
+  transition:
+    color 0.3s,
+    opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1) var(--cascade, 0s),
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1) var(--cascade, 0s),
+    filter 0.45s ease var(--cascade, 0s);
   opacity: 0.75;
   transform-origin: left center;
 }
@@ -985,23 +1015,31 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   opacity: 1;
 }
 
-/* Depth of field: distance from the active line fades and blurs. */
+/* Depth of field: distance from the active line fades, blurs, and
+   delays the motion (the cascade). Deeper blur than r4 — the far
+   field should clearly sit behind the focal plane. */
+.lyric-line[data-dist="1"] {
+  --cascade: 40ms;
+}
 .lyric-line[data-dist="2"] {
+  --cascade: 80ms;
   opacity: 0.55;
 }
 .lyric-line[data-dist="3"] {
+  --cascade: 120ms;
   opacity: 0.45;
-  filter: blur(0.5px);
+  filter: blur(1.5px);
 }
 .lyric-line[data-dist="4"] {
-  opacity: 0.35;
-  filter: blur(1px);
+  --cascade: 160ms;
+  opacity: 0.3;
+  filter: blur(2.5px);
 }
 
 .lyric-line.active {
   color: var(--lyrics);
   opacity: 1;
-  transform: scale(1.06);
+  transform: scale(1.04);
 }
 
 .lyric-line.past {

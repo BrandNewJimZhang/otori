@@ -6,7 +6,10 @@
 // Lyric sync: all timing comparisons go through the lyric clock
 // (lyrictime.ts) — engine position minus output latency, plus the
 // perceptual lead, minus the user's per-track nudge. Never compare
-// lyric timestamps against raw positionMs.
+// lyric timestamps against raw position. The clock is sampled inside
+// a rAF loop that writes the karaoke wipe imperatively (audit r5:
+// the r4 version re-rendered the whole lyric list at 60fps); React
+// only re-renders on line changes.
 //
 // Beat reactivity: a rAF loop reads band energies and writes CSS custom
 // properties on the root — the art pulses and the room lighting breathes
@@ -23,21 +26,22 @@ import type { RepeatMode } from "./playorder";
 import { bandEnergy, Smoother } from "./energy";
 import { extractGels } from "./gel";
 import { displayTitle } from "./library";
-import { FOLLOW_GRACE_MS, shouldFollow } from "./lyricfollow";
 import { formatTime } from "./format";
-import { seekMax, seekShown } from "./seekbar";
+import { seekMax, seekShown, sliderFill } from "./seekbar";
 import { NextIcon, PauseIcon, PlayIcon, PrevIcon, RepeatIcon, ShuffleIcon } from "./icons";
 import { currentLineIndex, lyricClock, wordProgress } from "./lyrictime";
 import { Spectrum } from "./Spectrum";
-import { shouldKeepDrawing } from "./vizidle";
 
 interface StageProps {
   track: TrackRow;
   artwork: string | null;
   lyrics: LyricsDoc | null;
   analyser: AnalyserNode | null;
-  /** Current playback position in ms, sampled by the parent at rAF rate. */
-  positionMs: number;
+  /** Live position sampler (ms); called inside the lyric rAF loop. */
+  getPositionMs: () => number;
+  /** Position in seconds at media-timeupdate cadence (~4Hz), for the
+      seek slider and time labels — display only, never lyric timing. */
+  positionSec: number;
   /** Audio-graph output latency in ms (subtracted by the lyric clock). */
   outputLatencyMs: number;
   /** Per-track sync nudge in ms ([ / ] keys in App, persisted). */
@@ -57,6 +61,8 @@ interface StageProps {
 /** Last word of the last line has no successor to bound its wipe; a
     sung phrase tail rarely outlives this. */
 const LAST_WORD_SPAN_MS = 5000;
+/** Manual-scroll grace: auto-follow resumes after this idle time. */
+const FOLLOW_RESUME_MS = 3000;
 /** Offset HUD lingers this long after a nudge. */
 const OFFSET_HUD_MS = 1500;
 
@@ -65,7 +71,8 @@ export function Stage({
   artwork,
   lyrics,
   analyser,
-  positionMs,
+  getPositionMs,
+  positionSec,
   outputLatencyMs,
   lyricsOffsetMs,
   duration,
@@ -87,27 +94,19 @@ export function Stage({
   const chromeTimer = useRef<number>(0);
   // Scrub preview (audit P0): seek once on release, not per drag pixel.
   const [scrub, setScrub] = useState<number | null>(null);
+  // Auto-follow pauses while the user browses the lyrics by wheel;
+  // resumes on idle or on a line click (which is an explicit "go here").
+  const [following, setFollowing] = useState(true);
+  const followTimer = useRef<number>(0);
   // Transient sync badge: shows on [ / ] nudges, not on mount.
   const [offsetHud, setOffsetHud] = useState(false);
   const offsetHudTimer = useRef<number>(0);
   const offsetSeen = useRef(lyricsOffsetMs);
 
-  // Commit a scrub: pointer release, keyboard nudge release (audit R4:
-  // arrows moved the preview but never sought until blur), or blur.
-  const commitScrub = () => {
-    if (scrub != null) {
-      onSeek(scrub);
-      setScrub(null);
-    }
-  };
-
   // Beat drive: bass (kick) pulses the art, highs shimmer the lighting.
   // Fast attack / slow release so hits punch and glow decays musically.
-  // Paused audio decays to silence; once the smoothed pulses settle the
-  // loop stops scheduling frames (vizidle) and the paused-flip below
-  // restarts it on resume.
-  const beatPausedRef = useRef(paused);
-  const beatResumeRef = useRef<(() => void) | null>(null);
+  // Paused → the envelopes decay to black, then the loop parks (audit
+  // r5 P0: no idle rAF burn while nothing moves).
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !analyser) return;
@@ -122,24 +121,13 @@ export function Stage({
       const h = highs.push(bandEnergy(data, binHz, 4000, 16000));
       stage.style.setProperty("--bass", b.toFixed(3));
       stage.style.setProperty("--highs", h.toFixed(3));
-      raf = shouldKeepDrawing(beatPausedRef.current, Math.max(b, h))
-        ? requestAnimationFrame(tick)
-        : 0;
-    };
-    beatResumeRef.current = () => {
-      if (raf === 0) tick(); // guard: never stack a second loop
+      // Park once the glow has faded out after a pause.
+      if (paused && b < 0.005 && h < 0.005) return;
+      raf = requestAnimationFrame(tick);
     };
     tick();
-    return () => {
-      cancelAnimationFrame(raf);
-      beatResumeRef.current = null;
-    };
-  }, [analyser]);
-
-  useEffect(() => {
-    beatPausedRef.current = paused;
-    if (!paused) beatResumeRef.current?.();
-  }, [paused]);
+    return () => cancelAnimationFrame(raf);
+  }, [analyser, paused]);
 
   // Gel change-over on track change. No usable color (grayscale cover,
   // no artwork) → drop the overrides so the CSS house gels apply: that
@@ -195,39 +183,6 @@ export function Stage({
   }, [lyricsOffsetMs]);
 
   const synced = lyrics !== null && lyrics.kind !== "static";
-  const clockMs = lyricClock(positionMs, outputLatencyMs, lyricsOffsetMs);
-  const lineIdx = synced ? currentLineIndex(lyrics, clockMs) : -1;
-
-  // Manual lyric browsing (audit R4): a wheel/touch scroll pauses the
-  // auto-follow so reading ahead isn't yanked back on the next line;
-  // it resumes after the grace period, re-centering immediately.
-  const lastManualScroll = useRef<number | null>(null);
-  const followResume = useRef<number>(0);
-  const lineIdxRef = useRef(-1);
-  lineIdxRef.current = lineIdx;
-  const markManualScroll = () => {
-    lastManualScroll.current = performance.now();
-    // Re-center when the grace expires, even without a line change.
-    window.clearTimeout(followResume.current);
-    followResume.current = window.setTimeout(() => {
-      lastManualScroll.current = null;
-      lineRefs.current[lineIdxRef.current]?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, FOLLOW_GRACE_MS);
-  };
-  useEffect(() => () => window.clearTimeout(followResume.current), []);
-
-  // Scroll only on line change, not every frame.
-  useEffect(() => {
-    if (lineIdx !== activeLine) setActiveLine(lineIdx);
-  }, [lineIdx, activeLine]);
-
-  // scrollIntoView keeps layout simple; a transform-driven list is the
-  // upgrade path if smooth-scroll cadence ever bothers on WKWebView.
-  useEffect(() => {
-    if (activeLine < 0) return;
-    if (!shouldFollow(performance.now(), lastManualScroll.current)) return;
-    lineRefs.current[activeLine]?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeLine]);
 
   /** Where the active line's word wipe ends: the next line's start. */
   function lineEndMs(i: number): number {
@@ -237,6 +192,62 @@ export function Stage({
     const lastStart = words?.length ? words[words.length - 1].time_ms : lines[i].time_ms;
     return lastStart + LAST_WORD_SPAN_MS;
   }
+
+  // Lyric clock loop (audit r5 P1/P0): samples the engine each frame,
+  // flips the active line through React (rare), and writes the karaoke
+  // wipe's --fill straight onto the active line's word spans (60fps,
+  // zero re-renders). While paused the loop parks; a seek re-syncs it
+  // through the positionSec dep (timeupdate cadence).
+  const activeLineLive = useRef(-1);
+  useEffect(() => {
+    if (!synced || !lyrics) {
+      activeLineLive.current = -1;
+      setActiveLine(-1);
+      return;
+    }
+    let raf = 0;
+    const tick = () => {
+      const clockMs = lyricClock(getPositionMs(), outputLatencyMs, lyricsOffsetMs);
+      const idx = currentLineIndex(lyrics, clockMs);
+      if (idx !== activeLineLive.current) {
+        activeLineLive.current = idx;
+        setActiveLine(idx);
+      }
+      const words = idx >= 0 ? lyrics.lines[idx].words : undefined;
+      const el = idx >= 0 ? lineRefs.current[idx] : null;
+      if (words && el) {
+        const fills = wordProgress(words, clockMs, lineEndMs(idx));
+        const spans = el.children;
+        for (let wi = 0; wi < spans.length && wi < fills.length; wi++) {
+          (spans[wi] as HTMLElement).style.setProperty(
+            "--fill",
+            `${(fills[wi] * 100).toFixed(1)}%`,
+          );
+        }
+      }
+      if (!paused) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+    // positionSec: paused seeks re-run the single parked tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lyrics, synced, outputLatencyMs, lyricsOffsetMs, getPositionMs, paused, positionSec]);
+
+  // scrollIntoView keeps layout simple; a transform-driven list is the
+  // upgrade path if smooth-scroll cadence ever bothers on WKWebView.
+  useEffect(() => {
+    if (activeLine < 0 || !following) return;
+    lineRefs.current[activeLine]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeLine, following]);
+
+  /** Wheel over the lyrics = the user is browsing; stop following. */
+  function pauseFollow() {
+    setFollowing(false);
+    window.clearTimeout(followTimer.current);
+    followTimer.current = window.setTimeout(() => setFollowing(true), FOLLOW_RESUME_MS);
+  }
+
+  useEffect(() => () => window.clearTimeout(followTimer.current), []);
 
   return (
     <div className={`stage ${chromeVisible ? "" : "idle"}`} ref={stageRef}>
@@ -281,18 +292,41 @@ export function Stage({
               Stage. */}
           <div className={`stage-controls ${chromeVisible ? "" : "chrome-hidden"}`}>
             <div className="stage-seek" onDoubleClick={(e) => e.stopPropagation()}>
-              <span className="time">{formatTime(scrub ?? positionMs / 1000)}</span>
+              <span className="time">{formatTime(scrub ?? positionSec)}</span>
               <input
                 type="range"
                 min={0}
                 max={seekMax(duration)}
                 step={0.1}
-                value={seekShown(scrub, positionMs / 1000, seekMax(duration))}
+                value={seekShown(scrub, positionSec, seekMax(duration))}
+                style={
+                  {
+                    "--fill": sliderFill(
+                      seekShown(scrub, positionSec, seekMax(duration)),
+                      seekMax(duration),
+                    ),
+                  } as React.CSSProperties
+                }
                 disabled={!Number.isFinite(duration)}
                 onChange={(e) => setScrub(Number(e.target.value))}
-                onPointerUp={commitScrub}
-                onKeyUp={commitScrub}
-                onBlur={commitScrub}
+                onPointerUp={() => {
+                  if (scrub != null) {
+                    onSeek(scrub);
+                    setScrub(null);
+                  }
+                }}
+                onKeyUp={() => {
+                  if (scrub != null) {
+                    onSeek(scrub);
+                    setScrub(null);
+                  }
+                }}
+                onBlur={() => {
+                  if (scrub != null) {
+                    onSeek(scrub);
+                    setScrub(null);
+                  }
+                }}
                 aria-label="Seek"
               />
               <span className="time">
@@ -338,9 +372,7 @@ export function Stage({
         {lyrics ? (
           <div
             className={`stage-lyrics ${synced ? "synced" : "static"}`}
-            // Wheel = the user is reading; pause the follow. Clicking a
-            // line to seek is intent to jump — resume immediately below.
-            onWheel={synced ? markManualScroll : undefined}
+            onWheel={pauseFollow}
           >
             {lyrics.lines.map((line, i) => {
               const active = i === activeLine;
@@ -360,30 +392,24 @@ export function Stage({
                   onClick={
                     synced
                       ? () => {
-                          // A seek is a jump back into the song: cancel the
-                          // browsing pause so the follow re-engages at once.
-                          window.clearTimeout(followResume.current);
-                          lastManualScroll.current = null;
                           // Undo the render-time offset so the sung audio
                           // lands where the user pointed.
                           onSeek(Math.max(0, line.time_ms + lyricsOffsetMs) / 1000);
+                          setFollowing(true);
                         }
                       : undefined
                   }
                   onDoubleClick={synced ? (e) => e.stopPropagation() : undefined}
                 >
                   {line.words && active ? (
-                    // Word-level: continuous karaoke wipe. Each word's
-                    // --fill drives a text-clipped gradient; trailing
-                    // whitespace survives from core's parse_word_tags,
-                    // so plain concatenation spaces correctly.
-                    wordProgress(line.words, clockMs, lineEndMs(i)).map((p, wi) => (
-                      <span
-                        key={wi}
-                        className="w"
-                        style={{ "--fill": `${(p * 100).toFixed(1)}%` } as React.CSSProperties}
-                      >
-                        {line.words![wi].text}
+                    // Word-level: continuous karaoke wipe. The lyric
+                    // clock loop writes each span's --fill imperatively;
+                    // spans mount at 0% and fill without re-rendering.
+                    // Trailing whitespace survives from core's
+                    // parse_word_tags, so concatenation spaces correctly.
+                    line.words.map((w, wi) => (
+                      <span key={wi} className="w">
+                        {w.text}
                       </span>
                     ))
                   ) : (

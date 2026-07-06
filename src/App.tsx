@@ -33,7 +33,7 @@ import {
 import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
 import { dequeue, enqueueNext } from "./queue";
 import { escapeIntent, routeKey, type KeyZone } from "./uikeys";
-import { seekMax, seekShown } from "./seekbar";
+import { seekMax, seekShown, sliderFill } from "./seekbar";
 import {
   DensityIcon,
   MoonIcon,
@@ -75,7 +75,6 @@ function App() {
   // Per-track sync nudge, mirrored from the index row; [ / ] update it.
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   const [artwork, setArtwork] = useState<string | null>(null);
-  const [positionMs, setPositionMs] = useState(0);
   const [paused, setPaused] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<ScanReport | null>(null);
@@ -427,21 +426,10 @@ function App() {
     engine.onTimeUpdate(setPosition);
   }, [engine, step]);
 
-  // Position sampling at rAF rate while in Stage mode (lyrics sync).
-  // Paused position is frozen: sample once and stop the loop; seekTo
-  // keeps the frozen sample honest.
-  useEffect(() => {
-    if (mode !== "stage") return;
-    setPositionMs(engine.positionMs);
-    if (paused) return;
-    let raf = 0;
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
-      setPositionMs(engine.positionMs);
-    };
-    tick();
-    return () => cancelAnimationFrame(raf);
-  }, [mode, engine, paused]);
+  // Live position sampler for Stage's lyric clock loop (audit r5:
+  // Stage samples inside its own rAF instead of App re-rendering the
+  // whole Stage tree at 60fps through a positionMs state).
+  const getPositionMs = useCallback(() => engine.positionMs, [engine]);
 
   const togglePause = useCallback(() => {
     engine.togglePause();
@@ -744,8 +732,6 @@ function App() {
     transitionArmed.current = null;
     engine.seek(secs);
     setPosition(secs);
-    // Stage's paused position loop is stopped — refresh its sample.
-    setPositionMs(secs * 1000);
   }
 
   /** Commit a scrub drag: one decoder seek on release (audit P0). */
@@ -763,13 +749,16 @@ function App() {
 
   if (mode === "stage" && current) {
     return (
-      <div className="app stage-mode" onDoubleClick={() => setMode("backstage")}>
+      // key remounts the surface per mode switch so .app's enter
+      // animation runs both ways (audit r5 P0: no hard cut).
+      <div key="stage" className="app stage-mode" onDoubleClick={() => setMode("backstage")}>
         <Stage
           track={current}
           artwork={artwork}
           lyrics={lyrics}
           analyser={engine.analyser}
-          positionMs={positionMs}
+          getPositionMs={getPositionMs}
+          positionSec={position}
           outputLatencyMs={engine.outputLatencyMs}
           lyricsOffsetMs={lyricsOffsetMs}
           duration={duration}
@@ -809,7 +798,7 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <div key="backstage" className="app">
       <header className={`toolbar ${fullscreen ? "fullscreen" : ""}`} data-tauri-drag-region>
         <h1 className="brand">Ōtori</h1>
         <button onClick={pickAndScan} disabled={scanning}>
@@ -985,6 +974,11 @@ function App() {
             max={seekMax(duration)}
             step={0.1}
             value={seekShown(scrub, position, seekMax(duration))}
+            style={
+              {
+                "--fill": sliderFill(seekShown(scrub, position, seekMax(duration)), seekMax(duration)),
+              } as React.CSSProperties
+            }
             disabled={!current || !Number.isFinite(duration)}
             onChange={(e) => setScrub(Number(e.target.value))}
             onPointerUp={commitScrub}
@@ -1020,6 +1014,7 @@ function App() {
             max={1}
             step={0.01}
             value={muted ? 0 : volume}
+            style={{ "--fill": sliderFill(muted ? 0 : volume, 1) } as React.CSSProperties}
             onChange={(e) => changeVolume(Number(e.target.value))}
             aria-label="Volume"
           />
