@@ -36,6 +36,7 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori lyrics <file> [--json]` | Lyrics: embedded tag, then sidecar `.lrc` | JSON includes sync kind (`word_synced`/`line_synced`/`static`) |
 | `otori artwork <file> [--out <img>] [--min-size <px>] [--json]` | Locate cover art: embedded → sidecar image → folder cover | exit 2 if the shorter side is under `--min-size` (default 500px) or dimensions are unverifiable |
 | `otori backup [dest] [--json]` | Snapshot the library db | default: timestamped file in `<db-dir>/backups/`; never overwrites |
+| `otori jacket <file> [--apply] [--min-size <px>] [--json]` | Fetch a jacket from VocaDB → sidecar | dry-run by default; refuses when art exists; exit 2 on no-match (then fall back to the wiki workflow) |
 | `otori set <file> --title/--artist/--album <v> [--agent <id>] [--apply] [--override-curated] [--json]` | Edit tags | dry-run without `--apply`; exit 2 when curated fields were skipped |
 | `otori curate <file>` / `otori curate --all` | Mark existing values as protected | the onboarding oath |
 | `otori undo <txid>` | Roll back an applied transaction | fails if already undone |
@@ -94,12 +95,20 @@ otori list --json | jq -r '.[].path' | while read -r f; do
   [ "$(otori artwork "$f" --json)" = "null" ] && echo "$f"
 done
 
-# 2. Identify the source from the title's game marker, fetch the
-#    jacket from the wiki (table below), save it next to the file:
+# 2. Vocaloid/Touhou tracks: try the API provider first —
+#    it matches by exact title (incl. aliases) + artist and
+#    enforces the resolution floor automatically:
+otori jacket "/path/to/[Vocaloid] song.mp3" --apply
+#    exit 2 (no match / no album art / VocaDB cover below floor)
+#    → fall back to the wiki workflow below.
+
+# 3. Rhythm-game tracks: identify the source from the title's game
+#    marker, fetch the jacket from the wiki (table below), save it
+#    next to the file:
 #    "/path/to/[Rhythm Game, Arcaea] Tempestissimo.mp3"
 #    → "/path/to/[Rhythm Game, Arcaea] Tempestissimo.jpg"
 
-# 3. Verify pickup (source: "sidecar"):
+# 4. Verify pickup and the floor (source: "sidecar", below_min_size: false):
 otori artwork "/path/to/track.mp3" --json
 ```
 
