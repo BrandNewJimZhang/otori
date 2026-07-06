@@ -18,6 +18,8 @@ import { bandEnergy, Smoother } from "./energy";
 import { extractGels } from "./gel";
 import { displayTitle } from "./library";
 import { formatTime } from "./format";
+import { seekMax, seekShown } from "./seekbar";
+import { NextIcon, PauseIcon, PlayIcon, PrevIcon } from "./icons";
 import { Spectrum } from "./Spectrum";
 
 interface StageProps {
@@ -29,7 +31,10 @@ interface StageProps {
   positionMs: number;
   /** Track length in seconds; NaN until engine metadata loads. */
   duration: number;
+  paused: boolean;
   onSeek: (secs: number) => void;
+  onTogglePause: () => void;
+  onStep: (offset: 1 | -1) => void;
 }
 
 /** Index of the last line at or before `positionMs`; -1 before the first. */
@@ -49,14 +54,20 @@ export function Stage({
   analyser,
   positionMs,
   duration,
+  paused,
   onSeek,
+  onTogglePause,
+  onStep,
 }: StageProps) {
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState(-1);
-  // Exit affordance: visible on mouse movement, fades after 2s idle.
-  const [hintVisible, setHintVisible] = useState(true);
-  const hintTimer = useRef<number>(0);
+  // Chrome affordance (audit P1): controls + hint surface on mouse
+  // movement and retreat after 2s idle — the cursor goes with them.
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const chromeTimer = useRef<number>(0);
+  // Scrub preview (audit P0): seek once on release, not per drag pixel.
+  const [scrub, setScrub] = useState<number | null>(null);
 
   // Beat drive: bass (kick) pulses the art, highs shimmer the lighting.
   // Fast attack / slow release so hits punch and glow decays musically.
@@ -111,15 +122,15 @@ export function Stage({
 
   useEffect(() => {
     const wake = () => {
-      setHintVisible(true);
-      window.clearTimeout(hintTimer.current);
-      hintTimer.current = window.setTimeout(() => setHintVisible(false), 2000);
+      setChromeVisible(true);
+      window.clearTimeout(chromeTimer.current);
+      chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 2000);
     };
     wake();
     window.addEventListener("mousemove", wake);
     return () => {
       window.removeEventListener("mousemove", wake);
-      window.clearTimeout(hintTimer.current);
+      window.clearTimeout(chromeTimer.current);
     };
   }, []);
 
@@ -137,7 +148,7 @@ export function Stage({
   }, [activeLine]);
 
   return (
-    <div className="stage" ref={stageRef}>
+    <div className={`stage ${chromeVisible ? "" : "idle"}`} ref={stageRef}>
       {/* Full-bleed gel wash: two floor + two top blobs drifting on
           eased X/Y tracks (see .stage-gels in App.css). Order matters:
           App.css anchors by :nth-child — floor low, top high. */}
@@ -173,6 +184,7 @@ export function Stage({
           </div>
         </div>
 
+        {/* Synced lyric lines are seek targets (audit P1), Apple Music-style. */}
         {lyrics ? (
           <div className={`stage-lyrics ${synced ? "synced" : "static"}`}>
             {lyrics.lines.map((line, i) => (
@@ -183,7 +195,9 @@ export function Stage({
                 }}
                 className={`lyric-line ${i === activeLine ? "active" : ""} ${
                   synced && i < activeLine ? "past" : ""
-                }`}
+                } ${synced ? "seekable" : ""}`}
+                onClick={synced ? () => onSeek(line.time_ms / 1000) : undefined}
+                onDoubleClick={synced ? (e) => e.stopPropagation() : undefined}
               >
                 {line.words && i === activeLine ? (
                   // Word-level: highlight words whose time has come.
@@ -208,19 +222,46 @@ export function Stage({
         )}
       </div>
 
-      <div className="stage-lighting">
-        {/* stopPropagation: rapid slider clicks must not hit the
+      <div className={`stage-lighting ${chromeVisible ? "" : "chrome-hidden"}`}>
+        {/* stopPropagation: rapid control clicks must not hit the
             app-level double-click that exits Stage. */}
+        <div className="stage-transport" onDoubleClick={(e) => e.stopPropagation()}>
+          <button className="step-btn" onClick={() => onStep(-1)} aria-label="Previous track">
+            <PrevIcon />
+          </button>
+          <button
+            className="play-btn"
+            onClick={onTogglePause}
+            aria-label={paused ? "Play" : "Pause"}
+          >
+            {paused ? <PlayIcon /> : <PauseIcon />}
+          </button>
+          <button className="step-btn" onClick={() => onStep(1)} aria-label="Next track">
+            <NextIcon />
+          </button>
+        </div>
         <div className="stage-seek" onDoubleClick={(e) => e.stopPropagation()}>
-          <span className="time">{formatTime(positionMs / 1000)}</span>
+          <span className="time">{formatTime(scrub ?? positionMs / 1000)}</span>
           <input
             type="range"
             min={0}
-            max={Number.isFinite(duration) ? duration : 0}
+            max={seekMax(duration)}
             step={0.1}
-            value={Math.min(positionMs / 1000, Number.isFinite(duration) ? duration : 0)}
+            value={seekShown(scrub, positionMs / 1000, seekMax(duration))}
             disabled={!Number.isFinite(duration)}
-            onChange={(e) => onSeek(Number(e.target.value))}
+            onChange={(e) => setScrub(Number(e.target.value))}
+            onPointerUp={() => {
+              if (scrub != null) {
+                onSeek(scrub);
+                setScrub(null);
+              }
+            }}
+            onBlur={() => {
+              if (scrub != null) {
+                onSeek(scrub);
+                setScrub(null);
+              }
+            }}
             aria-label="Seek"
           />
           <span className="time">{formatTime(Number.isFinite(duration) ? duration : null)}</span>
@@ -228,7 +269,7 @@ export function Stage({
         <Spectrum analyser={analyser} mirror />
       </div>
 
-      <div className={`stage-hint ${hintVisible ? "" : "hidden"}`}>
+      <div className={`stage-hint ${chromeVisible ? "" : "hidden"}`}>
         Esc → Backstage · Space → play/pause
       </div>
     </div>

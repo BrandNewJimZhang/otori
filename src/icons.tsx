@@ -123,3 +123,20 @@ export function DensityIcon({ compact }: { compact: boolean }) {
     </svg>
   );
 }
+
+/** Stage-mode entry: a proscenium arch over a spotlight beam. */
+export function StageIcon() {
+  return (
+    <svg {...P}>
+      <path
+        d="M4 10a8 8 0 0 1 16 0"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        fill="none"
+        strokeLinecap="round"
+      />
+      <path d="M12 9.5 8 19h8l-4-9.5z" opacity="0.85" />
+      <rect x="3" y="19" width="18" height="1.8" rx="0.9" />
+    </svg>
+  );
+}
