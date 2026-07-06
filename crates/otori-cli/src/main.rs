@@ -92,6 +92,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Fetch an editor-curated BPM from VocaDB into the index
+    FetchBpm {
+        path: PathBuf,
+        /// Actually write the index; default reports the match only
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Embed the resolved sidecar/folder artwork into the audio file
     EmbedArtwork {
         path: PathBuf,
@@ -449,6 +458,100 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 );
             } else {
                 println!("lyrics saved: {}", sidecar.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::FetchBpm { path, apply, json } => {
+            if !path.is_file() {
+                return Err(CliError::bad_input(format!(
+                    "not a file: {}",
+                    path.display()
+                )));
+            }
+            let conn = open_library(cli.db.clone())?;
+            let path_str = path.to_string_lossy();
+            let (track_id, source): (i64, Option<String>) = conn
+                .query_row(
+                    "SELECT id, bpm_source FROM tracks WHERE path = ?1",
+                    [path_str.as_ref()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|_| CliError::bad_input("track is not in the library index (scan first)"))?;
+            // Trust ladder: a TBPM tag outranks any database.
+            if source.as_deref() == Some("tag") {
+                return Err(CliError::bad_input(
+                    "track has a release-authored TBPM tag; that outranks provider data",
+                ));
+            }
+            let tags = otori_core::read_track_tags(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            let title = tags
+                .title
+                .as_deref()
+                .map(strip_category_markers)
+                .ok_or_else(|| CliError::bad_input("track has no title tag to search by"))?;
+            let search =
+                otori_core::vocadb::search_song(&title).map_err(CliError::library)?;
+            let hit = otori_core::vocadb::pick_match(&search, &title, tags.artist.as_deref())
+                .map_err(CliError::library)?;
+            let Some(hit) = hit else {
+                if json {
+                    println!("{}", serde_json::json!({ "matched": false, "title": title }));
+                } else {
+                    println!("no unambiguous VocaDB match for \"{title}\"");
+                }
+                return Ok(ExitCode::from(EXIT_PARTIAL));
+            };
+            let Some(bpm) = hit.bpm else {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "matched": true, "song_id": hit.song_id, "bpm": null,
+                        })
+                    );
+                } else {
+                    println!(
+                        "matched \"{}\" (#{}) but the entry has no BPM recorded",
+                        hit.song_name, hit.song_id
+                    );
+                }
+                return Ok(ExitCode::from(EXIT_PARTIAL));
+            };
+
+            if !apply {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "matched": true, "song_id": hit.song_id,
+                            "bpm": bpm, "bpm_max": hit.bpm_max, "applied": false,
+                        })
+                    );
+                } else {
+                    match hit.bpm_max {
+                        Some(max) => println!("match: {bpm}\u{2013}{max} BPM (variable) — {}", hit.song_name),
+                        None => println!("match: {bpm} BPM — {}", hit.song_name),
+                    }
+                    println!("dry run — pass --apply to write the index");
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+
+            otori_core::analysis::set_provider_bpm(&conn, track_id, bpm, hit.bpm_max, "vocadb")
+                .map_err(|e| CliError::library(e.to_string()))?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "matched": true, "applied": true,
+                        "bpm": bpm, "bpm_max": hit.bpm_max,
+                        "source": "provider:vocadb",
+                    })
+                );
+            } else {
+                println!("BPM saved: {bpm}{} (provider:vocadb)",
+                    hit.bpm_max.map(|m| format!("\u{2013}{m}")).unwrap_or_default());
             }
             Ok(ExitCode::SUCCESS)
         }

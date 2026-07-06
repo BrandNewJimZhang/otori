@@ -267,3 +267,55 @@ fn primary_name_beats_alias_only_rerecord() {
     assert_eq!(hit.song_id, 15691);
     assert!(!hit.album_is_self_titled, "compilation → fallback tier");
 }
+
+/// Response with milli-BPM fields (fields=Bpm): steady and range songs.
+const BPM_JSON: &str = r#"{
+  "items": [
+    {
+      "id": 1001,
+      "name": "steady song",
+      "artistString": "producer feat. miku",
+      "minMilliBpm": 128000,
+      "maxMilliBpm": 128000
+    },
+    {
+      "id": 1002,
+      "name": "soflan song",
+      "artistString": "producer feat. miku",
+      "minMilliBpm": 140000,
+      "maxMilliBpm": 180000
+    },
+    {
+      "id": 1003,
+      "name": "no bpm song",
+      "artistString": "producer feat. miku"
+    }
+  ]
+}"#;
+
+#[test]
+fn extracts_steady_bpm_from_milli_fields() {
+    let hit = vocadb::pick_match(BPM_JSON, "steady song", Some("producer"))
+        .unwrap()
+        .expect("must match");
+    assert_eq!(hit.bpm, Some(128.0));
+    assert_eq!(hit.bpm_max, None);
+}
+
+#[test]
+fn extracts_bpm_range_when_min_max_differ() {
+    let hit = vocadb::pick_match(BPM_JSON, "soflan song", Some("producer"))
+        .unwrap()
+        .expect("must match");
+    assert_eq!(hit.bpm, Some(140.0));
+    assert_eq!(hit.bpm_max, Some(180.0));
+}
+
+#[test]
+fn missing_bpm_fields_yield_none() {
+    let hit = vocadb::pick_match(BPM_JSON, "no bpm song", Some("producer"))
+        .unwrap()
+        .expect("must match");
+    assert_eq!(hit.bpm, None);
+    assert_eq!(hit.bpm_max, None);
+}

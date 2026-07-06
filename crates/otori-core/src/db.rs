@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -29,8 +29,10 @@ CREATE TABLE tracks (
     bpm          REAL,             -- tempo (or range floor); see bpm_analyzed_at
     bpm_max      REAL,             -- range ceiling when tempo varies (soflan); NULL = steady
     bpm_confidence REAL,           -- 0..1 detector confidence; 1.0 for tag values
-    bpm_source   TEXT              -- where the value came from
-                 CHECK (bpm_source IN ('tag', 'detected') OR bpm_source IS NULL),
+    bpm_source   TEXT              -- 'tag' | 'detected' | 'provider:<name>'
+                 CHECK (bpm_source IN ('tag', 'detected')
+                        OR bpm_source LIKE 'provider:%'
+                        OR bpm_source IS NULL),
     bpm_analyzed_at TEXT,          -- set once analysis ran (bpm NULL = beatless)
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
@@ -192,6 +194,21 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
              UPDATE tracks SET bpm = NULL, bpm_analyzed_at = NULL;",
         )?;
         conn.pragma_update(None, "user_version", 7)?;
+    }
+    if version == 7 {
+        // v8: bpm_source grows 'provider:<name>'. SQLite cannot relax a
+        // column CHECK in place; drop + re-add (v7 already reset bpm
+        // data, and tag values are restored by the next scan).
+        conn.execute_batch(
+            "ALTER TABLE tracks DROP COLUMN bpm_source;
+             ALTER TABLE tracks ADD COLUMN bpm_source TEXT
+                 CHECK (bpm_source IN ('tag', 'detected')
+                        OR bpm_source LIKE 'provider:%'
+                        OR bpm_source IS NULL);
+             UPDATE tracks SET bpm = NULL, bpm_max = NULL,
+                 bpm_confidence = NULL, bpm_analyzed_at = NULL;",
+        )?;
+        conn.pragma_update(None, "user_version", 8)?;
     }
     Ok(conn)
 }

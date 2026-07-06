@@ -25,6 +25,11 @@ pub struct Match {
     /// `true` = the chosen album is self-titled (auto-deliver);
     /// `false` = fallback tier (deliver only on explicit opt-in).
     pub album_is_self_titled: bool,
+    /// Entry BPM (or range floor), from milli-BPM fields. Editor-
+    /// curated: authoritative like a TBPM tag, unlike detection.
+    pub bpm: Option<f64>,
+    /// Range ceiling when the entry records variable tempo.
+    pub bpm_max: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +49,11 @@ struct SongItem {
     /// display name (often romanized) and misses JP titles.
     #[serde(default)]
     names: Vec<NameRef>,
+    /// VocaDB stores BPM ×1000 ("milli-BPM").
+    #[serde(rename = "minMilliBpm", default)]
+    min_milli_bpm: Option<i64>,
+    #[serde(rename = "maxMilliBpm", default)]
+    max_milli_bpm: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -192,6 +202,12 @@ pub fn pick_match(
         }
     };
     let chosen = choose_album(&hit.albums, title);
+    let bpm = hit.min_milli_bpm.map(|m| m as f64 / 1000.0);
+    // Equal min/max is a steady tempo, not a range.
+    let bpm_max = match (hit.min_milli_bpm, hit.max_milli_bpm) {
+        (Some(min), Some(max)) if max > min => Some(max as f64 / 1000.0),
+        _ => None,
+    };
     Ok(Some(Match {
         song_id: hit.id,
         song_name: hit.name.clone(),
@@ -199,6 +215,8 @@ pub fn pick_match(
         album_id: chosen.map(|(a, _)| a.id),
         album_name: chosen.map(|(a, _)| a.name.clone()),
         album_is_self_titled: chosen.map(|(_, st)| st).unwrap_or(false),
+        bpm,
+        bpm_max,
     }))
 }
 
@@ -225,7 +243,7 @@ pub fn cover_url(album_id: i64) -> String {
 /// for `pick_match`.
 pub fn search_song(title: &str) -> Result<String, String> {
     let url = format!(
-        "{API_BASE}/api/songs?query={}&maxResults=10&fields=Albums,Names&nameMatchMode=Exact&sort=RatingScore",
+        "{API_BASE}/api/songs?query={}&maxResults=10&fields=Albums,Names,Bpm&nameMatchMode=Exact&sort=RatingScore",
         urlencode(&nfc(title))
     );
     http_get_string(&url)

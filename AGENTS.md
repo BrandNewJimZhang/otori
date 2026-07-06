@@ -190,6 +190,25 @@ Touhou arrange jackets (600px+) that VocaDB doesn't carry; for
 maimai-collected arranges the SilentBlue jacket may still rank higher
 per the priority ladder.
 
+## Fetching BPM
+
+Tempo trust ladder: **TBPM tag > provider > detection**. The GUI's
+detector fills the column automatically; when its confidence is low
+(dimmed in the UI) or the tempo matters (mix planning), fetch the
+editor-curated value:
+
+```bash
+otori fetch-bpm "track.mp3"          # dry-run: show the VocaDB match
+otori fetch-bpm "track.mp3" --apply  # write index (source provider:vocadb)
+```
+
+- VocaDB stores milli-BPM; ranges (soflan) land as `bpm–bpm_max`.
+- Refuses tracks carrying a release-authored TBPM tag (that outranks
+  any database) and tracks not yet scanned into the index.
+- Exit 2 = no unambiguous match, or the entry has no BPM recorded.
+- TouhouDB is VocaDB-shaped (same API); a `--provider` flag can come
+  when Touhou arranges need it.
+
 ## This file cannot rot
 
 Every workflow above is exercised by `scripts/acceptance.sh` (run it
