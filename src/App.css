@@ -370,10 +370,16 @@ tbody tr:hover .row-play {
 }
 
 .col-bpm {
-  width: 62px;
+  width: 72px;
   text-align: right;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+}
+
+/* Detector unsure: show the number, but visibly hedged. */
+.col-bpm.low-confidence {
+  opacity: 0.45;
+  font-style: italic;
 }
 
 .col-format {

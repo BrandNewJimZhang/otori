@@ -9,6 +9,8 @@ export interface TrackRow {
   duration_secs: number | null;
   replaygain_db: number | null;
   bpm: number | null;
+  bpm_max: number | null;
+  bpm_confidence: number | null;
   title: string | null;
   artist: string | null;
   album: string | null;
