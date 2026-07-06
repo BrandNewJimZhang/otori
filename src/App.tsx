@@ -1,18 +1,25 @@
-// Backstage v0: library table + scan + playback bar with live spectrum.
-// Stage mode (large art, lyrics) is Cut 3; this file will split when it
-// grows a second mode.
+// App shell: Backstage (dense table, management) / Stage (performance)
+// with a one-keystroke toggle (PRODUCT.md Pillar 2). Backstage v0's
+// known UI debt is tracked for a dedicated fix round — Stage is Cut 3.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { listTracks, scanLibrary } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
-import type { ScanReport, TrackRow } from "./types";
+import { Stage } from "./Stage";
+import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 import "./App.css";
 
+type Mode = "backstage" | "stage";
+
 function App() {
+  const [mode, setMode] = useState<Mode>("backstage");
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [current, setCurrent] = useState<TrackRow | null>(null);
+  const [lyrics, setLyrics] = useState<LyricsDoc | null>(null);
+  const [artwork, setArtwork] = useState<string | null>(null);
+  const [positionMs, setPositionMs] = useState(0);
   const [paused, setPaused] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<ScanReport | null>(null);
@@ -36,6 +43,10 @@ function App() {
         await engine.play(track.path);
         setCurrent(track);
         setPaused(false);
+        // Companion surfaces load after playback starts; failures there
+        // must never interrupt the music.
+        getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
+        getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
       } catch (e) {
         setError(`${track.title ?? track.path}: ${e}`);
       }
@@ -45,7 +56,6 @@ function App() {
 
   useEffect(() => {
     engine.onEnded(() => {
-      // Auto-advance to the next row in the current listing order.
       const list = tracksRef.current;
       const cur = currentRef.current;
       const idx = list.findIndex((t) => t.id === cur?.id);
@@ -54,6 +64,41 @@ function App() {
     });
     engine.onError(setError);
   }, [engine, play]);
+
+  // Position sampling at rAF rate while in Stage mode (lyrics sync).
+  useEffect(() => {
+    if (mode !== "stage") return;
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      setPositionMs(engine.positionMs);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [mode, engine]);
+
+  const togglePause = useCallback(() => {
+    engine.togglePause();
+    setPaused(engine.paused);
+  }, [engine]);
+
+  // Keyboard: Tab/S toggles mode, Space play/pause, Esc leaves Stage.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.key === "Tab" || e.key === "s") {
+        e.preventDefault();
+        setMode((m) => (m === "backstage" ? "stage" : "backstage"));
+      } else if (e.key === " ") {
+        e.preventDefault();
+        if (currentRef.current) togglePause();
+      } else if (e.key === "Escape") {
+        setMode("backstage");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [togglePause]);
 
   async function pickAndScan() {
     const dir = await openDialog({ directory: true });
@@ -70,9 +115,18 @@ function App() {
     }
   }
 
-  function togglePause() {
-    engine.togglePause();
-    setPaused(engine.paused);
+  if (mode === "stage" && current) {
+    return (
+      <div className="app stage-mode" onDoubleClick={() => setMode("backstage")}>
+        <Stage
+          track={current}
+          artwork={artwork}
+          lyrics={lyrics}
+          analyser={engine.analyser}
+          positionMs={positionMs}
+        />
+      </div>
+    );
   }
 
   return (
@@ -90,6 +144,9 @@ function App() {
             {report.unreadable.length > 0 && ` · ${report.unreadable.length} unreadable`}
           </span>
         )}
+        <span className="mode-hint">
+          {current ? "Tab → Stage · Space → play/pause" : ""}
+        </span>
       </header>
 
       {error && <div className="error-bar">{error}</div>}

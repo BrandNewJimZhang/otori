@@ -2,7 +2,7 @@
 // frontend↔shell contract).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ScanReport, TrackRow } from "./types";
+import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 
 export function scanLibrary(dir: string): Promise<ScanReport> {
   return invoke<ScanReport>("scan_library", { dir });
@@ -10,4 +10,13 @@ export function scanLibrary(dir: string): Promise<ScanReport> {
 
 export function listTracks(): Promise<TrackRow[]> {
   return invoke<TrackRow[]>("list_tracks");
+}
+
+export function getLyrics(path: string): Promise<LyricsDoc | null> {
+  return invoke<LyricsDoc | null>("get_lyrics", { path });
+}
+
+/** Embedded cover art as a data URL, or null. */
+export function getArtwork(path: string): Promise<string | null> {
+  return invoke<string | null>("get_artwork", { path });
 }

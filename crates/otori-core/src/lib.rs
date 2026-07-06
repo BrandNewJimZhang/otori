@@ -8,6 +8,7 @@
 use serde::Serialize;
 
 pub mod db;
+pub mod lyrics;
 pub mod query;
 pub mod scan;
 pub mod write;

@@ -30,6 +30,7 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori scan <dir> [--json]` | Index a folder recursively | exit 2 if files were iCloud-skipped or unreadable |
 | `otori list [--json]` | List indexed tracks | ordered artist → title |
 | `otori tags <file>` | Read tags straight from a file | bypasses the index |
+| `otori lyrics <file> [--json]` | Lyrics: embedded tag, then sidecar `.lrc` | JSON includes sync kind (`word_synced`/`line_synced`/`static`) |
 | `otori set <file> --title/--artist/--album <v> [--agent <id>] [--apply] [--override-curated] [--json]` | Edit tags | dry-run without `--apply`; exit 2 when curated fields were skipped |
 | `otori curate <file>` / `otori curate --all` | Mark existing values as protected | the onboarding oath |
 | `otori undo <txid>` | Roll back an applied transaction | fails if already undone |

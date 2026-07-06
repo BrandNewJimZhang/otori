@@ -11,6 +11,8 @@ export interface PlaybackEngine {
   play(path: string): Promise<void>;
   togglePause(): void;
   readonly paused: boolean;
+  /** Current playback position in milliseconds. */
+  readonly positionMs: number;
   /** Analyser for visualizers; null until first play(). */
   readonly analyser: AnalyserNode | null;
   onEnded(cb: () => void): void;
@@ -60,6 +62,10 @@ class AudioElementEngine implements PlaybackEngine {
 
   get paused(): boolean {
     return this.audio.paused;
+  }
+
+  get positionMs(): number {
+    return this.audio.currentTime * 1000;
   }
 
   get analyser(): AnalyserNode | null {
