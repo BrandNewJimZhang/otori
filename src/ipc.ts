@@ -33,6 +33,8 @@ export function updateTray(title: string | null, paused: boolean): Promise<void>
 export interface PendingTrack {
   id: number;
   path: string;
+  hint_bpm: number | null;
+  hint_bpm_max: number | null;
 }
 
 /** Tracks never BPM-analyzed (index-side worklist for the sweeper). */
@@ -46,9 +48,14 @@ export interface DetectedBpm {
   confidence: number;
 }
 
-/** Persist a detection outcome; null = analyzed, beatless. */
-export function setBpm(trackId: number, detected: DetectedBpm | null): Promise<void> {
-  return invoke<void>("set_bpm", { trackId, detected });
+/** Persist a detection outcome; null = analyzed, beatless.
+    `usedHint` records that an external anchor folded/confirmed it. */
+export function setBpm(
+  trackId: number,
+  detected: DetectedBpm | null,
+  usedHint = false,
+): Promise<void> {
+  return invoke<void>("set_bpm", { trackId, detected, usedHint });
 }
 
 /** Hold/release the display-sleep assertion (Stage mode playing). */

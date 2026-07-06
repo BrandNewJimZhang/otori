@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -26,14 +26,18 @@ CREATE TABLE tracks (
     format       TEXT NOT NULL,
     duration_secs REAL,            -- file property, no provenance; refreshed each scan
     replaygain_db REAL,            -- RG track gain in dB; file property like duration
-    bpm          REAL,             -- tempo (or range floor); see bpm_analyzed_at
+    bpm          REAL,             -- verified tempo (or range floor), detector-owned
     bpm_max      REAL,             -- range ceiling when tempo varies (soflan); NULL = steady
-    bpm_confidence REAL,           -- 0..1 detector confidence; 1.0 for tag values
-    bpm_source   TEXT              -- 'tag' | 'detected' | 'provider:<name>'
-                 CHECK (bpm_source IN ('tag', 'detected')
-                        OR bpm_source LIKE 'provider:%'
-                        OR bpm_source IS NULL),
+    bpm_confidence REAL,           -- 0..1 detector confidence
+    bpm_source   TEXT              -- how bpm was produced
+                 CHECK (bpm_source IN ('detected', 'detected+hint') OR bpm_source IS NULL),
     bpm_analyzed_at TEXT,          -- set once analysis ran (bpm NULL = beatless)
+    bpm_hint     REAL,             -- external anchor (tag/provider); analysis input, not output
+    bpm_hint_max REAL,             -- hint range ceiling
+    bpm_hint_source TEXT           -- 'tag' | 'provider:<name>'
+                 CHECK (bpm_hint_source = 'tag'
+                        OR bpm_hint_source LIKE 'provider:%'
+                        OR bpm_hint_source IS NULL),
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
     first_seen   TEXT NOT NULL,
@@ -209,6 +213,31 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
                  bpm_confidence = NULL, bpm_analyzed_at = NULL;",
         )?;
         conn.pragma_update(None, "user_version", 8)?;
+    }
+    if (7..=8).contains(&version) {
+        // v9: external BPM demoted from result to hint (analysis
+        // anchor). bpm becomes detector-owned; tag/provider values
+        // move to bpm_hint*. Migrate existing tag/provider rows into
+        // hints and reopen their analysis for verification.
+        conn.execute_batch(
+            "ALTER TABLE tracks ADD COLUMN bpm_hint REAL;
+             ALTER TABLE tracks ADD COLUMN bpm_hint_max REAL;
+             ALTER TABLE tracks ADD COLUMN bpm_hint_source TEXT
+                 CHECK (bpm_hint_source = 'tag'
+                        OR bpm_hint_source LIKE 'provider:%'
+                        OR bpm_hint_source IS NULL);
+             UPDATE tracks SET
+                 bpm_hint = bpm, bpm_hint_max = bpm_max,
+                 bpm_hint_source = bpm_source,
+                 bpm = NULL, bpm_max = NULL, bpm_confidence = NULL,
+                 bpm_source = NULL, bpm_analyzed_at = NULL
+             WHERE bpm_source = 'tag' OR bpm_source LIKE 'provider:%';
+             UPDATE tracks SET bpm_source = NULL WHERE bpm_source NOT IN ('detected', 'detected+hint');",
+        )?;
+        // Old narrow CHECK on bpm_source (v8) tolerated these values;
+        // the new semantics live in code (set_bpm writes only
+        // 'detected'/'detected+hint'), so no column rebuild needed.
+        conn.pragma_update(None, "user_version", 9)?;
     }
     Ok(conn)
 }

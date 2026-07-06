@@ -192,19 +192,25 @@ per the priority ladder.
 
 ## Fetching BPM
 
-Tempo trust ladder: **TBPM tag > provider > detection**. The GUI's
-detector fills the column automatically; when its confidence is low
-(dimmed in the UI) or the tempo matters (mix planning), fetch the
-editor-curated value:
+Tempo model: **external BPM is a hint, never a result** (founding-user
+decision 2026-07-07). TBPM tags, VocaDB values, wiki numbers — all land
+in `bpm_hint*` and anchor the detector's octave folding (sparse kicks
+read half tempo, busy hats read double; the anchor decides which octave
+is real). The verified value in `bpm` is always detector-produced;
+`bpm_source` says whether a hint anchored it (`detected+hint`). A hint
+that disagrees non-harmonically with the measurement is ignored.
+
+Fetch an editor-curated hint when detection is dimmed (low confidence)
+or shows the wrong octave:
 
 ```bash
 otori fetch-bpm "track.mp3"          # dry-run: show the VocaDB match
 otori fetch-bpm "track.mp3" --apply  # write index (source provider:vocadb)
 ```
 
-- VocaDB stores milli-BPM; ranges (soflan) land as `bpm–bpm_max`.
-- Refuses tracks carrying a release-authored TBPM tag (that outranks
-  any database) and tracks not yet scanned into the index.
+- VocaDB stores milli-BPM; ranges (soflan) land as hint ranges.
+- Recording a hint reopens analysis: the next sweep re-verifies
+  against the new anchor.
 - Exit 2 = no unambiguous match, or the entry has no BPM recorded.
 - TouhouDB is VocaDB-shaped (same API); a `--provider` flag can come
   when Touhou arranges need it.
@@ -218,8 +224,9 @@ otori import-bpm "track.mp3" --bpm 175 --provider tunebat
 otori import-bpm "track.mp3" --bpm 140 --bpm-max 180 --provider tunebat
 ```
 
-Same ladder (refuses TBPM-tagged tracks), same sanity window
-(20-400, ceiling >= floor), provider name lowercase alphanumeric.
+Same sanity window (20-400, ceiling >= floor), provider name
+lowercase alphanumeric. Hints replace hints — the last deliberate
+import wins; rescans never clobber a provider hint with a tag.
 
 ## This file cannot rot
 

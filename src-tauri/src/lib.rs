@@ -87,6 +87,7 @@ fn set_bpm(
     state: tauri::State<'_, Library>,
     track_id: i64,
     detected: Option<DetectedBpmArg>,
+    used_hint: bool,
 ) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let detected = detected.map(|d| analysis::DetectedBpm {
@@ -94,7 +95,11 @@ fn set_bpm(
         bpm_max: d.bpm_max,
         confidence: d.confidence,
     });
-    analysis::set_bpm(&conn, track_id, detected).map_err(|e| e.to_string())
+    match (detected, used_hint) {
+        (Some(d), true) => analysis::set_bpm_verified(&conn, track_id, d),
+        (d, _) => analysis::set_bpm(&conn, track_id, d),
+    }
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

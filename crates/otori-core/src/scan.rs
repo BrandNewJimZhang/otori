@@ -106,14 +106,17 @@ pub fn scan(conn: &mut Connection, root: &Path) -> rusqlite::Result<ScanReport> 
                     "UPDATE tracks SET duration_secs = ?1, replaygain_db = ?2 WHERE id = ?3",
                     rusqlite::params![scanned.duration_secs, scanned.replaygain_db, track_id],
                 )?;
-                // Release-authored BPM is authoritative: confidence 1,
-                // marked analyzed so the detector sweep skips it.
+                // A TBPM tag is an analysis hint (anchor), not a
+                // result: the detector verifies it. Deliberate
+                // provider imports are not clobbered by rescans.
                 if let Some(bpm) = scanned.tag_bpm {
                     tx.execute(
                         "UPDATE tracks
-                         SET bpm = ?1, bpm_max = NULL, bpm_confidence = 1.0,
-                             bpm_source = 'tag', bpm_analyzed_at = datetime('now')
-                         WHERE id = ?2",
+                         SET bpm_hint = ?1, bpm_hint_max = NULL,
+                             bpm_hint_source = 'tag', bpm_analyzed_at = NULL
+                         WHERE id = ?2
+                           AND (bpm_hint_source IS NULL OR bpm_hint_source = 'tag')
+                           AND (bpm_hint IS NOT ?1 OR bpm_hint IS NULL)",
                         rusqlite::params![bpm, track_id],
                     )?;
                 }

@@ -1,6 +1,10 @@
-//! BPM analysis bookkeeping: which tracks still need analysis, and
-//! recording results with trust metadata (source, confidence, range).
-//! Detection itself runs in the GUI; TBPM tags are read at scan time.
+//! BPM analysis bookkeeping: hints vs verified detections.
+//!
+//! External BPM data (TBPM tags, VocaDB/wiki/provider values) is a
+//! *hint* — an analysis anchor, never a result (founding-user decision
+//! 2026-07-07: published BPM is a great basis but can't be used
+//! directly). The GUI detector verifies hints (octave folding) and
+//! owns the bpm column; hints live in their own columns.
 
 use std::fs;
 use std::path::Path;
@@ -38,35 +42,37 @@ fn seeded_library() -> (otori_core::Connection, i64) {
 }
 
 #[test]
-fn fresh_tracks_are_pending_analysis() {
+fn fresh_tracks_are_pending_with_no_hint() {
     let (conn, id) = seeded_library();
     let pending = analysis::list_bpm_pending(&conn).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, id);
-    assert!(pending[0].path.ends_with("a.mp3"));
+    assert_eq!(pending[0].hint_bpm, None);
 }
 
 #[test]
-fn scan_trusts_a_tbpm_tag_and_skips_detection() {
+fn tbpm_tag_becomes_a_hint_and_stays_pending() {
     let lib = tempfile::tempdir().unwrap();
     write_mp3_with_tbpm(&lib.path().join("tagged.mp3"), "185");
 
     let mut conn = db::open_in_memory().unwrap();
     scan::scan(&mut conn, lib.path()).unwrap();
 
-    // Tag value lands directly: bpm set, source 'tag', confidence 1,
-    // and the track is NOT pending detection.
-    let (bpm, source, conf): (f64, String, f64) = conn
+    // Tag lands as a hint, NOT as bpm; detection still pending, and
+    // the pending row carries the hint for octave anchoring.
+    let (bpm, hint, source): (Option<f64>, f64, String) = conn
         .query_row(
-            "SELECT bpm, bpm_source, bpm_confidence FROM tracks WHERE path LIKE '%tagged.mp3'",
+            "SELECT bpm, bpm_hint, bpm_hint_source FROM tracks WHERE path LIKE '%tagged.mp3'",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
-    assert_eq!(bpm, 185.0);
+    assert_eq!(bpm, None);
+    assert_eq!(hint, 185.0);
     assert_eq!(source, "tag");
-    assert_eq!(conf, 1.0);
-    assert!(analysis::list_bpm_pending(&conn).unwrap().is_empty());
+    let pending = analysis::list_bpm_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].hint_bpm, Some(185.0));
 }
 
 #[test]
@@ -77,8 +83,58 @@ fn nonsense_tbpm_tags_are_ignored() {
     let mut conn = db::open_in_memory().unwrap();
     scan::scan(&mut conn, lib.path()).unwrap();
 
-    // 0 / unparseable TBPM = no data, not "0 BPM": still pending.
-    assert_eq!(analysis::list_bpm_pending(&conn).unwrap().len(), 1);
+    let hint: Option<f64> = conn
+        .query_row("SELECT bpm_hint FROM tracks WHERE path LIKE '%zero.mp3'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(hint, None);
+}
+
+#[test]
+fn provider_hint_reopens_analysis_for_verification() {
+    let (conn, id) = seeded_library();
+    // Old detection exists…
+    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 87.0, bpm_max: None, confidence: 0.6 })).unwrap();
+    assert!(analysis::list_bpm_pending(&conn).unwrap().is_empty());
+
+    // …then a wiki/provider hint arrives: analysis re-opens so the
+    // detector can re-fold against the anchor.
+    analysis::set_bpm_hint(&conn, id, 174.0, None, "provider:tunebat").unwrap();
+    let pending = analysis::list_bpm_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].hint_bpm, Some(174.0));
+}
+
+#[test]
+fn hint_validation_rejects_junk() {
+    let (conn, id) = seeded_library();
+    assert!(analysis::set_bpm_hint(&conn, id, 0.0, None, "provider:tunebat").is_err());
+    assert!(analysis::set_bpm_hint(&conn, id, 3000.0, None, "provider:tunebat").is_err());
+    assert!(analysis::set_bpm_hint(&conn, id, 180.0, Some(140.0), "provider:tunebat").is_err());
+    assert!(analysis::set_bpm_hint(&conn, id, 150.0, None, "Provider:X").is_err());
+    assert!(analysis::set_bpm_hint(&conn, id, 150.0, None, "tag").is_ok());
+    assert!(analysis::set_bpm_hint(&conn, id, 150.0, None, "provider:vocadb").is_ok());
+}
+
+#[test]
+fn scan_does_not_clobber_a_provider_hint_with_a_tag() {
+    let lib = tempfile::tempdir().unwrap();
+    write_mp3_with_tbpm(&lib.path().join("both.mp3"), "90");
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+    let id: i64 = conn
+        .query_row("SELECT id FROM tracks LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+
+    // Deliberate provider import wins over the rescanned tag.
+    analysis::set_bpm_hint(&conn, id, 180.0, None, "provider:tunebat").unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+    let (hint, source): (f64, String) = conn
+        .query_row("SELECT bpm_hint, bpm_hint_source FROM tracks WHERE id = ?1", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(hint, 180.0);
+    assert_eq!(source, "provider:tunebat");
 }
 
 #[test]
@@ -127,93 +183,8 @@ fn beatless_result_is_recorded_as_analyzed_without_a_bpm() {
 }
 
 #[test]
-fn tag_sourced_bpm_is_never_overwritten_by_detection() {
-    let lib = tempfile::tempdir().unwrap();
-    write_mp3_with_tbpm(&lib.path().join("tagged.mp3"), "185");
-    let mut conn = db::open_in_memory().unwrap();
-    scan::scan(&mut conn, lib.path()).unwrap();
-    let id: i64 = conn
-        .query_row("SELECT id FROM tracks LIMIT 1", [], |r| r.get(0))
-        .unwrap();
-
-    // A stray detection result must not clobber the authoritative tag.
-    assert!(analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 92.0, bpm_max: None, confidence: 0.9 })).is_err());
-    let bpm: f64 = conn
-        .query_row("SELECT bpm FROM tracks WHERE id = ?1", [id], |r| r.get(0))
-        .unwrap();
-    assert_eq!(bpm, 185.0);
-}
-
-#[test]
 fn unknown_track_fails_fast() {
     let (conn, _) = seeded_library();
     assert!(analysis::set_bpm(&conn, 9999, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.5 })).is_err());
-}
-
-#[test]
-fn provider_bpm_lands_with_provider_source_and_full_confidence() {
-    let (conn, id) = seeded_library();
-    analysis::set_provider_bpm(&conn, id, 175.0, Some(200.0), "vocadb").unwrap();
-
-    let (bpm, bpm_max, conf, source): (f64, Option<f64>, f64, String) = conn
-        .query_row(
-            "SELECT bpm, bpm_max, bpm_confidence, bpm_source FROM tracks WHERE id = ?1",
-            [id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
-        .unwrap();
-    assert_eq!(bpm, 175.0);
-    assert_eq!(bpm_max, Some(200.0));
-    assert_eq!(conf, 1.0);
-    assert_eq!(source, "provider:vocadb");
-    assert!(analysis::list_bpm_pending(&conn).unwrap().is_empty());
-}
-
-#[test]
-fn provider_bpm_overwrites_detection_but_never_a_tag() {
-    let (conn, id) = seeded_library();
-    // Detection first — provider should replace it (editor-curated
-    // beats estimated).
-    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 92.0, bpm_max: None, confidence: 0.5 })).unwrap();
-    analysis::set_provider_bpm(&conn, id, 175.0, None, "vocadb").unwrap();
-    let bpm: f64 = conn
-        .query_row("SELECT bpm FROM tracks WHERE id = ?1", [id], |r| r.get(0))
-        .unwrap();
-    assert_eq!(bpm, 175.0);
-
-    // Tag-sourced rows refuse provider writes (release beats database).
-    conn.execute(
-        "UPDATE tracks SET bpm = 128.0, bpm_source = 'tag', bpm_confidence = 1.0 WHERE id = ?1",
-        [id],
-    )
-    .unwrap();
-    assert!(analysis::set_provider_bpm(&conn, id, 99.0, None, "vocadb").is_err());
-}
-
-#[test]
-fn detection_never_overwrites_a_provider_value() {
-    let (conn, id) = seeded_library();
-    analysis::set_provider_bpm(&conn, id, 175.0, None, "vocadb").unwrap();
-    assert!(analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 92.0, bpm_max: None, confidence: 0.9 })).is_err());
-}
-
-#[test]
-fn provider_names_are_validated() {
-    let (conn, id) = seeded_library();
-    // Lowercase alphanum only: the name lands inside bpm_source and
-    // must stay greppable/parseable ('provider:tunebat', not
-    // 'provider:My Cool Scraper!!').
-    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "").is_err());
-    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "has space").is_err());
-    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "Tag").is_err());
-    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "tunebat").is_ok());
-}
-
-#[test]
-fn provider_bpm_values_are_sanity_checked() {
-    let (conn, id) = seeded_library();
-    assert!(analysis::set_provider_bpm(&conn, id, 0.0, None, "tunebat").is_err());
-    assert!(analysis::set_provider_bpm(&conn, id, 3000.0, None, "tunebat").is_err());
-    // Inverted range is data error, not a range.
-    assert!(analysis::set_provider_bpm(&conn, id, 180.0, Some(140.0), "tunebat").is_err());
+    assert!(analysis::set_bpm_hint(&conn, 9999, 120.0, None, "tag").is_err());
 }

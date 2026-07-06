@@ -25,6 +25,7 @@ function track(id: number, over: Partial<TrackRow> = {}): TrackRow {
     bpm: null,
     bpm_max: null,
     bpm_confidence: null,
+    bpm_hint: null,
     title: `Track ${id}`,
     artist: null,
     album: null,
