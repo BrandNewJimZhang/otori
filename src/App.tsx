@@ -3,6 +3,7 @@
 // lives in LibraryTable, view logic in library.ts — App owns state.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getArtwork, getLyrics, listTracks, scanLibrary } from "./ipc";
@@ -14,6 +15,7 @@ import { LibraryTable } from "./LibraryTable";
 import { formatTime } from "./format";
 import {
   clickSelect,
+  contextTargets,
   displayTitle,
   emptySelection,
   filterTracks,
@@ -38,7 +40,8 @@ type Mode = "backstage" | "stage";
 interface MenuState {
   x: number;
   y: number;
-  track: TrackRow;
+  /** Rows the menu acts on (clicked row, or the multi-selection containing it). */
+  targets: TrackRow[];
 }
 
 function App() {
@@ -78,6 +81,16 @@ function App() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
+  // shell emits `library-changed` when an external writer (CLI/agent)
+  // commits; re-fetch so the table reflects it within ~1s.
+  useEffect(() => {
+    const unlisten = listen("library-changed", refresh);
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, [refresh]);
 
   // Apply the persisted volume to the engine once it exists.
   useEffect(() => {
@@ -158,20 +171,44 @@ function App() {
           artwork: artwork ? [{ src: artwork }] : [],
         })
       : null;
-    ms.setActionHandler("play", togglePause);
-    ms.setActionHandler("pause", togglePause);
+    // Idempotent per system semantics: "play" only resumes, "pause" only pauses.
+    ms.setActionHandler("play", () => {
+      if (engine.paused) togglePause();
+    });
+    ms.setActionHandler("pause", () => {
+      if (!engine.paused) togglePause();
+    });
     ms.setActionHandler("previoustrack", () => step(-1));
     ms.setActionHandler("nexttrack", () => step(1));
+    ms.setActionHandler("seekto", (d) => {
+      if (d.seekTime != null) {
+        engine.seek(d.seekTime);
+        setPosition(d.seekTime);
+      }
+    });
     return () => {
       ms.setActionHandler("play", null);
       ms.setActionHandler("pause", null);
       ms.setActionHandler("previoustrack", null);
       ms.setActionHandler("nexttrack", null);
+      ms.setActionHandler("seekto", null);
     };
-  }, [current, artwork, togglePause, step]);
+  }, [current, artwork, togglePause, step, engine]);
 
-  // Keyboard: Tab/S mode, Space play/pause, ↑↓ select, Enter play,
-  // ⌘F search, Esc dismiss (search → selection → Stage).
+  // Control Center progress: position/duration at timeupdate cadence.
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !current) return;
+    if (!Number.isFinite(engine.duration)) return;
+    navigator.mediaSession.setPositionState({
+      duration: engine.duration,
+      position: Math.min(position, engine.duration),
+      playbackRate: 1,
+    });
+  }, [current, position, engine]);
+
+  // Keyboard: S toggles mode (Tab stays with the focus system),
+  // Space play/pause, ↑↓ select, Enter play, ⌘F search,
+  // Esc dismiss (search → selection → Stage).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "f") {
@@ -184,7 +221,7 @@ function App() {
         if (e.key === "Escape") (e.target as HTMLInputElement).blur();
         return;
       }
-      if (e.key === "Tab" || e.key === "s") {
+      if (e.key === "s") {
         e.preventDefault();
         setMode((m) => (m === "backstage" ? "stage" : "backstage"));
       } else if (e.key === " ") {
@@ -223,16 +260,27 @@ function App() {
   }
 
   const menuItems: MenuItem[] = useMemo(() => {
-    if (!menu) return [];
+    if (!menu || menu.targets.length === 0) return [];
+    const [first] = menu.targets;
+    if (menu.targets.length === 1) {
+      return [
+        { label: "Play", action: () => void play(first) },
+        {
+          label: "Reveal in Finder",
+          action: () => void revealItemInDir(first.path).catch((e) => setError(String(e))),
+        },
+        {
+          label: "Copy path",
+          action: () => void navigator.clipboard.writeText(first.path).catch(() => {}),
+        },
+      ];
+    }
+    // Multi-selection: batch actions only (play is inherently single).
+    const paths = menu.targets.map((t) => t.path).join("\n");
     return [
-      { label: "Play", action: () => void play(menu.track) },
       {
-        label: "Reveal in Finder",
-        action: () => void revealItemInDir(menu.track.path).catch((e) => setError(String(e))),
-      },
-      {
-        label: "Copy path",
-        action: () => void navigator.clipboard.writeText(menu.track.path).catch(() => {}),
+        label: `Copy ${menu.targets.length} paths`,
+        action: () => void navigator.clipboard.writeText(paths).catch(() => {}),
       },
     ];
   }, [menu, play]);
@@ -296,7 +344,7 @@ function App() {
           </span>
         )}
         <span className="mode-hint">
-          {current ? "Tab → Stage · Space → play/pause" : ""}
+          {current ? "S → Stage · Space → play/pause" : ""}
         </span>
       </header>
 
@@ -333,7 +381,11 @@ function App() {
             onRowClick={(id, mods) => setSelection((s) => clickSelect(s, visible, id, mods))}
             onRowContextMenu={(track, e) => {
               e.preventDefault();
-              setMenu({ x: e.clientX, y: e.clientY, track });
+              setMenu({
+                x: e.clientX,
+                y: e.clientY,
+                targets: contextTargets(selection, visible, track.id),
+              });
             }}
             onPlay={play}
           />

@@ -97,3 +97,14 @@ export function stepSelect(sel: Selection, visible: TrackRow[], offset: 1 | -1):
   const id = visible[next].id;
   return { ids: new Set([id]), anchor: id };
 }
+
+/**
+ * Rows a context menu acts on: the selection when the clicked row is part
+ * of it (macOS convention), otherwise just the clicked row. Visible order.
+ */
+export function contextTargets(sel: Selection, visible: TrackRow[], clickedId: number): TrackRow[] {
+  if (sel.ids.has(clickedId) && sel.ids.size > 1) {
+    return visible.filter((t) => sel.ids.has(t.id));
+  }
+  return visible.filter((t) => t.id === clickedId);
+}
