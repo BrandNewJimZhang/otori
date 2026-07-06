@@ -28,6 +28,7 @@ import {
   type SortSpec,
 } from "./library";
 import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
+import { dequeue, enqueueNext } from "./queue";
 import { routeKey, type KeyZone } from "./uikeys";
 import { seekMax, seekShown } from "./seekbar";
 import {
@@ -92,6 +93,8 @@ function App() {
   // Scrub preview (audit P0): thumb position while dragging the seek
   // slider; the decoder seek fires once on release, not per pixel.
   const [scrub, setScrub] = useState<number | null>(null);
+  // Play-next queue (audit P1): explicit picks preempt the play order.
+  const [queue, setQueue] = useState<number[]>([]);
   const engine = useMemo(createEngine, []);
   const searchRef = useRef<HTMLInputElement>(null);
   // Shuffle order is frozen when shuffle turns on (or a track starts
@@ -104,6 +107,11 @@ function App() {
     () => sortTracks(filterTracks(tracks, query), sort),
     [tracks, query, sort],
   );
+  // Queue badge lookup: track id → 1-based position.
+  const queuePositions = useMemo(
+    () => new Map(queue.map((id, i) => [id, i + 1])),
+    [queue],
+  );
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const currentRef = useRef(current);
@@ -114,6 +122,8 @@ function App() {
   shuffleRef.current = shuffle;
   const repeatRef = useRef(repeat);
   repeatRef.current = repeat;
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
 
   const refresh = useCallback(() => {
     listTracks().then(setTracks).catch((e) => setError(String(e)));
@@ -198,10 +208,28 @@ function App() {
   // Step through the play order (visible listing, or the frozen
   // shuffle permutation). `manual` distinguishes a user skip from a
   // natural track end — repeat-one only replays on natural ends.
+  // A forward step consumes the play-next queue first (audit P1);
+  // repeat-one natural replays still win over the queue.
   const step = useCallback(
     (offset: 1 | -1, manual = true) => {
       const list = visibleRef.current;
       const cur = currentRef.current;
+      if (offset === 1 && !(repeatRef.current === "one" && !manual)) {
+        let popped = queueRef.current;
+        // Skip queued ids that left the library since queuing.
+        for (;;) {
+          const { id, rest } = dequeue(popped);
+          if (id == null) break;
+          popped = rest;
+          const queued = list.find((t) => t.id === id);
+          if (queued) {
+            setQueue(rest);
+            void play(queued);
+            return true;
+          }
+        }
+        if (popped !== queueRef.current) setQueue(popped);
+      }
       const visibleIds = list.map((t) => t.id);
       const order = shuffleRef.current
         ? effectiveOrder(visibleIds, shuffleOrderRef.current)
@@ -242,19 +270,22 @@ function App() {
   }, []);
 
   // Keep the idle deck preloaded with the track a natural end leads to
-  // (gapless). "Next" follows the play order — shuffle permutation and
-  // repeat included (repeat-one preloads the same file for a gapless
-  // replay) — not merely the next visible row. Beat grids for the
-  // current/next pair warm here too (crossfade planning needs both).
+  // (gapless). "Next" follows the play-next queue first (audit P1),
+  // then the play order — shuffle permutation and repeat included
+  // (repeat-one preloads the same file for a gapless replay). Beat
+  // grids for the current/next pair warm here too (crossfade planning
+  // needs both).
   useEffect(() => {
     const visibleIds = visible.map((t) => t.id);
     const order = shuffle ? effectiveOrder(visibleIds, shuffleOrderRef.current) : visibleIds;
-    const id = nextId(order, current?.id ?? null, 1, repeat, false);
+    const queuedId =
+      repeat === "one" ? null : (queue.find((qid) => visibleIds.includes(qid)) ?? null);
+    const id = queuedId ?? nextId(order, current?.id ?? null, 1, repeat, false);
     const next = id != null ? visible.find((t) => t.id === id) : undefined;
     engine.preloadNext(next ? { path: next.path, replaygainDb: next.replaygain_db } : null);
     if (current) void beatGridFor(current.path);
     if (next) void beatGridFor(next.path);
-  }, [engine, visible, current, shuffle, repeat]);
+  }, [engine, visible, current, shuffle, repeat, queue]);
 
   // DJ crossfade: when enabled and the track nears its end, plan a
   // transition from the two beat grids and hand it to the engine.
@@ -269,14 +300,18 @@ function App() {
     if (transitionArmed.current === current.path) return;
     transitionArmed.current = current.path;
 
-    // "Next" follows the play order (shuffle/repeat), same as preload.
+    // "Next" follows the queue then the play order, same as preload.
     // Repeat-one replays the same file — a crossfade into itself is
     // meaningless, so let the gapless path handle it.
     const visibleIds = visibleRef.current.map((t) => t.id);
     const order = shuffleRef.current
       ? effectiveOrder(visibleIds, shuffleOrderRef.current)
       : visibleIds;
-    const id = nextId(order, current.id, 1, repeatRef.current, false);
+    const queuedId =
+      repeatRef.current === "one"
+        ? null
+        : (queueRef.current.find((qid) => visibleIds.includes(qid)) ?? null);
+    const id = queuedId ?? nextId(order, current.id, 1, repeatRef.current, false);
     const next = id != null && id !== current.id ? visibleRef.current.find((t) => t.id === id) : undefined;
     if (!next) return;
     void (async () => {
@@ -300,6 +335,8 @@ function App() {
       if (track) {
         setCurrent(track);
         setPosition(0);
+        // The engine may have advanced into the queue head — consume it.
+        setQueue((q) => q.filter((id) => id !== track.id));
         getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
         getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
       }
@@ -329,6 +366,8 @@ function App() {
         if (track) {
           setCurrent(track);
           setPosition(0);
+          // The handoff may have been into the queue head — consume it.
+          setQueue((q) => q.filter((id) => id !== track.id));
           getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
           getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
           return;
@@ -506,9 +545,21 @@ function App() {
   const menuItems: MenuItem[] = useMemo(() => {
     if (!menu || menu.targets.length === 0) return [];
     const [first] = menu.targets;
+    const ids = menu.targets.map((t) => t.id);
+    const inQueue = ids.every((id) => queue.includes(id));
+    const queueItem: MenuItem = inQueue
+      ? {
+          label: ids.length === 1 ? "Remove from queue" : `Remove ${ids.length} from queue`,
+          action: () => setQueue((q) => q.filter((id) => !ids.includes(id))),
+        }
+      : {
+          label: ids.length === 1 ? "Play next" : `Play ${ids.length} next`,
+          action: () => setQueue((q) => enqueueNext(q, ids)),
+        };
     if (menu.targets.length === 1) {
       return [
         { label: "Play", action: () => void play(first) },
+        queueItem,
         {
           label: "Reveal in Finder",
           action: () => void revealItemInDir(first.path).catch((e) => setError(String(e))),
@@ -522,12 +573,13 @@ function App() {
     // Multi-selection: batch actions only (play is inherently single).
     const paths = menu.targets.map((t) => t.path).join("\n");
     return [
+      queueItem,
       {
         label: `Copy ${menu.targets.length} paths`,
         action: () => void navigator.clipboard.writeText(paths).catch(() => {}),
       },
     ];
-  }, [menu, play]);
+  }, [menu, play, queue]);
 
   function seekTo(secs: number) {
     engine.seek(secs);
@@ -671,6 +723,7 @@ function App() {
             tracks={visible}
             playingId={current?.id ?? null}
             paused={paused}
+            queuePositions={queuePositions}
             selection={selection}
             sort={sort}
             columnWidths={columnWidths}
@@ -737,8 +790,13 @@ function App() {
 
         <div
           className="now-playing"
+          onClick={
+            current
+              ? () => setSelection({ ids: new Set([current.id]), anchor: current.id })
+              : undefined
+          }
           onDoubleClick={current ? () => setMode("stage") : undefined}
-          title={current ? "Double-click for Stage" : undefined}
+          title={current ? "Click to locate · double-click for Stage" : undefined}
         >
           {current && artwork && <img className="np-art" src={artwork} alt="" />}
           {current ? (
