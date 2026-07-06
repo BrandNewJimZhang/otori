@@ -39,6 +39,8 @@ import {
   SunIcon,
   VolumeIcon,
 } from "./icons";
+import { beatGridFor } from "./beatservice";
+import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type Theme } from "./prefs";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 import "./App.css";
@@ -73,6 +75,7 @@ function App() {
   const [repeat, setRepeat] = useState<RepeatMode>(initialPrefs.repeat);
   const [theme, setTheme] = useState<Theme>(initialPrefs.theme);
   const [fullscreen, setFullscreen] = useState(false);
+  const [crossfadeSec, setCrossfadeSec] = useState(initialPrefs.crossfadeSec);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -122,8 +125,8 @@ function App() {
   }, [engine]);
 
   useEffect(() => {
-    savePrefs(localStorage, { volume, sort, shuffle, repeat, theme });
-  }, [volume, sort, shuffle, repeat, theme]);
+    savePrefs(localStorage, { volume, sort, shuffle, repeat, theme, crossfadeSec });
+  }, [volume, sort, shuffle, repeat, theme, crossfadeSec]);
 
   // Theme rides a root attribute so CSS owns the palettes; Stage stays
   // dark regardless (a lit stage is not a stage).
@@ -213,14 +216,69 @@ function App() {
   // Keep the idle deck preloaded with the track a natural end leads to
   // (gapless). "Next" follows the play order — shuffle permutation and
   // repeat included (repeat-one preloads the same file for a gapless
-  // replay) — not merely the next visible row.
+  // replay) — not merely the next visible row. Beat grids for the
+  // current/next pair warm here too (crossfade planning needs both).
   useEffect(() => {
     const visibleIds = visible.map((t) => t.id);
     const order = shuffle ? effectiveOrder(visibleIds, shuffleOrderRef.current) : visibleIds;
     const id = nextId(order, current?.id ?? null, 1, repeat, false);
     const next = id != null ? visible.find((t) => t.id === id) : undefined;
     engine.preloadNext(next ? { path: next.path, replaygainDb: next.replaygain_db } : null);
+    if (current) void beatGridFor(current.path);
+    if (next) void beatGridFor(next.path);
   }, [engine, visible, current, shuffle, repeat]);
+
+  // DJ crossfade: when enabled and the track nears its end, plan a
+  // transition from the two beat grids and hand it to the engine.
+  // Beat-matched when tempos are compatible; equal-power otherwise.
+  const transitionArmed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!crossfadeSec || !current) return;
+    if (position <= 0 || !Number.isFinite(engine.duration)) return;
+    const remaining = engine.duration - position;
+    // Lead time: the planned fade plus one beat of slack for planning.
+    if (remaining > crossfadeSec + 1 || engine.transitioning) return;
+    if (transitionArmed.current === current.path) return;
+    transitionArmed.current = current.path;
+
+    // "Next" follows the play order (shuffle/repeat), same as preload.
+    // Repeat-one replays the same file — a crossfade into itself is
+    // meaningless, so let the gapless path handle it.
+    const visibleIds = visibleRef.current.map((t) => t.id);
+    const order = shuffleRef.current
+      ? effectiveOrder(visibleIds, shuffleOrderRef.current)
+      : visibleIds;
+    const id = nextId(order, current.id, 1, repeatRef.current, false);
+    const next = id != null && id !== current.id ? visibleRef.current.find((t) => t.id === id) : undefined;
+    if (!next) return;
+    void (async () => {
+      const [gridOut, gridIn] = await Promise.all([
+        beatGridFor(current.path),
+        beatGridFor(next.path),
+      ]);
+      const plan = planTransition(gridOut, gridIn, crossfadeSec);
+      // Engine returns false if the preload isn't ready — the track
+      // then ends naturally and the gapless path takes over.
+      engine.beginTransition(plan);
+    })();
+  }, [position, crossfadeSec, current, engine]);
+
+  useEffect(() => {
+    engine.onTransitionAdvance((path) => {
+      const track = visibleRef.current.find((t) => t.path === path);
+      if (track) {
+        setCurrent(track);
+        setPosition(0);
+        getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
+        getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
+      }
+    });
+  }, [engine]);
+
+  // Re-arm the transition trigger whenever the playing track changes.
+  useEffect(() => {
+    transitionArmed.current = null;
+  }, [current]);
 
   useEffect(() => {
     engine.onEnded((advancedTo) => {
@@ -608,6 +666,19 @@ function App() {
             aria-label="Volume"
           />
         </div>
+
+        <button
+          className={`crossfade-toggle ${crossfadeSec ? "on" : ""}`}
+          onClick={() => setCrossfadeSec((s) => (s ? 0 : 8))}
+          title={
+            crossfadeSec
+              ? `DJ crossfade: ${crossfadeSec}s (beat-matched when tempos allow)`
+              : "DJ crossfade: off (gapless)"
+          }
+          aria-pressed={crossfadeSec > 0}
+        >
+          MIX
+        </button>
 
         <Spectrum analyser={engine.analyser} />
       </footer>

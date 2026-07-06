@@ -13,13 +13,23 @@ export interface Prefs {
   shuffle: boolean;
   repeat: RepeatMode;
   theme: Theme;
+  /** Crossfade seconds; 0 = gapless handoff (no fade). */
+  crossfadeSec: number;
 }
 
 const KEY = "otori.prefs";
-const DEFAULTS: Prefs = { volume: 1, sort: null, shuffle: false, repeat: "off", theme: "dark" };
+const DEFAULTS: Prefs = {
+  volume: 1,
+  sort: null,
+  shuffle: false,
+  repeat: "off",
+  theme: "dark",
+  crossfadeSec: 0,
+};
 const SORT_KEYS = new Set(["title", "artist", "album", "duration_secs", "format"]);
 const REPEAT_MODES = new Set<RepeatMode>(["off", "all", "one"]);
 const THEMES = new Set<Theme>(["dark", "light"]);
+const CROSSFADE_MAX_SEC = 30;
 
 export function loadPrefs(storage: Storage): Prefs {
   const raw = storage.getItem(KEY);
@@ -32,7 +42,20 @@ export function loadPrefs(storage: Storage): Prefs {
     const modesOk =
       typeof p.shuffle === "boolean" && REPEAT_MODES.has(p.repeat) && THEMES.has(p.theme);
     if (!volumeOk || !sortOk || !modesOk) return DEFAULTS;
-    return { volume: p.volume, sort: p.sort, shuffle: p.shuffle, repeat: p.repeat, theme: p.theme };
+    // crossfadeSec spreads from DEFAULTS when missing; out-of-range
+    // falls back to 0 without dropping the rest.
+    const crossfadeSec =
+      typeof p.crossfadeSec === "number" && p.crossfadeSec >= 0 && p.crossfadeSec <= CROSSFADE_MAX_SEC
+        ? p.crossfadeSec
+        : 0;
+    return {
+      volume: p.volume,
+      sort: p.sort,
+      shuffle: p.shuffle,
+      repeat: p.repeat,
+      theme: p.theme,
+      crossfadeSec,
+    };
   } catch {
     return DEFAULTS;
   }

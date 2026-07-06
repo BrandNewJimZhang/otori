@@ -13,6 +13,7 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { effectiveGain } from "./gain";
+import type { TransitionPlan } from "./djmix";
 
 export interface TrackSource {
   path: string;
@@ -25,6 +26,12 @@ export interface PlaybackEngine {
   play(source: TrackSource): Promise<void>;
   /** Preload a track on the idle deck for gapless handoff; null clears. */
   preloadNext(source: TrackSource | null): void;
+  /** Execute a planned transition into the preloaded track NOW.
+      Returns false if the preload isn't ready (caller falls back to
+      letting the track end naturally). */
+  beginTransition(plan: TransitionPlan): boolean;
+  /** True while a transition is running (UI: both tracks audible). */
+  readonly transitioning: boolean;
   togglePause(): void;
   seek(secs: number): void;
   readonly paused: boolean;
@@ -39,6 +46,8 @@ export interface PlaybackEngine {
   /** Fires when a track ends. If the ended track was gaplessly handed
       off to the preloaded one, `advancedTo` carries its path. */
   onEnded(cb: (advancedTo: string | null) => void): void;
+  /** Fires when a transition hands control to the incoming track. */
+  onTransitionAdvance(cb: (path: string) => void): void;
   onError(cb: (message: string) => void): void;
   /** ~4Hz progress ticks while playing (media timeupdate cadence). */
   onTimeUpdate(cb: (secs: number) => void): void;
@@ -61,8 +70,11 @@ class TwoDeckEngine implements PlaybackEngine {
   /** Source queued for gapless handoff (loaded on the idle deck). */
   private next: TrackSource | null = null;
   private endedCb: ((advancedTo: string | null) => void) | null = null;
+  private transitionAdvanceCb: ((path: string) => void) | null = null;
   private errorCb: ((message: string) => void) | null = null;
   private timeCb: ((secs: number) => void) | null = null;
+  /** rAF id of the running transition loop; 0 when idle. */
+  private transitionRaf = 0;
 
   constructor() {
     this.decks = [this.makeDeck(0), this.makeDeck(1)];
@@ -147,6 +159,7 @@ class TwoDeckEngine implements PlaybackEngine {
   async play(source: TrackSource): Promise<void> {
     this.ensureGraph();
     if (this.ctx!.state === "suspended") await this.ctx!.resume();
+    this.cancelTransition();
 
     const idle = this.idleDeck;
     // Reuse the preload if it's already sitting on the idle deck.
@@ -185,6 +198,82 @@ class TwoDeckEngine implements PlaybackEngine {
     idle.audio.src = convertFileSrc(source.path);
     idle.source = source;
     idle.audio.load();
+  }
+
+  get transitioning(): boolean {
+    return this.transitionRaf !== 0;
+  }
+
+  private cancelTransition(): void {
+    if (this.transitionRaf) {
+      cancelAnimationFrame(this.transitionRaf);
+      this.transitionRaf = 0;
+      for (const deck of this.decks) {
+        deck.audio.playbackRate = 1;
+        this.applyGain(deck);
+      }
+    }
+  }
+
+  /**
+   * Execute a transition plan into the preloaded track. The outgoing
+   * deck ramps tempo and fades out; the incoming deck enters on its
+   * planned offset, tempo-matched, and settles to unity. Driven by a
+   * rAF loop writing playbackRate + gain each frame — WebAudio can
+   * ramp gains natively but playbackRate lives on the media element,
+   * so one loop drives both for coherence.
+   */
+  beginTransition(plan: TransitionPlan): boolean {
+    const from = this.activeDeck;
+    const to = this.idleDeck;
+    if (!this.next || to.source?.path !== this.next.path) return false;
+    if (to.audio.readyState < 3 || this.transitionRaf) return false;
+
+    const toPath = to.source.path;
+    const baseFrom = effectiveGain(from.source?.replaygainDb ?? null, this.volumeValue);
+    const baseTo = effectiveGain(to.source?.replaygainDb ?? null, this.volumeValue);
+
+    if (plan.kind === "beatmatched") {
+      to.audio.currentTime = plan.incoming.startOffsetSec;
+      to.audio.playbackRate = plan.incoming.rateFrom;
+    } else {
+      to.audio.playbackRate = 1;
+    }
+    if (to.gain) to.gain.gain.value = 0;
+    void to.audio.play().catch((e) => this.errorCb?.(String(e)));
+
+    // Hand off deck ownership immediately: UI follows the incoming track.
+    this.active = 1 - this.active;
+    this.next = null;
+    this.transitionAdvanceCb?.(toPath);
+
+    const startedAt = performance.now();
+    const durationMs = plan.durationSec * 1000;
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - startedAt) / durationMs);
+      if (from.gain) from.gain.gain.value = baseFrom * plan.gainOut(t);
+      if (to.gain) to.gain.gain.value = baseTo * plan.gainIn(t);
+      if (plan.kind === "beatmatched") {
+        // Linear tempo ramps; audible pitch drift stays within ±8%.
+        const o = plan.outgoing;
+        const i = plan.incoming;
+        from.audio.playbackRate = o.rateFrom + (o.rateTo - o.rateFrom) * t;
+        to.audio.playbackRate = i.rateFrom + (i.rateTo - i.rateFrom) * t;
+      }
+      if (t < 1) {
+        this.transitionRaf = requestAnimationFrame(tick);
+      } else {
+        this.transitionRaf = 0;
+        from.audio.pause();
+        from.audio.removeAttribute("src");
+        from.audio.playbackRate = 1;
+        from.source = null;
+        to.audio.playbackRate = 1;
+        this.applyGain(to);
+      }
+    };
+    this.transitionRaf = requestAnimationFrame(tick);
+    return true;
   }
 
   togglePause(): void {
@@ -228,6 +317,10 @@ class TwoDeckEngine implements PlaybackEngine {
 
   onEnded(cb: (advancedTo: string | null) => void): void {
     this.endedCb = cb;
+  }
+
+  onTransitionAdvance(cb: (path: string) => void): void {
+    this.transitionAdvanceCb = cb;
   }
 
   onError(cb: (message: string) => void): void {

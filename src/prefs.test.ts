@@ -23,6 +23,7 @@ const DEFAULTS = {
   shuffle: false,
   repeat: "off",
   theme: "dark",
+  crossfadeSec: 0,
 } as const;
 
 describe("prefs", () => {
@@ -34,6 +35,7 @@ describe("prefs", () => {
       shuffle: true,
       repeat: "one",
       theme: "light",
+      crossfadeSec: 8,
     } as const;
     savePrefs(s, prefs);
     expect(loadPrefs(s)).toEqual(prefs);
@@ -60,5 +62,11 @@ describe("prefs", () => {
       JSON.stringify({ volume: 1, sort: null, shuffle: "yes", repeat: "twice", theme: "sepia" }),
     );
     expect(loadPrefs(s)).toEqual(DEFAULTS);
+  });
+
+  it("out-of-range crossfade falls back to 0 without dropping the rest", () => {
+    const s = fakeStorage();
+    s.setItem("otori.prefs", JSON.stringify({ volume: 0.7, sort: null, crossfadeSec: 999 }));
+    expect(loadPrefs(s)).toEqual({ ...DEFAULTS, volume: 0.7 });
   });
 });
