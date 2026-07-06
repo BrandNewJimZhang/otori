@@ -39,7 +39,7 @@ fn status_reports_counts_and_coverage() {
     assert_eq!(s.sources.get("import"), Some(&2));
     assert_eq!(s.transactions, 2);
     assert_eq!(s.undone_transactions, 1);
-    assert_eq!(s.schema_version, 11);
+    assert_eq!(s.schema_version, 12);
 }
 
 #[test]

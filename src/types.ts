@@ -19,6 +19,8 @@ export interface TrackRow {
   mix_tail_bpm: number | null;
   mix_tail_beat_sec: number | null;
   mix_analyzed: boolean;
+  /** User's per-track lyrics sync nudge in ms; positive = lyrics later. */
+  lyrics_offset_ms: number;
   title: string | null;
   artist: string | null;
   album: string | null;

@@ -163,6 +163,25 @@ pub fn write_sidecar(
     Ok(sidecar)
 }
 
+/// Persist the user's per-track sync nudge (ms; positive = lyric
+/// timestamps play later). Render-time state in the index — never
+/// rewrites the LRC source. Fails fast on unknown ids: the caller
+/// listed the track from this same index.
+pub fn set_offset(
+    conn: &rusqlite::Connection,
+    track_id: i64,
+    offset_ms: i64,
+) -> rusqlite::Result<()> {
+    let updated = conn.execute(
+        "UPDATE tracks SET lyrics_offset_ms = ?1 WHERE id = ?2",
+        rusqlite::params![offset_ms, track_id],
+    )?;
+    if updated == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
 /// Parse `mm:ss`, `mm:ss.x`, `mm:ss.xx`, or `mm:ss.xxx` into ms.
 fn parse_timestamp(s: &str) -> Option<u64> {
     let (minutes, rest) = s.split_once(':')?;

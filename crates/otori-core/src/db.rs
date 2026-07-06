@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -43,6 +43,7 @@ CREATE TABLE tracks (
     mix_tail_bpm REAL,             -- local tempo of the mix-out window (track tail)
     mix_tail_beat_sec REAL,        -- a measured beat inside that window (absolute secs)
     mix_analyzed_at TEXT,          -- set once anchor analysis ran (NULL anchor = unstable end)
+    lyrics_offset_ms INTEGER NOT NULL DEFAULT 0, -- user sync nudge; render-time, never rewrites files
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
     first_seen   TEXT NOT NULL,
@@ -274,6 +275,15 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
              ALTER TABLE tracks ADD COLUMN mix_analyzed_at TEXT;",
         )?;
         conn.pragma_update(None, "user_version", 11)?;
+    }
+    if (1..=11).contains(&version) {
+        // v12: per-track lyrics sync offset (user nudge in the player).
+        // Index-only state like column widths would be, but per *track*
+        // — it cannot be rebuilt from files, so it lives here.
+        conn.execute_batch(
+            "ALTER TABLE tracks ADD COLUMN lyrics_offset_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+        conn.pragma_update(None, "user_version", 12)?;
     }
     Ok(conn)
 }
