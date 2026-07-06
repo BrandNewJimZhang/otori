@@ -86,6 +86,16 @@ CREATE TABLE tx_changes (
 );
 "#;
 
+/// Default library location: `~/Library/Application Support/otori/library.db`
+/// (macOS-first; revisit when a second platform lands).
+pub fn default_path() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    let dir = std::path::Path::new(&home)
+        .join("Library/Application Support/otori");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    Ok(dir.join("library.db"))
+}
+
 /// Open (creating or migrating as needed) the library database at `path`.
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
