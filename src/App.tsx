@@ -28,6 +28,8 @@ import {
   type SortSpec,
 } from "./library";
 import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
+import { routeKey, type KeyZone } from "./uikeys";
+import { seekMax, seekShown } from "./seekbar";
 import {
   DensityIcon,
   MoonIcon,
@@ -37,6 +39,7 @@ import {
   PrevIcon,
   RepeatIcon,
   ShuffleIcon,
+  StageIcon,
   SunIcon,
   VolumeIcon,
 } from "./icons";
@@ -86,6 +89,9 @@ function App() {
   const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Scrub preview (audit P0): thumb position while dragging the seek
+  // slider; the decoder seek fires once on release, not per pixel.
+  const [scrub, setScrub] = useState<number | null>(null);
   const engine = useMemo(createEngine, []);
   const searchRef = useRef<HTMLInputElement>(null);
   // Shuffle order is frozen when shuffle turns on (or a track starts
@@ -421,42 +427,65 @@ function App() {
     };
   }, [togglePause, step]);
 
-  // Keyboard: S toggles mode (Tab stays with the focus system),
-  // Space play/pause, ↑↓ select, Enter play, ⌘F search,
-  // Esc dismiss (search → selection → Stage).
+  // Keyboard, routed through the uikeys decision table (audit P0): a
+  // focused button keeps native Enter/Space activation, sliders keep
+  // their arrows, inputs own everything but Escape; ⌘←/→ steps tracks,
+  // ←/→ nudges the seek position, CapsLock-S still toggles mode.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
-        e.preventDefault();
-        searchRef.current?.focus();
-        return;
-      }
-      if (e.target instanceof HTMLInputElement) {
-        // Esc leaves the search box; everything else belongs to the input.
-        if (e.key === "Escape") (e.target as HTMLInputElement).blur();
-        return;
-      }
-      if (e.key === "s") {
-        e.preventDefault();
-        setMode((m) => (m === "backstage" ? "stage" : "backstage"));
-      } else if (e.key === " ") {
-        e.preventDefault();
-        if (currentRef.current) togglePause();
-      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        setSelection((sel) => stepSelect(sel, visibleRef.current, e.key === "ArrowDown" ? 1 : -1));
-      } else if (e.key === "Enter") {
-        const sel = selectionRef.current;
-        const track = visibleRef.current.find((t) => sel.ids.has(t.id));
-        if (track) void play(track);
-      } else if (e.key === "Escape") {
-        if (selectionRef.current.ids.size > 0) setSelection(emptySelection);
-        else setMode("backstage");
+      const t = e.target;
+      const zone: KeyZone =
+        t instanceof HTMLInputElement
+          ? t.type === "range"
+            ? "slider"
+            : "input"
+          : t instanceof HTMLButtonElement
+            ? "button"
+            : "global";
+      const action = routeKey({ key: e.key, meta: e.metaKey || e.ctrlKey, shift: e.shiftKey }, zone);
+      if (action.kind === "native") return;
+      e.preventDefault();
+      switch (action.kind) {
+        case "focus-search":
+          searchRef.current?.focus();
+          break;
+        case "blur-input":
+          (t as HTMLInputElement).blur();
+          break;
+        case "toggle-mode":
+          setMode((m) => (m === "backstage" ? "stage" : "backstage"));
+          break;
+        case "toggle-pause":
+          if (currentRef.current) togglePause();
+          break;
+        case "select-step":
+          setSelection((sel) => stepSelect(sel, visibleRef.current, action.offset));
+          break;
+        case "play-selected": {
+          const sel = selectionRef.current;
+          const track = visibleRef.current.find((tr) => sel.ids.has(tr.id));
+          if (track) void play(track);
+          break;
+        }
+        case "seek-nudge":
+          if (currentRef.current && Number.isFinite(engine.duration)) {
+            const pos = Math.max(0, Math.min(engine.duration, engine.currentTime + action.secs));
+            engine.seek(pos);
+            setPosition(pos);
+          }
+          break;
+        case "step-track":
+          if (currentRef.current) step(action.offset);
+          break;
+        case "escape":
+          if (selectionRef.current.ids.size > 0) setSelection(emptySelection);
+          else setMode("backstage");
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePause, play]);
+  }, [togglePause, play, step, engine]);
 
   async function pickAndScan() {
     const dir = await openDialog({ directory: true });
@@ -505,6 +534,14 @@ function App() {
     setPosition(secs);
   }
 
+  /** Commit a scrub drag: one decoder seek on release (audit P0). */
+  function commitScrub() {
+    if (scrub != null) {
+      seekTo(scrub);
+      setScrub(null);
+    }
+  }
+
   // Engine duration once metadata loads; index duration until then.
   const duration = Number.isFinite(engine.duration)
     ? engine.duration
@@ -520,7 +557,10 @@ function App() {
           analyser={engine.analyser}
           positionMs={positionMs}
           duration={duration}
+          paused={paused}
           onSeek={seekTo}
+          onTogglePause={togglePause}
+          onStep={step}
         />
       </div>
     );
@@ -576,6 +616,15 @@ function App() {
         <span className="mode-hint">
           {current ? "S → Stage · Space → play/pause" : ""}
         </span>
+        <button
+          className="icon-btn stage-toggle"
+          onClick={() => setMode("stage")}
+          disabled={!current}
+          aria-label="Enter Stage mode"
+          title={current ? "Stage (S)" : "Play a track to enter Stage"}
+        >
+          <StageIcon />
+        </button>
         <button
           className="icon-btn density-toggle"
           onClick={() => setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"))}
@@ -686,7 +735,11 @@ function App() {
           </button>
         </div>
 
-        <div className="now-playing">
+        <div
+          className="now-playing"
+          onDoubleClick={current ? () => setMode("stage") : undefined}
+          title={current ? "Double-click for Stage" : undefined}
+        >
           {current && artwork && <img className="np-art" src={artwork} alt="" />}
           {current ? (
             <div className="np-text">
@@ -699,15 +752,18 @@ function App() {
         </div>
 
         <div className="seek">
-          <span className="time">{formatTime(current ? position : null)}</span>
+          <span className="time">{formatTime(current ? (scrub ?? position) : null)}</span>
           <input
             type="range"
             min={0}
-            max={Number.isFinite(duration) ? duration : 0}
+            max={seekMax(duration)}
             step={0.1}
-            value={Math.min(position, Number.isFinite(duration) ? duration : 0)}
+            value={seekShown(scrub, position, seekMax(duration))}
             disabled={!current || !Number.isFinite(duration)}
-            onChange={(e) => seekTo(Number(e.target.value))}
+            onChange={(e) => setScrub(Number(e.target.value))}
+            onPointerUp={commitScrub}
+            onKeyUp={commitScrub}
+            onBlur={commitScrub}
             aria-label="Seek"
           />
           <button
