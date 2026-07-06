@@ -1,19 +1,40 @@
 // App shell: Backstage (dense table, management) / Stage (performance)
-// with a one-keystroke toggle (PRODUCT.md Pillar 2). Backstage v0's
-// known UI debt is tracked for a dedicated fix round — Stage is Cut 3.
+// with a one-keystroke toggle (PRODUCT.md Pillar 2). Table presentation
+// lives in LibraryTable, view logic in library.ts — App owns state.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getArtwork, getLyrics, listTracks, scanLibrary } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { LibraryTable } from "./LibraryTable";
 import { formatTime } from "./format";
+import {
+  clickSelect,
+  displayTitle,
+  emptySelection,
+  filterTracks,
+  sortTracks,
+  stepSelect,
+  toggleSort,
+  type Selection,
+  type SortKey,
+  type SortSpec,
+} from "./library";
 import { NextIcon, PauseIcon, PlayIcon, PrevIcon, VolumeIcon } from "./icons";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 import "./App.css";
 
 type Mode = "backstage" | "stage";
+
+interface MenuState {
+  x: number;
+  y: number;
+  track: TrackRow;
+}
 
 function App() {
   const [mode, setMode] = useState<Mode>("backstage");
@@ -28,11 +49,24 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState(0);
   const [volume, setVolume] = useState(1);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortSpec | null>(null);
+  const [selection, setSelection] = useState<Selection>(emptySelection);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const engine = useMemo(createEngine, []);
-  const tracksRef = useRef(tracks);
-  tracksRef.current = tracks;
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Playback order follows what the user sees: filtered, then sorted.
+  const visible = useMemo(
+    () => sortTracks(filterTracks(tracks, query), sort),
+    [tracks, query, sort],
+  );
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const currentRef = useRef(current);
   currentRef.current = current;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
 
   const refresh = useCallback(() => {
     listTracks().then(setTracks).catch((e) => setError(String(e)));
@@ -53,16 +87,16 @@ function App() {
         getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
         getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
       } catch (e) {
-        setError(`${track.title ?? track.path}: ${e}`);
+        setError(`${displayTitle(track)}: ${e}`);
       }
     },
     [engine],
   );
 
-  // Step through the current listing order; wraps nothing, just stops.
+  // Step through the visible listing order; wraps nothing, just stops.
   const step = useCallback(
     (offset: number) => {
-      const list = tracksRef.current;
+      const list = visibleRef.current;
       const cur = currentRef.current;
       const idx = list.findIndex((t) => t.id === cur?.id);
       const next = idx >= 0 ? list[idx + offset] : undefined;
@@ -97,29 +131,48 @@ function App() {
     setPaused(engine.paused);
   }, [engine]);
 
-  // Keyboard: Tab/S toggles mode, Space play/pause, Esc leaves Stage.
+  // Keyboard: Tab/S mode, Space play/pause, ↑↓ select, Enter play,
+  // ⌘F search, Esc dismiss (search → selection → Stage).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (e.target instanceof HTMLInputElement) {
+        // Esc leaves the search box; everything else belongs to the input.
+        if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+        return;
+      }
       if (e.key === "Tab" || e.key === "s") {
         e.preventDefault();
         setMode((m) => (m === "backstage" ? "stage" : "backstage"));
       } else if (e.key === " ") {
         e.preventDefault();
         if (currentRef.current) togglePause();
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelection((sel) => stepSelect(sel, visibleRef.current, e.key === "ArrowDown" ? 1 : -1));
+      } else if (e.key === "Enter") {
+        const sel = selectionRef.current;
+        const track = visibleRef.current.find((t) => sel.ids.has(t.id));
+        if (track) void play(track);
       } else if (e.key === "Escape") {
-        setMode("backstage");
+        if (selectionRef.current.ids.size > 0) setSelection(emptySelection);
+        else setMode("backstage");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePause]);
+  }, [togglePause, play]);
 
   async function pickAndScan() {
     const dir = await openDialog({ directory: true });
     if (typeof dir !== "string") return;
     setScanning(true);
     setError(null);
+    setReport(null);
     try {
       setReport(await scanLibrary(dir));
       refresh();
@@ -129,6 +182,21 @@ function App() {
       setScanning(false);
     }
   }
+
+  const menuItems: MenuItem[] = useMemo(() => {
+    if (!menu) return [];
+    return [
+      { label: "Play", action: () => void play(menu.track) },
+      {
+        label: "Reveal in Finder",
+        action: () => void revealItemInDir(menu.track.path).catch((e) => setError(String(e))),
+      },
+      {
+        label: "Copy path",
+        action: () => void navigator.clipboard.writeText(menu.track.path).catch(() => {}),
+      },
+    ];
+  }, [menu, play]);
 
   if (mode === "stage" && current) {
     return (
@@ -154,6 +222,10 @@ function App() {
     setVolume(v);
   }
 
+  function onSort(key: SortKey) {
+    setSort((s) => toggleSort(s, key));
+  }
+
   // Engine duration once metadata loads; index duration until then.
   const duration = Number.isFinite(engine.duration)
     ? engine.duration
@@ -166,10 +238,20 @@ function App() {
         <button onClick={pickAndScan} disabled={scanning}>
           {scanning ? "Scanning…" : "Scan folder…"}
         </button>
-        <span className="track-count">{tracks.length} tracks</span>
-        {report && (
+        <input
+          ref={searchRef}
+          className="search"
+          type="search"
+          placeholder="Filter (⌘F)"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <span className="track-count">
+          {query ? `${visible.length} / ${tracks.length} tracks` : `${tracks.length} tracks`}
+        </span>
+        {report && !scanning && (
           <span className="scan-report">
-            +{report.added} / {report.updated} updated
+            Added {report.added}, updated {report.updated}
             {report.skipped_icloud.length > 0 && ` · ${report.skipped_icloud.length} in iCloud`}
             {report.unreadable.length > 0 && ` · ${report.unreadable.length} unreadable`}
           </span>
@@ -178,6 +260,8 @@ function App() {
           {current ? "Tab → Stage · Space → play/pause" : ""}
         </span>
       </header>
+
+      {scanning && <div className="scan-progress" role="progressbar" aria-label="Scanning" />}
 
       {error && (
         <div className="error-bar">
@@ -196,38 +280,24 @@ function App() {
               {scanning ? "Scanning…" : "Scan a folder"}
             </button>
           </div>
+        ) : visible.length === 0 ? (
+          <div className="empty">
+            <p>No tracks match “{query}”.</p>
+          </div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Artist</th>
-                <th>Album</th>
-                <th className="col-duration">Time</th>
-                <th className="col-format">Format</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tracks.map((t) => (
-                <tr
-                  key={t.id}
-                  className={t.id === current?.id ? "playing" : ""}
-                  onDoubleClick={() => play(t)}
-                >
-                  <td>
-                    <span className="row-play" onClick={() => play(t)} aria-label="Play">
-                      <PlayIcon />
-                    </span>
-                    {t.title ?? basename(t.path)}
-                  </td>
-                  <td>{t.artist ?? "—"}</td>
-                  <td>{t.album ?? "—"}</td>
-                  <td className="col-duration">{formatTime(t.duration_secs)}</td>
-                  <td className="col-format">{t.format}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <LibraryTable
+            tracks={visible}
+            playingId={current?.id ?? null}
+            selection={selection}
+            sort={sort}
+            onSort={onSort}
+            onRowClick={(id, mods) => setSelection((s) => clickSelect(s, visible, id, mods))}
+            onRowContextMenu={(track, e) => {
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY, track });
+            }}
+            onPlay={play}
+          />
         )}
       </main>
 
@@ -260,11 +330,12 @@ function App() {
         </div>
 
         <div className="now-playing">
+          {current && artwork && <img className="np-art" src={artwork} alt="" />}
           {current ? (
-            <>
-              <div className="np-title">{current.title ?? basename(current.path)}</div>
+            <div className="np-text">
+              <div className="np-title">{displayTitle(current)}</div>
               <div className="np-artist">{current.artist ?? "—"}</div>
-            </>
+            </div>
           ) : (
             <div className="np-title idle">Double-click a track to play</div>
           )}
@@ -300,12 +371,10 @@ function App() {
 
         <Spectrum analyser={engine.analyser} />
       </footer>
+
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
     </div>
   );
-}
-
-function basename(path: string): string {
-  return path.split("/").pop() ?? path;
 }
 
 export default App;
