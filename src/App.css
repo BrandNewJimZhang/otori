@@ -928,6 +928,16 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   opacity: 0.35;
 }
 
+/* Synced lines are seek targets (audit P1: click a line to jump). */
+.lyric-line.seekable {
+  cursor: pointer;
+}
+
+.lyric-line.seekable:hover {
+  color: var(--text);
+  opacity: 1;
+}
+
 /* Word-level karaoke highlight inside the active line. */
 .lyric-line.active span {
   color: var(--text-dim);
@@ -963,11 +973,64 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   z-index: 1;
 }
 
+/* Idle chrome retreat (audit P1): transport + seek fade with the hint;
+   the cursor leaves the stage with them. */
+.stage-lighting.chrome-hidden .stage-transport,
+.stage-lighting.chrome-hidden .stage-seek {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stage.idle {
+  cursor: none;
+}
+
+/* On-stage transport (audit P1: Stage had no mouse-reachable controls). */
+.stage-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: opacity 400ms;
+}
+
+.stage-transport button {
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(16, 16, 20, 0.55);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms;
+}
+
+.stage-transport button:hover {
+  border-color: var(--playback);
+}
+
+.stage-transport .play-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+
+.stage-transport .step-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+.stage-transport .step-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
 /* Stage seek: same slider chrome as the player bar, stage-wide. */
 .stage-seek {
   display: flex;
   align-items: center;
   gap: 10px;
+  transition: opacity 400ms;
 }
 
 .stage-lighting .spectrum {
