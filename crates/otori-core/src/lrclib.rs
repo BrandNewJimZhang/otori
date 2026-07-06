@@ -89,3 +89,96 @@ pub fn get_lyrics(
         Err(e) => Err(format!("GET {url}: {e}")),
     }
 }
+
+/// The /api/get signature lookup wants LRCLIB's exact artist string;
+/// doujin tags rarely agree with it. The fallback searches by title
+/// only and disambiguates on our side — duration is the anchor (it
+/// comes from the file, not from anyone's tagging conventions).
+const DURATION_TOLERANCE_SECS: f64 = 10.0;
+
+#[derive(Deserialize)]
+struct SearchHit {
+    #[serde(rename = "trackName", default)]
+    track_name: String,
+    #[serde(default)]
+    duration: f64,
+    instrumental: bool,
+    #[serde(rename = "plainLyrics")]
+    plain_lyrics: Option<String>,
+    #[serde(rename = "syncedLyrics")]
+    synced_lyrics: Option<String>,
+}
+
+impl SearchHit {
+    fn lyrics(&self) -> Option<FetchedLyrics> {
+        if self.instrumental {
+            return None;
+        }
+        if let Some(s) = self.synced_lyrics.as_ref().filter(|s| !s.trim().is_empty()) {
+            return Some(FetchedLyrics { text: s.clone(), synced: true });
+        }
+        self.plain_lyrics
+            .as_ref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| FetchedLyrics { text: s.clone(), synced: false })
+    }
+}
+
+/// Decide which /api/search hit (if any) is *the* track. Exact title
+/// match required (NFC, case-insensitive — vocadb's rule); duration
+/// within tolerance is the disambiguator. Without a duration, only a
+/// unique exact-title hit counts — ambiguity is never a guess. Among
+/// survivors, synced lyrics beat a closer duration: the rung matters
+/// more than a couple of seconds.
+pub fn pick_search_hit(
+    search_json: &str,
+    title: &str,
+    duration_secs: Option<f64>,
+) -> Result<Option<FetchedLyrics>, String> {
+    let hits: Vec<SearchHit> =
+        serde_json::from_str(search_json).map_err(|e| format!("LRCLIB response: {e}"))?;
+    let wanted = nfc(title).to_lowercase();
+    let mut candidates: Vec<&SearchHit> = hits
+        .iter()
+        .filter(|h| nfc(&h.track_name).to_lowercase() == wanted)
+        .collect();
+
+    match duration_secs {
+        Some(secs) => {
+            candidates.retain(|h| (h.duration - secs).abs() <= DURATION_TOLERANCE_SECS)
+        }
+        None if candidates.len() > 1 => return Ok(None),
+        None => {}
+    }
+
+    // Synced beats plain (the rung matters more than seconds); within
+    // a rung, the closest duration is the right recording — covers of
+    // the same song carry the same words with different timing.
+    let distance = |h: &SearchHit| match duration_secs {
+        Some(secs) => (h.duration - secs).abs(),
+        None => 0.0,
+    };
+    let best = candidates
+        .into_iter()
+        .filter(|h| h.lyrics().is_some())
+        .min_by(|a, b| {
+            let synced = |h: &SearchHit| h.lyrics().is_some_and(|l| l.synced);
+            synced(b)
+                .cmp(&synced(a))
+                .then(distance(a).total_cmp(&distance(b)))
+        });
+    Ok(best.and_then(|h| h.lyrics()))
+}
+
+/// Search LRCLIB by title. Network; returns the raw JSON array for
+/// `pick_search_hit`.
+pub fn search_lyrics(title: &str) -> Result<String, String> {
+    let url = format!("{API_BASE}/api/search?track_name={}", urlencode(&nfc(title)));
+    ureq::get(&url)
+        .header("User-Agent", USER_AGENT)
+        .call()
+        .map_err(|e| format!("GET {url}: {e}"))?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("read {url}: {e}"))
+}
