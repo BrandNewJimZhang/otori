@@ -206,6 +206,63 @@ function applyHint(result: TempoAnalysis, hintBpm?: number | null): TempoAnalysi
   return result;
 }
 
+// ---- mix anchors ----
+
+/** Mix window: the stretch of track a transition actually plays.
+    Longer than any allowed crossfade (30s pref cap) with margin. */
+const MIX_WINDOW_SEC = 45;
+/** Anchors below this confidence must not drive a tempo bend. */
+const MIN_ANCHOR_CONFIDENCE = 0.4;
+
+/**
+ * A local beat grid at one end of a track: tempo measured inside the
+ * mix window plus one beat inside it, in absolute track seconds —
+ * every beat of that window reconstructs from these two numbers
+ * without extrapolating across the track.
+ */
+export interface MixAnchor {
+  bpm: number;
+  beatSec: number;
+}
+
+export interface MixAnchors {
+  head: MixAnchor | null;
+  tail: MixAnchor | null;
+}
+
+/**
+ * Extract per-end mix anchors from a whole-track envelope. An end
+ * anchors only when its window is locally steady (both halves lock
+ * the same tempo) and confident; anything else — tempo change inside
+ * the window (soflan boundary, rit. ending), beatless material, low
+ * confidence — refuses, and the planner falls back to a plain fade.
+ * `truncated` = the decode didn't reach the real end of the track;
+ * the tail we'd measure isn't the tail that will play.
+ */
+export function extractMixAnchors(envelope: Float32Array, truncated = false): MixAnchors {
+  const win = Math.min(envelope.length, MIX_WINDOW_SEC * ENVELOPE_HZ);
+  return {
+    head: windowAnchor(envelope, 0, win),
+    tail: truncated ? null : windowAnchor(envelope, envelope.length - win, win),
+  };
+}
+
+function windowAnchor(envelope: Float32Array, startIdx: number, win: number): MixAnchor | null {
+  const slice = envelope.subarray(startIdx, startIdx + win);
+  // Local steadiness: both halves must independently lock tempos that
+  // agree — one detect over the window would average a mid-window
+  // tempo change into a plausible-looking lie.
+  const half = Math.floor(slice.length / 2);
+  const a = detectBeats(slice.subarray(0, half));
+  const b = detectBeats(slice.subarray(half));
+  if (!a || !b) return null;
+  if (Math.max(a.bpm, b.bpm) / Math.min(a.bpm, b.bpm) > 1 + STEADY_TOLERANCE) return null;
+
+  const grid = detectBeats(slice);
+  if (!grid || grid.confidence < MIN_ANCHOR_CONFIDENCE) return null;
+  return { bpm: grid.bpm, beatSec: startIdx / ENVELOPE_HZ + grid.firstBeatSec };
+}
+
 /**
  * Onset-energy envelope from decoded samples: rectified spectral-flux
  * style — per-window RMS rise, half-wave rectified. Mono input.
