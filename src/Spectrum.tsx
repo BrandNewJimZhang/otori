@@ -11,8 +11,6 @@ const DB_CEIL = -8;
 const FREQ_MIN = 30; // Hz — below this is rumble, not rhythm
 const FREQ_MAX = 16000;
 const PEAK_FALL = 0.55; // px/frame (in CSS px) the peak cap falls
-const SPECTRUM_COLOR = "#a78bfa"; // purple: the spectrum's accent (PRODUCT.md)
-const PEAK_COLOR = "#f472b6"; // pink flair on the caps
 
 export function Spectrum({
   analyser,
@@ -33,10 +31,30 @@ export function Spectrum({
     const sampleRate = analyser.context.sampleRate;
     const binHz = sampleRate / analyser.fftSize;
 
+    // Accent colors come from the theme tokens (audit P2: hardcoded
+    // dark-palette hex was invisible on light) — SSOT is App.css.
+    // Re-read when data-theme flips.
+    let barColor = "";
+    let peakColor = "";
+    const readColors = () => {
+      const style = getComputedStyle(canvas);
+      barColor = style.getPropertyValue("--spectrum").trim();
+      peakColor = style.getPropertyValue("--lyrics").trim();
+    };
+    readColors();
+    const themeObserver = new MutationObserver(readColors);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
     // Backing store tracks CSS size × devicePixelRatio so bars stay
-    // crisp on Retina and undistorted at any layout width.
-    const dpr = window.devicePixelRatio || 1;
+    // crisp on Retina and undistorted at any layout width. dpr is
+    // re-read per resize: the window can move between displays
+    // (audit P2: a mount-time dpr went blurry after a monitor hop).
+    let dpr = window.devicePixelRatio || 1;
     const resize = () => {
+      dpr = window.devicePixelRatio || 1;
       const { width, height } = canvas.getBoundingClientRect();
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -75,7 +93,7 @@ export function Spectrum({
         const norm = Math.max(0, Math.min(1, (db - DB_FLOOR) / (DB_CEIL - DB_FLOOR)));
         const h = norm * floor;
 
-        ctx2d.fillStyle = SPECTRUM_COLOR;
+        ctx2d.fillStyle = barColor;
         ctx2d.globalAlpha = 0.35 + norm * 0.65;
         ctx2d.fillRect(i * barW + 1, floor - h, barW - 2, h);
 
@@ -89,7 +107,7 @@ export function Spectrum({
         // Peak-hold cap with gravity.
         peaks[i] = Math.max(h, peaks[i] - PEAK_FALL);
         if (peaks[i] > 1) {
-          ctx2d.fillStyle = PEAK_COLOR;
+          ctx2d.fillStyle = peakColor;
           ctx2d.fillRect(i * barW + 1, floor - peaks[i] - 2, barW - 2, 2);
         }
       }
@@ -98,6 +116,7 @@ export function Spectrum({
     return () => {
       cancelAnimationFrame(raf);
       observer.disconnect();
+      themeObserver.disconnect();
     };
   }, [analyser, mirror]);
 

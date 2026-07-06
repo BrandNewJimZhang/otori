@@ -563,6 +563,10 @@ function App() {
   async function pickAndScan() {
     const dir = await openDialog({ directory: true });
     if (typeof dir !== "string") return;
+    await scanDir(dir);
+  }
+
+  async function scanDir(dir: string) {
     setScanning(true);
     setError(null);
     setReport(null);
@@ -575,6 +579,28 @@ function App() {
       setScanning(false);
     }
   }
+
+  // Drag a folder anywhere onto the window to scan it (audit P1).
+  // Tauri delivers native file drops as events (webview drag data has
+  // no paths); scanning is idempotent, so over-triggering is safe.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unlisten = win.onDragDropEvent((e) => {
+      if (e.payload.type === "drop" && e.payload.paths.length > 0) {
+        void scanDir(e.payload.paths[0]);
+      }
+    });
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, []);
+
+  // The scan report is a toast, not a status line: linger, then leave.
+  useEffect(() => {
+    if (!report) return;
+    const t = window.setTimeout(() => setReport(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [report]);
 
   const menuItems: MenuItem[] = useMemo(() => {
     if (!menu || menu.targets.length === 0) return [];

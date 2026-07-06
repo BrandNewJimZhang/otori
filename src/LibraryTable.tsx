@@ -130,9 +130,11 @@ export function LibraryTable({
               }}
             >
               {c.label}
-              {sort?.key === c.key && (
-                <span className="sort-arrow">{sort.dir === 1 ? "▲" : "▼"}</span>
-              )}
+              {/* Always-rendered slot: the arrow appearing must not
+                  shift the label (audit P2 layout jitter). */}
+              <span className="sort-arrow">
+                {sort?.key === c.key ? (sort.dir === 1 ? "▲" : "▼") : ""}
+              </span>
               {c.resizable && (
                 <span
                   className="col-resize"
