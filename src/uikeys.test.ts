@@ -3,7 +3,7 @@
 // CapsLock must not disable the mode toggle.
 
 import { describe, expect, it } from "vitest";
-import { routeKey, type KeyCombo } from "./uikeys";
+import { escapeIntent, routeKey, type KeyCombo } from "./uikeys";
 
 const combo = (key: string, mods: Partial<KeyCombo> = {}): KeyCombo => ({
   key,
@@ -112,6 +112,61 @@ describe("routeKey — slider zone", () => {
   it("space and s stay global", () => {
     expect(routeKey(combo(" "), "slider")).toEqual({ kind: "toggle-pause" });
     expect(routeKey(combo("s"), "slider")).toEqual({ kind: "toggle-mode" });
+  });
+});
+
+describe("routeKey — stage surface (audit R4: hidden-table bleed-through)", () => {
+  it("inert for table-selection keys — the table is not on screen", () => {
+    // Enter used to play whatever row was invisibly selected in
+    // Backstage: a surprise track change mid-performance.
+    expect(routeKey(combo("Enter"), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("ArrowDown"), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("ArrowUp"), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("Home"), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("End"), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("PageDown"), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("b"), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("a", { meta: true }), "global", "stage")).toEqual({ kind: "native" });
+    expect(routeKey(combo("f", { meta: true }), "global", "stage")).toEqual({ kind: "native" });
+  });
+
+  it("keeps the performance keys live", () => {
+    expect(routeKey(combo(" "), "global", "stage")).toEqual({ kind: "toggle-pause" });
+    expect(routeKey(combo("s"), "global", "stage")).toEqual({ kind: "toggle-mode" });
+    expect(routeKey(combo("Escape"), "global", "stage")).toEqual({ kind: "escape" });
+    expect(routeKey(combo("ArrowRight"), "global", "stage")).toEqual({
+      kind: "seek-nudge",
+      secs: 5,
+    });
+    expect(routeKey(combo("ArrowLeft"), "global", "stage")).toEqual({
+      kind: "seek-nudge",
+      secs: -5,
+    });
+    expect(routeKey(combo("ArrowRight", { meta: true }), "global", "stage")).toEqual({
+      kind: "step-track",
+      offset: 1,
+    });
+  });
+
+  it("backstage surface is the default (existing call sites unchanged)", () => {
+    expect(routeKey(combo("Enter"), "global")).toEqual({ kind: "play-selected" });
+  });
+});
+
+describe("escapeIntent — Esc priority ladder (audit R4)", () => {
+  it("always exits Stage, even with a stale Backstage selection", () => {
+    // The stage hint promises "Esc → Backstage"; a selection left
+    // behind in Backstage must not eat the first press.
+    expect(escapeIntent("stage", true)).toBe("exit-stage");
+    expect(escapeIntent("stage", false)).toBe("exit-stage");
+  });
+
+  it("clears a Backstage selection first", () => {
+    expect(escapeIntent("backstage", true)).toBe("clear-selection");
+  });
+
+  it("is inert in Backstage with nothing selected", () => {
+    expect(escapeIntent("backstage", false)).toBe("none");
   });
 });
 

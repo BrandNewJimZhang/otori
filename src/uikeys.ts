@@ -31,7 +31,43 @@ export type KeyAction =
 
 const SEEK_NUDGE_SEC = 5;
 
-export function routeKey(combo: KeyCombo, zone: KeyZone): KeyAction {
+/** Which UI surface is on screen; Stage has no table, so table keys go inert. */
+export type Surface = "backstage" | "stage";
+
+/**
+ * Esc priority ladder: exit Stage > clear the Backstage selection >
+ * nothing. In Stage a leftover Backstage selection is invisible, so it
+ * must never eat the exit press (the hint promises "Esc → Backstage").
+ */
+export function escapeIntent(
+  surface: Surface,
+  hasSelection: boolean,
+): "exit-stage" | "clear-selection" | "none" {
+  if (surface === "stage") return "exit-stage";
+  return hasSelection ? "clear-selection" : "none";
+}
+
+/** Actions that operate the Backstage table — meaningless while it's hidden. */
+const TABLE_ACTIONS = new Set<KeyAction["kind"]>([
+  "focus-search",
+  "select-step",
+  "select-all",
+  "select-edge",
+  "select-page",
+  "type-ahead",
+  "play-selected",
+]);
+
+export function routeKey(combo: KeyCombo, zone: KeyZone, surface: Surface = "backstage"): KeyAction {
+  const action = routeKeyBackstage(combo, zone);
+  // Stage shows no table: selection/search/type-ahead keys must not
+  // reach the hidden Backstage state (audit R4 — Enter used to play
+  // an invisibly selected row mid-performance).
+  if (surface === "stage" && TABLE_ACTIONS.has(action.kind)) return { kind: "native" };
+  return action;
+}
+
+function routeKeyBackstage(combo: KeyCombo, zone: KeyZone): KeyAction {
   // ⌘F reaches search from anywhere, including inside inputs.
   if (combo.meta && combo.key.toLowerCase() === "f") return { kind: "focus-search" };
   // ⌘←/→ = previous/next track (Music.app convention) — but inside an

@@ -32,7 +32,7 @@ import {
 } from "./library";
 import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
 import { dequeue, enqueueNext } from "./queue";
-import { routeKey, type KeyZone } from "./uikeys";
+import { escapeIntent, routeKey, type KeyZone } from "./uikeys";
 import { seekMax, seekShown } from "./seekbar";
 import {
   DensityIcon,
@@ -129,6 +129,8 @@ function App() {
   repeatRef.current = repeat;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   // Type-ahead buffer: keystrokes within 800ms accumulate (Finder-style).
   const typeAheadRef = useRef<{ buffer: string; timer: number }>({ buffer: "", timer: 0 });
 
@@ -558,7 +560,11 @@ function App() {
         nudgeLyrics(e.key === "[" ? -100 : 100);
         return;
       }
-      const action = routeKey({ key: e.key, meta: e.metaKey || e.ctrlKey, shift: e.shiftKey }, zone);
+      const action = routeKey(
+        { key: e.key, meta: e.metaKey || e.ctrlKey, shift: e.shiftKey },
+        zone,
+        modeRef.current,
+      );
       if (action.kind === "native") return;
       e.preventDefault();
       switch (action.kind) {
@@ -622,8 +628,14 @@ function App() {
           if (currentRef.current) step(action.offset);
           break;
         case "escape":
-          if (selectionRef.current.ids.size > 0) setSelection(emptySelection);
-          else setMode("backstage");
+          switch (escapeIntent(modeRef.current, selectionRef.current.ids.size > 0)) {
+            case "exit-stage":
+              setMode("backstage");
+              break;
+            case "clear-selection":
+              setSelection(emptySelection);
+              break;
+          }
           break;
       }
     };
