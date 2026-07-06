@@ -149,3 +149,50 @@ fn unknown_track_fails_fast() {
     let (conn, _) = seeded_library();
     assert!(analysis::set_bpm(&conn, 9999, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.5 })).is_err());
 }
+
+#[test]
+fn provider_bpm_lands_with_provider_source_and_full_confidence() {
+    let (conn, id) = seeded_library();
+    analysis::set_provider_bpm(&conn, id, 175.0, Some(200.0), "vocadb").unwrap();
+
+    let (bpm, bpm_max, conf, source): (f64, Option<f64>, f64, String) = conn
+        .query_row(
+            "SELECT bpm, bpm_max, bpm_confidence, bpm_source FROM tracks WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(bpm, 175.0);
+    assert_eq!(bpm_max, Some(200.0));
+    assert_eq!(conf, 1.0);
+    assert_eq!(source, "provider:vocadb");
+    assert!(analysis::list_bpm_pending(&conn).unwrap().is_empty());
+}
+
+#[test]
+fn provider_bpm_overwrites_detection_but_never_a_tag() {
+    let (conn, id) = seeded_library();
+    // Detection first — provider should replace it (editor-curated
+    // beats estimated).
+    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 92.0, bpm_max: None, confidence: 0.5 })).unwrap();
+    analysis::set_provider_bpm(&conn, id, 175.0, None, "vocadb").unwrap();
+    let bpm: f64 = conn
+        .query_row("SELECT bpm FROM tracks WHERE id = ?1", [id], |r| r.get(0))
+        .unwrap();
+    assert_eq!(bpm, 175.0);
+
+    // Tag-sourced rows refuse provider writes (release beats database).
+    conn.execute(
+        "UPDATE tracks SET bpm = 128.0, bpm_source = 'tag', bpm_confidence = 1.0 WHERE id = ?1",
+        [id],
+    )
+    .unwrap();
+    assert!(analysis::set_provider_bpm(&conn, id, 99.0, None, "vocadb").is_err());
+}
+
+#[test]
+fn detection_never_overwrites_a_provider_value() {
+    let (conn, id) = seeded_library();
+    analysis::set_provider_bpm(&conn, id, 175.0, None, "vocadb").unwrap();
+    assert!(analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 92.0, bpm_max: None, confidence: 0.9 })).is_err());
+}

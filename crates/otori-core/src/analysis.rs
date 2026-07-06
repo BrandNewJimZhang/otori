@@ -44,8 +44,8 @@ pub fn list_bpm_pending(conn: &Connection) -> rusqlite::Result<Vec<PendingTrack>
 /// distinct from never-analyzed, so the sweeper won't retry forever.
 ///
 /// Fails fast on unknown ids (the caller listed them from this same
-/// index) and on tag-sourced rows: a release-authored BPM is
-/// authoritative and detection must never clobber it.
+/// index) and on tag/provider-sourced rows: authored and curated
+/// values are authoritative; detection must never clobber them.
 pub fn set_bpm(
     conn: &Connection,
     track_id: i64,
@@ -56,17 +56,42 @@ pub fn set_bpm(
             "UPDATE tracks
              SET bpm = ?1, bpm_max = ?2, bpm_confidence = ?3,
                  bpm_source = 'detected', bpm_analyzed_at = datetime('now')
-             WHERE id = ?4 AND (bpm_source IS NULL OR bpm_source != 'tag')",
+             WHERE id = ?4
+               AND (bpm_source IS NULL OR bpm_source = 'detected')",
             rusqlite::params![d.bpm, d.bpm_max, d.confidence, track_id],
         )?,
         None => conn.execute(
             "UPDATE tracks
              SET bpm = NULL, bpm_max = NULL, bpm_confidence = NULL,
                  bpm_source = NULL, bpm_analyzed_at = datetime('now')
-             WHERE id = ?1 AND (bpm_source IS NULL OR bpm_source != 'tag')",
+             WHERE id = ?1
+               AND (bpm_source IS NULL OR bpm_source = 'detected')",
             [track_id],
         )?,
     };
+    if updated == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+/// Record an editor-curated provider value (VocaDB/TouhouDB entry
+/// BPM). Trust ladder: tag > provider > detected — replaces detection,
+/// refuses to touch tag-sourced rows, confidence 1.0.
+pub fn set_provider_bpm(
+    conn: &Connection,
+    track_id: i64,
+    bpm: f64,
+    bpm_max: Option<f64>,
+    provider: &str,
+) -> rusqlite::Result<()> {
+    let updated = conn.execute(
+        "UPDATE tracks
+         SET bpm = ?1, bpm_max = ?2, bpm_confidence = 1.0,
+             bpm_source = 'provider:' || ?3, bpm_analyzed_at = datetime('now')
+         WHERE id = ?4 AND (bpm_source IS NULL OR bpm_source != 'tag')",
+        rusqlite::params![bpm, bpm_max, provider, track_id],
+    )?;
     if updated == 0 {
         return Err(rusqlite::Error::QueryReturnedNoRows);
     }
