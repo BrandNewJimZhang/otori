@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -76,13 +76,14 @@ CREATE TABLE transactions (
 );
 
 CREATE TABLE tx_changes (
-    tx_id      INTEGER NOT NULL REFERENCES transactions(id),
-    track_id   INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    field      TEXT NOT NULL,
-    old_value  TEXT,
-    old_source TEXT,
-    new_value  TEXT,
-    new_source TEXT NOT NULL
+    tx_id       INTEGER NOT NULL REFERENCES transactions(id),
+    track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    field       TEXT NOT NULL,
+    old_value   TEXT,
+    old_source  TEXT,
+    old_curated INTEGER NOT NULL DEFAULT 0,
+    new_value   TEXT,
+    new_source  TEXT NOT NULL
 );
 "#;
 
@@ -122,6 +123,13 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
             )),
         ));
     }
-    // version in 1..=SCHEMA_VERSION: current, nothing to migrate yet.
+    // version in 1..=SCHEMA_VERSION: migrate stepwise to current.
+    if version == 1 {
+        // v2: undo must restore curated flags, so the journal records them.
+        conn.execute_batch(
+            "ALTER TABLE tx_changes ADD COLUMN old_curated INTEGER NOT NULL DEFAULT 0;",
+        )?;
+        conn.pragma_update(None, "user_version", 2)?;
+    }
     Ok(conn)
 }

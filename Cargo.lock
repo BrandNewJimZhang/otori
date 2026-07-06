@@ -2521,6 +2521,7 @@ dependencies = [
  "lofty",
  "rusqlite",
  "serde",
+ "serde_json",
  "tempfile",
  "walkdir",
 ]

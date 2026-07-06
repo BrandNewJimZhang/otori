@@ -9,6 +9,7 @@ authors.workspace = true
 lofty = "0.24.0"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde.workspace = true
+serde_json.workspace = true
 walkdir = "2.5.0"
 
 [dev-dependencies]
