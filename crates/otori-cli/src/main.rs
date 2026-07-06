@@ -39,6 +39,45 @@ enum Command {
     },
     /// Print tags of an audio file as JSON (reads the file, not the index)
     Tags { path: PathBuf },
+    /// Edit tag fields (dry-run by default; --apply to write)
+    Set {
+        path: PathBuf,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        artist: Option<String>,
+        #[arg(long)]
+        album: Option<String>,
+        /// Actually write (file + index + journal); default is dry-run diff
+        #[arg(long)]
+        apply: bool,
+        /// Identify as an agent; curated fields will be skipped
+        #[arg(long)]
+        agent: Option<String>,
+        /// Allow overwriting curated fields (rendered loudly in the diff)
+        #[arg(long)]
+        override_curated: bool,
+        /// Emit the plan/result as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mark existing tag values as curated (protected from agents)
+    Curate {
+        /// One file; omit with --all for the whole library
+        path: Option<PathBuf>,
+        /// Curate every indexed value
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Roll back an applied transaction (file + index + provenance)
+    Undo { tx_id: i64 },
+    /// List applied transactions
+    Journal {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 const EXIT_PARTIAL: u8 = 2;
@@ -135,6 +174,133 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let tags = otori_core::read_track_tags(&path)
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             println!("{}", serde_json::to_string_pretty(&tags).unwrap());
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Set { path, title, artist, album, apply, agent, override_curated, json } => {
+            use otori_core::write::{Actor, FieldChange, PlanOutcome};
+            let mut changes = Vec::new();
+            for (field, value) in [("title", title), ("artist", artist), ("album", album)] {
+                if let Some(value) = value {
+                    changes.push(FieldChange { field: field.into(), value });
+                }
+            }
+            if changes.is_empty() {
+                return Err(CliError::bad_input("nothing to set: pass --title/--artist/--album"));
+            }
+            let agent_id = agent.as_deref();
+            let actor = match agent_id {
+                Some(id) => Actor::Agent { id },
+                None => Actor::Human { via: "cli" },
+            };
+            let mut conn = open_library(cli.db)?;
+
+            let plan =
+                otori_core::write::plan_set(&mut conn, &path, &changes, actor, override_curated)
+                    .map_err(|e| CliError::bad_input(e.to_string()))?;
+            let tx_id = if apply && plan.outcome() == PlanOutcome::Changes {
+                otori_core::write::apply_set(&mut conn, &path, &changes, actor, override_curated)
+                    .map_err(CliError::library)?
+            } else {
+                None
+            };
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "applied": tx_id.is_some(),
+                        "tx_id": tx_id,
+                        "plan": plan,
+                    })
+                );
+            } else {
+                for c in &plan.changes {
+                    println!(
+                        "  {}: {} -> {}",
+                        c.field,
+                        c.old.as_deref().unwrap_or("(empty)"),
+                        c.new
+                    );
+                }
+                for s in &plan.skipped_curated {
+                    println!(
+                        "  SKIPPED (curated) {}: {} — proposed: {}",
+                        s.field, s.current, s.proposed
+                    );
+                }
+                match (tx_id, plan.outcome()) {
+                    (Some(id), _) => println!("applied as transaction {id} (otori undo {id})"),
+                    (None, PlanOutcome::Nothing) => println!("nothing to change"),
+                    (None, _) if !apply => println!("dry run — pass --apply to write"),
+                    (None, _) => {}
+                }
+            }
+            // Exit 2: the caller asked for changes that bounced off curated fields.
+            if plan.outcome() == PlanOutcome::CuratedSkipsOnly
+                || (!plan.skipped_curated.is_empty() && apply)
+            {
+                return Ok(ExitCode::from(EXIT_PARTIAL));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Curate { path, all, json } => {
+            if path.is_none() && !all {
+                return Err(CliError::bad_input(
+                    "pass a file path, or --all to curate the whole library",
+                ));
+            }
+            let mut conn = open_library(cli.db)?;
+            let count = otori_core::write::curate(&mut conn, path.as_deref())
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            if json {
+                println!("{}", serde_json::json!({ "curated": count }));
+            } else {
+                println!("protected {count} field values");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Undo { tx_id } => {
+            let mut conn = open_library(cli.db)?;
+            otori_core::write::undo(&mut conn, tx_id)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            println!("transaction {tx_id} rolled back");
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Journal { json } => {
+            let conn = open_library(cli.db)?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT x.id, x.actor, x.started_at, x.undone, count(c.tx_id)
+                     FROM transactions x LEFT JOIN tx_changes c ON c.tx_id = x.id
+                     GROUP BY x.id ORDER BY x.id DESC",
+                )
+                .map_err(CliError::library)?;
+            let rows: Vec<(i64, String, String, i64, i64)> = stmt
+                .query_map([], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })
+                .map_err(CliError::library)?
+                .collect::<Result<_, _>>()
+                .map_err(CliError::library)?;
+            if json {
+                let out: Vec<_> = rows
+                    .iter()
+                    .map(|(id, actor, at, undone, fields)| {
+                        serde_json::json!({
+                            "tx_id": id, "actor": actor, "at": at,
+                            "undone": *undone == 1, "fields": fields,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            } else {
+                for (id, actor, at, undone, fields) in &rows {
+                    println!(
+                        "#{id}  {at}  {actor}  {fields} field(s){}",
+                        if *undone == 1 { "  [undone]" } else { "" }
+                    );
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
     }

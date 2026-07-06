@@ -10,6 +10,7 @@ use serde::Serialize;
 pub mod db;
 pub mod query;
 pub mod scan;
+pub mod write;
 
 // Consumers hold connections we hand out; they never open their own.
 pub use rusqlite::Connection;
