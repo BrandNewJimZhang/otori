@@ -78,6 +78,11 @@ pub fn set_bpm(
 /// Record an editor-curated provider value (VocaDB/TouhouDB entry
 /// BPM). Trust ladder: tag > provider > detected — replaces detection,
 /// refuses to touch tag-sourced rows, confidence 1.0.
+///
+/// `provider` must be lowercase alphanumeric (it lands inside
+/// bpm_source as 'provider:<name>' and must stay parseable); values
+/// get the same 20-400 sanity window as tags, and a range ceiling
+/// below its floor is data error.
 pub fn set_provider_bpm(
     conn: &Connection,
     track_id: i64,
@@ -85,6 +90,15 @@ pub fn set_provider_bpm(
     bpm_max: Option<f64>,
     provider: &str,
 ) -> rusqlite::Result<()> {
+    let name_ok = !provider.is_empty()
+        && provider.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    let bpm_ok = (20.0..=400.0).contains(&bpm);
+    let range_ok = bpm_max.is_none_or(|max| max >= bpm && max <= 400.0);
+    if !name_ok || !bpm_ok || !range_ok {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "invalid provider bpm: provider={provider:?} bpm={bpm} bpm_max={bpm_max:?}"
+        )));
+    }
     let updated = conn.execute(
         "UPDATE tracks
          SET bpm = ?1, bpm_max = ?2, bpm_confidence = 1.0,
