@@ -40,9 +40,15 @@ export function listBpmPending(): Promise<PendingTrack[]> {
   return invoke<PendingTrack[]>("list_bpm_pending");
 }
 
+export interface DetectedBpm {
+  bpm: number;
+  bpm_max: number | null;
+  confidence: number;
+}
+
 /** Persist a detection outcome; null = analyzed, beatless. */
-export function setBpm(trackId: number, bpm: number | null): Promise<void> {
-  return invoke<void>("set_bpm", { trackId, bpm });
+export function setBpm(trackId: number, detected: DetectedBpm | null): Promise<void> {
+  return invoke<void>("set_bpm", { trackId, detected });
 }
 
 /** Hold/release the display-sleep assertion (Stage mode playing). */

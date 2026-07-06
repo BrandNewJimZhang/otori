@@ -38,6 +38,13 @@ interface Props {
   onPlay(track: TrackRow): void;
 }
 
+/** BPM cell: steady tempo, a min–max range (variable/soflan), or "—". */
+function formatBpm(t: TrackRow): string {
+  if (t.bpm == null) return "—";
+  if (t.bpm_max != null) return `${Math.round(t.bpm)}–${Math.round(t.bpm_max)}`;
+  return t.bpm.toFixed(1);
+}
+
 /** Three animated bars; freezes when paused (CSS drives the motion). */
 function NowPlayingBars({ paused }: { paused: boolean }) {
   return (
@@ -156,7 +163,18 @@ export function LibraryTable({
               <td>{t.artist ?? "—"}</td>
               <td>{t.album ?? "—"}</td>
               <td className="col-duration">{formatTime(t.duration_secs)}</td>
-              <td className="col-bpm">{t.bpm != null ? t.bpm.toFixed(1) : "—"}</td>
+              <td
+                className={`col-bpm ${
+                  t.bpm != null && (t.bpm_confidence ?? 0) < 0.4 ? "low-confidence" : ""
+                }`}
+                title={
+                  t.bpm != null && t.bpm_confidence != null
+                    ? `confidence ${(t.bpm_confidence * 100).toFixed(0)}%`
+                    : undefined
+                }
+              >
+                {formatBpm(t)}
+              </td>
               <td className="col-format">{t.format}</td>
             </tr>
           );

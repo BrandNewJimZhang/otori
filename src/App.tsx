@@ -278,7 +278,10 @@ function App() {
         beatGridFor(current.path),
         beatGridFor(next.path),
       ]);
-      const plan = planTransition(gridOut, gridIn, crossfadeSec);
+      // Low-confidence grids must not drive a tempo bend: passing null
+      // degrades the plan to a plain equal-power crossfade.
+      const trusted = (g: typeof gridOut) => (g && g.confidence >= 0.4 ? g : null);
+      const plan = planTransition(trusted(gridOut), trusted(gridIn), crossfadeSec);
       // Engine returns false if the preload isn't ready — the track
       // then ends naturally and the gapless path takes over.
       engine.beginTransition(plan);

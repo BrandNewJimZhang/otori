@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -26,7 +26,11 @@ CREATE TABLE tracks (
     format       TEXT NOT NULL,
     duration_secs REAL,            -- file property, no provenance; refreshed each scan
     replaygain_db REAL,            -- RG track gain in dB; file property like duration
-    bpm          REAL,             -- detected tempo; see bpm_analyzed_at
+    bpm          REAL,             -- tempo (or range floor); see bpm_analyzed_at
+    bpm_max      REAL,             -- range ceiling when tempo varies (soflan); NULL = steady
+    bpm_confidence REAL,           -- 0..1 detector confidence; 1.0 for tag values
+    bpm_source   TEXT              -- where the value came from
+                 CHECK (bpm_source IN ('tag', 'detected') OR bpm_source IS NULL),
     bpm_analyzed_at TEXT,          -- set once analysis ran (bpm NULL = beatless)
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
@@ -174,6 +178,20 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
              ALTER TABLE tracks ADD COLUMN bpm_analyzed_at TEXT;",
         )?;
         conn.pragma_update(None, "user_version", 6)?;
+    }
+    if (1..=6).contains(&version) {
+        // v7: tempo trust — range ceiling for variable-tempo tracks
+        // (soflan), detector confidence, and value provenance (tag
+        // beats detection). Re-analyze everything: detection semantics
+        // changed, and TBPM tags weren't read before.
+        conn.execute_batch(
+            "ALTER TABLE tracks ADD COLUMN bpm_max REAL;
+             ALTER TABLE tracks ADD COLUMN bpm_confidence REAL;
+             ALTER TABLE tracks ADD COLUMN bpm_source TEXT
+                 CHECK (bpm_source IN ('tag', 'detected') OR bpm_source IS NULL);
+             UPDATE tracks SET bpm = NULL, bpm_analyzed_at = NULL;",
+        )?;
+        conn.pragma_update(None, "user_version", 7)?;
     }
     Ok(conn)
 }

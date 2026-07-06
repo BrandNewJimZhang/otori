@@ -20,6 +20,17 @@ export interface BeatGrid {
   bpm: number;
   /** Seconds from stream start to the first detected beat. */
   firstBeatSec: number;
+  /** 0..1: autocorrelation peak strength vs the signal's own floor. */
+  confidence: number;
+}
+
+/** Whole-track tempo verdict for the BPM column. */
+export interface TempoAnalysis {
+  /** Tempo, or the range floor when the track varies. */
+  bpm: number;
+  /** Range ceiling for variable-tempo (soflan) material; null = steady. */
+  bpmMax: number | null;
+  confidence: number;
 }
 
 /**
@@ -58,7 +69,11 @@ export function detectBeats(envelope: Float32Array): BeatGrid | null {
     }
   }
   // Periodicity must clearly beat the signal's own variance floor.
-  if (bestLag === 0 || bestScore < (energy / x.length) * 0.1) return null;
+  const floor = energy / x.length;
+  if (bestLag === 0 || bestScore < floor * 0.1) return null;
+  // Confidence: peak strength relative to the variance floor, squashed
+  // to 0..1. A clean click track saturates; mushy periodicity sits low.
+  const confidence = Math.min(1, bestScore / floor);
 
   // Harmonic disambiguation: a click at T also correlates at 2T (half
   // tempo). Prefer the smallest lag (fastest tempo) whose score holds
@@ -99,7 +114,57 @@ export function detectBeats(envelope: Float32Array): BeatGrid | null {
   let phaseBin = 0;
   for (let i = 1; i < bins; i++) if (folded[i] > folded[phaseBin]) phaseBin = i;
 
-  return { bpm, firstBeatSec: phaseBin / ENVELOPE_HZ };
+  return { bpm, firstBeatSec: phaseBin / ENVELOPE_HZ, confidence };
+}
+
+/** Windowing for variable-tempo detection: analyze WINDOW_SEC slices
+    stepping by half, then reconcile. Doujin/rhythm-game music changes
+    tempo mid-track (soflan) — a whole-track autocorrelation would
+    average that into a lie. */
+const WINDOW_SEC = 15;
+/** Windows disagreeing by more than this ratio = variable tempo. */
+const STEADY_TOLERANCE = 0.05;
+
+/**
+ * Whole-track tempo analysis. Steady tracks get a single bpm; tracks
+ * whose windows disagree get a bpm..bpmMax range with reduced
+ * confidence. Null when nothing periodic is found anywhere.
+ */
+export function analyzeTempo(envelope: Float32Array): TempoAnalysis | null {
+  const win = WINDOW_SEC * ENVELOPE_HZ;
+  if (envelope.length < win * 2) {
+    const grid = detectBeats(envelope);
+    return grid ? { bpm: grid.bpm, bpmMax: null, confidence: grid.confidence } : null;
+  }
+
+  const bpms: number[] = [];
+  const confs: number[] = [];
+  for (let start = 0; start + win <= envelope.length; start += win / 2) {
+    const grid = detectBeats(envelope.subarray(start, start + win));
+    if (grid) {
+      bpms.push(grid.bpm);
+      confs.push(grid.confidence);
+    }
+  }
+  if (bpms.length === 0) return null;
+
+  const lo = Math.min(...bpms);
+  const hi = Math.max(...bpms);
+  const meanConf = confs.reduce((a, b) => a + b, 0) / confs.length;
+  // Windows that failed detection dilute confidence: they mean parts
+  // of the track had no usable beat.
+  const coverage = bpms.length / Math.floor((envelope.length - win) / (win / 2) + 1);
+  const confidence = Math.min(1, meanConf * coverage);
+
+  if (hi / lo <= 1 + STEADY_TOLERANCE) {
+    // Steady: report the median (robust to one flaky window).
+    const sorted = [...bpms].sort((a, b) => a - b);
+    return { bpm: sorted[Math.floor(sorted.length / 2)], bpmMax: null, confidence };
+  }
+  // Variable tempo: a range is honest; halve confidence — a single
+  // number can't represent this track, and crossfade planning should
+  // not trust either endpoint blindly.
+  return { bpm: lo, bpmMax: hi, confidence: confidence * 0.5 };
 }
 
 /**

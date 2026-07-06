@@ -106,6 +106,17 @@ pub fn scan(conn: &mut Connection, root: &Path) -> rusqlite::Result<ScanReport> 
                     "UPDATE tracks SET duration_secs = ?1, replaygain_db = ?2 WHERE id = ?3",
                     rusqlite::params![scanned.duration_secs, scanned.replaygain_db, track_id],
                 )?;
+                // Release-authored BPM is authoritative: confidence 1,
+                // marked analyzed so the detector sweep skips it.
+                if let Some(bpm) = scanned.tag_bpm {
+                    tx.execute(
+                        "UPDATE tracks
+                         SET bpm = ?1, bpm_max = NULL, bpm_confidence = 1.0,
+                             bpm_source = 'tag', bpm_analyzed_at = datetime('now')
+                         WHERE id = ?2",
+                        rusqlite::params![bpm, track_id],
+                    )?;
+                }
                 for (field, value) in scanned.fields {
                     // Scan never overwrites: only fills fields the index
                     // doesn't know yet. Conflict reporting is a later cut.
@@ -183,6 +194,8 @@ struct ScannedFile {
     duration_secs: f64,
     /// ReplayGain track gain in dB, parsed from "-7.25 dB" style tags.
     replaygain_db: Option<f64>,
+    /// Release-authored tempo (TBPM/tmpo), sanity-checked.
+    tag_bpm: Option<f64>,
     fields: Vec<(&'static str, String)>,
 }
 
@@ -192,6 +205,7 @@ fn read_file(path: &Path) -> Result<ScannedFile, lofty::error::LoftyError> {
     let duration_secs = tagged.properties().duration().as_secs_f64();
     let mut fields = Vec::new();
     let mut replaygain_db = None;
+    let mut tag_bpm = None;
     if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
         if let Some(v) = tag.title() {
             fields.push(("title", v.into_owned()));
@@ -205,8 +219,12 @@ fn read_file(path: &Path) -> Result<ScannedFile, lofty::error::LoftyError> {
         replaygain_db = tag
             .get_string(ItemKey::ReplayGainTrackGain)
             .and_then(parse_replaygain_db);
+        tag_bpm = tag
+            .get_string(ItemKey::IntegerBpm)
+            .or_else(|| tag.get_string(ItemKey::Bpm))
+            .and_then(crate::analysis::parse_tag_bpm);
     }
-    Ok(ScannedFile { duration_secs, replaygain_db, fields })
+    Ok(ScannedFile { duration_secs, replaygain_db, tag_bpm, fields })
 }
 
 /// "−7.25 dB" / "-7.25dB" / "-7.25" → dB value. Unparseable → None:

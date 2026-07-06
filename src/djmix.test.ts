@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { planTransition } from "./djmix";
 import type { BeatGrid } from "./beatgrid";
 
-const grid = (bpm: number, firstBeatSec = 0): BeatGrid => ({ bpm, firstBeatSec });
+const grid = (bpm: number, firstBeatSec = 0): BeatGrid => ({ bpm, firstBeatSec, confidence: 0.9 });
 
 describe("planTransition", () => {
   it("plans a beat-matched transition for compatible tempos", () => {

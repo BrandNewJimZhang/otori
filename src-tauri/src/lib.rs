@@ -74,10 +74,27 @@ fn list_bpm_pending(
     analysis::list_bpm_pending(&conn).map_err(|e| e.to_string())
 }
 
+/// Mirror of analysis::DetectedBpm for IPC deserialization.
+#[derive(serde::Deserialize)]
+struct DetectedBpmArg {
+    bpm: f64,
+    bpm_max: Option<f64>,
+    confidence: f64,
+}
+
 #[tauri::command]
-fn set_bpm(state: tauri::State<'_, Library>, track_id: i64, bpm: Option<f64>) -> Result<(), String> {
+fn set_bpm(
+    state: tauri::State<'_, Library>,
+    track_id: i64,
+    detected: Option<DetectedBpmArg>,
+) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    analysis::set_bpm(&conn, track_id, bpm).map_err(|e| e.to_string())
+    let detected = detected.map(|d| analysis::DetectedBpm {
+        bpm: d.bpm,
+        bpm_max: d.bpm_max,
+        confidence: d.confidence,
+    });
+    analysis::set_bpm(&conn, track_id, detected).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -5,7 +5,7 @@
 // in the index (set_bpm), so a restart resumes where it left off and
 // the CLI/agents see the same numbers.
 
-import { beatGridFor } from "./beatservice";
+import { tempoAnalysisFor } from "./beatservice";
 import { listBpmPending, setBpm } from "./ipc";
 
 /** Pause between tracks: keep the decode work invisible next to
@@ -27,11 +27,20 @@ export function startBpmSweep(): void {
     try {
       const pending = await listBpmPending();
       for (const track of pending) {
-        const grid = await beatGridFor(track.path);
+        const tempo = await tempoAnalysisFor(track.path);
         // Persist even null (beatless): "analyzed, no beat" must not
         // be re-attempted every launch. IPC failure aborts the sweep
         // (index unavailable) rather than spinning.
-        await setBpm(track.id, grid ? round1(grid.bpm) : null);
+        await setBpm(
+          track.id,
+          tempo
+            ? {
+                bpm: round1(tempo.bpm),
+                bpm_max: tempo.bpmMax != null ? round1(tempo.bpmMax) : null,
+                confidence: Math.round(tempo.confidence * 100) / 100,
+              }
+            : null,
+        );
         await sleep(PACE_MS);
       }
     } catch {
