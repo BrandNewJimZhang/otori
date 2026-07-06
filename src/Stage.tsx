@@ -3,6 +3,11 @@
 // ladder is handled here: word highlight → line scroll → static text →
 // spectrum-only. Every rung is a complete experience.
 //
+// Lyric sync: all timing comparisons go through the lyric clock
+// (lyrictime.ts) — engine position minus output latency, plus the
+// perceptual lead, minus the user's per-track nudge. Never compare
+// lyric timestamps against raw positionMs.
+//
 // Beat reactivity: a rAF loop reads band energies and writes CSS custom
 // properties on the root — the art pulses and the room lighting breathes
 // with the kick, with zero React re-renders on the audio path.
@@ -21,6 +26,7 @@ import { displayTitle } from "./library";
 import { formatTime } from "./format";
 import { seekMax, seekShown } from "./seekbar";
 import { NextIcon, PauseIcon, PlayIcon, PrevIcon, RepeatIcon, ShuffleIcon } from "./icons";
+import { currentLineIndex, lyricClock, wordProgress } from "./lyrictime";
 import { Spectrum } from "./Spectrum";
 
 interface StageProps {
@@ -30,6 +36,10 @@ interface StageProps {
   analyser: AnalyserNode | null;
   /** Current playback position in ms, sampled by the parent at rAF rate. */
   positionMs: number;
+  /** Audio-graph output latency in ms (subtracted by the lyric clock). */
+  outputLatencyMs: number;
+  /** Per-track sync nudge in ms ([ / ] keys in App, persisted). */
+  lyricsOffsetMs: number;
   /** Track length in seconds; NaN until engine metadata loads. */
   duration: number;
   paused: boolean;
@@ -42,15 +52,13 @@ interface StageProps {
   onCycleRepeat: () => void;
 }
 
-/** Index of the last line at or before `positionMs`; -1 before the first. */
-function currentLineIndex(doc: LyricsDoc, positionMs: number): number {
-  let idx = -1;
-  for (let i = 0; i < doc.lines.length; i++) {
-    if (doc.lines[i].time_ms <= positionMs) idx = i;
-    else break;
-  }
-  return idx;
-}
+/** Last word of the last line has no successor to bound its wipe; a
+    sung phrase tail rarely outlives this. */
+const LAST_WORD_SPAN_MS = 5000;
+/** Manual-scroll grace: auto-follow resumes after this idle time. */
+const FOLLOW_RESUME_MS = 3000;
+/** Offset HUD lingers this long after a nudge. */
+const OFFSET_HUD_MS = 1500;
 
 export function Stage({
   track,
@@ -58,6 +66,8 @@ export function Stage({
   lyrics,
   analyser,
   positionMs,
+  outputLatencyMs,
+  lyricsOffsetMs,
   duration,
   paused,
   shuffle,
@@ -77,6 +87,14 @@ export function Stage({
   const chromeTimer = useRef<number>(0);
   // Scrub preview (audit P0): seek once on release, not per drag pixel.
   const [scrub, setScrub] = useState<number | null>(null);
+  // Auto-follow pauses while the user browses the lyrics by wheel;
+  // resumes on idle or on a line click (which is an explicit "go here").
+  const [following, setFollowing] = useState(true);
+  const followTimer = useRef<number>(0);
+  // Transient sync badge: shows on [ / ] nudges, not on mount.
+  const [offsetHud, setOffsetHud] = useState(false);
+  const offsetHudTimer = useRef<number>(0);
+  const offsetSeen = useRef(lyricsOffsetMs);
 
   // Beat drive: bass (kick) pulses the art, highs shimmer the lighting.
   // Fast attack / slow release so hits punch and glow decays musically.
@@ -143,18 +161,49 @@ export function Stage({
     };
   }, []);
 
+  // Surface the sync badge only when the offset actually changes.
+  useEffect(() => {
+    if (offsetSeen.current === lyricsOffsetMs) return;
+    offsetSeen.current = lyricsOffsetMs;
+    setOffsetHud(true);
+    window.clearTimeout(offsetHudTimer.current);
+    offsetHudTimer.current = window.setTimeout(() => setOffsetHud(false), OFFSET_HUD_MS);
+    return () => window.clearTimeout(offsetHudTimer.current);
+  }, [lyricsOffsetMs]);
+
   const synced = lyrics !== null && lyrics.kind !== "static";
-  const lineIdx = synced ? currentLineIndex(lyrics, positionMs) : -1;
+  const clockMs = lyricClock(positionMs, outputLatencyMs, lyricsOffsetMs);
+  const lineIdx = synced ? currentLineIndex(lyrics, clockMs) : -1;
 
   // Scroll only on line change, not every frame.
   useEffect(() => {
     if (lineIdx !== activeLine) setActiveLine(lineIdx);
   }, [lineIdx, activeLine]);
 
+  // scrollIntoView keeps layout simple; a transform-driven list is the
+  // upgrade path if smooth-scroll cadence ever bothers on WKWebView.
   useEffect(() => {
-    if (activeLine < 0) return;
+    if (activeLine < 0 || !following) return;
     lineRefs.current[activeLine]?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeLine]);
+  }, [activeLine, following]);
+
+  /** Wheel over the lyrics = the user is browsing; stop following. */
+  function pauseFollow() {
+    setFollowing(false);
+    window.clearTimeout(followTimer.current);
+    followTimer.current = window.setTimeout(() => setFollowing(true), FOLLOW_RESUME_MS);
+  }
+
+  useEffect(() => () => window.clearTimeout(followTimer.current), []);
+
+  /** Where the active line's word wipe ends: the next line's start. */
+  function lineEndMs(i: number): number {
+    const lines = lyrics!.lines;
+    if (i + 1 < lines.length) return lines[i + 1].time_ms;
+    const words = lines[i].words;
+    const lastStart = words?.length ? words[words.length - 1].time_ms : lines[i].time_ms;
+    return lastStart + LAST_WORD_SPAN_MS;
+  }
 
   return (
     <div className={`stage ${chromeVisible ? "" : "idle"}`} ref={stageRef}>
@@ -263,34 +312,57 @@ export function Stage({
 
         {/* Synced lyric lines are seek targets (audit P1), Apple Music-style. */}
         {lyrics ? (
-          <div className={`stage-lyrics ${synced ? "synced" : "static"}`}>
-            {lyrics.lines.map((line, i) => (
-              <div
-                key={i}
-                ref={(el) => {
-                  lineRefs.current[i] = el;
-                }}
-                className={`lyric-line ${i === activeLine ? "active" : ""} ${
-                  synced && i < activeLine ? "past" : ""
-                } ${synced ? "seekable" : ""}`}
-                onClick={synced ? () => onSeek(line.time_ms / 1000) : undefined}
-                onDoubleClick={synced ? (e) => e.stopPropagation() : undefined}
-              >
-                {line.words && i === activeLine ? (
-                  // Word-level: highlight words whose time has come.
-                  // Word text keeps its trailing whitespace (core's
-                  // parse_word_tags preserves it), so plain concatenation
-                  // renders correct spacing for spaced languages.
-                  line.words.map((w, wi) => (
-                    <span key={wi} className={w.time_ms <= positionMs ? "sung" : ""}>
-                      {w.text}
-                    </span>
-                  ))
-                ) : (
-                  line.text || "♪"
-                )}
-              </div>
-            ))}
+          <div
+            className={`stage-lyrics ${synced ? "synced" : "static"}`}
+            onWheel={pauseFollow}
+          >
+            {lyrics.lines.map((line, i) => {
+              const active = i === activeLine;
+              // Distance from the active line drives the depth-of-field
+              // fade (see .lyric-line[data-dist] in App.css).
+              const dist = synced && activeLine >= 0 ? Math.min(Math.abs(i - activeLine), 4) : 0;
+              return (
+                <div
+                  key={i}
+                  ref={(el) => {
+                    lineRefs.current[i] = el;
+                  }}
+                  data-dist={dist}
+                  className={`lyric-line ${active ? "active" : ""} ${
+                    synced && i < activeLine ? "past" : ""
+                  } ${synced ? "seekable" : ""}`}
+                  onClick={
+                    synced
+                      ? () => {
+                          // Undo the render-time offset so the sung audio
+                          // lands where the user pointed.
+                          onSeek(Math.max(0, line.time_ms + lyricsOffsetMs) / 1000);
+                          setFollowing(true);
+                        }
+                      : undefined
+                  }
+                  onDoubleClick={synced ? (e) => e.stopPropagation() : undefined}
+                >
+                  {line.words && active ? (
+                    // Word-level: continuous karaoke wipe. Each word's
+                    // --fill drives a text-clipped gradient; trailing
+                    // whitespace survives from core's parse_word_tags,
+                    // so plain concatenation spaces correctly.
+                    wordProgress(line.words, clockMs, lineEndMs(i)).map((p, wi) => (
+                      <span
+                        key={wi}
+                        className="w"
+                        style={{ "--fill": `${(p * 100).toFixed(1)}%` } as React.CSSProperties}
+                      >
+                        {line.words![wi].text}
+                      </span>
+                    ))
+                  ) : (
+                    line.text || "♪"
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="stage-lyrics none">
@@ -303,8 +375,14 @@ export function Stage({
         <Spectrum analyser={analyser} mirror />
       </div>
 
+      <div className={`stage-offset-hud ${offsetHud ? "" : "hidden"}`}>
+        Lyrics {lyricsOffsetMs >= 0 ? "+" : ""}
+        {(lyricsOffsetMs / 1000).toFixed(1)}s
+      </div>
+
       <div className={`stage-hint ${chromeVisible ? "" : "hidden"}`}>
         Esc → Backstage · Space → play/pause
+        {synced ? " · [ ] → lyric sync" : ""}
       </div>
     </div>
   );
