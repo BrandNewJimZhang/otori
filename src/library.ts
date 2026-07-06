@@ -116,10 +116,29 @@ export function clickSelect(
   return { ids: new Set([id]), anchor: id };
 }
 
-/** ↑/↓ moves a single selection; from nothing, enters at the list edge. */
-export function stepSelect(sel: Selection, visible: TrackRow[], offset: 1 | -1): Selection {
+/** ↑/↓ moves a single selection; from nothing, enters at the list edge.
+    With `extend` (Shift), grows/shrinks a range from the anchor. */
+export function stepSelect(
+  sel: Selection,
+  visible: TrackRow[],
+  offset: 1 | -1,
+  extend = false,
+): Selection {
   if (visible.length === 0) return sel;
   const cur = sel.anchor != null ? visible.findIndex((t) => t.id === sel.anchor) : -1;
+  if (extend && cur >= 0 && sel.ids.size > 0) {
+    // The moving edge is the selected end farthest from the anchor
+    // (the non-anchor end); stepping it grows or shrinks the range.
+    const selectedIdx = visible
+      .map((t, i) => (sel.ids.has(t.id) ? i : -1))
+      .filter((i) => i >= 0);
+    const lo0 = Math.min(...selectedIdx);
+    const hi0 = Math.max(...selectedIdx);
+    const edge = hi0 > cur ? hi0 : lo0 < cur ? lo0 : cur;
+    const next = Math.min(visible.length - 1, Math.max(0, edge + offset));
+    const [lo, hi] = cur < next ? [cur, next] : [next, cur];
+    return { ids: new Set(visible.slice(lo, hi + 1).map((t) => t.id)), anchor: sel.anchor };
+  }
   const next =
     cur < 0
       ? offset === 1
@@ -127,6 +146,40 @@ export function stepSelect(sel: Selection, visible: TrackRow[], offset: 1 | -1):
         : visible.length - 1
       : Math.min(visible.length - 1, Math.max(0, cur + offset));
   const id = visible[next].id;
+  return { ids: new Set([id]), anchor: id };
+}
+
+/** Select every visible row, keeping the current anchor when set. */
+export function selectAll(sel: Selection, visible: TrackRow[]): Selection {
+  return { ids: new Set(visible.map((t) => t.id)), anchor: sel.anchor };
+}
+
+/** Jump the selection to the first/last visible row (Home/End). */
+export function edgeSelect(visible: TrackRow[], edge: "first" | "last"): Selection {
+  if (visible.length === 0) return emptySelection;
+  const id = visible[edge === "first" ? 0 : visible.length - 1].id;
+  return { ids: new Set([id]), anchor: id };
+}
+
+/**
+ * Type-ahead (Finder-style): jump to the first visible track whose
+ * display title starts with the typed buffer, searching from after the
+ * current anchor first so repeats walk matches; falls back to contains.
+ */
+export function typeAheadSelect(
+  sel: Selection,
+  visible: TrackRow[],
+  buffer: string,
+): Selection {
+  const q = buffer.normalize("NFKC").toLowerCase();
+  if (!q) return sel;
+  const titles = visible.map((t) => displayTitle(t).normalize("NFKC").toLowerCase());
+  const from = sel.anchor != null ? visible.findIndex((t) => t.id === sel.anchor) + 1 : 0;
+  const order = [...visible.keys()].map((i) => (i + from) % visible.length);
+  const hit =
+    order.find((i) => titles[i].startsWith(q)) ?? order.find((i) => titles[i].includes(q));
+  if (hit == null) return sel;
+  const id = visible[hit].id;
   return { ids: new Set([id]), anchor: id };
 }
 

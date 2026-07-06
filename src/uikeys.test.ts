@@ -16,8 +16,16 @@ describe("routeKey — global zone", () => {
   it("maps the app keys", () => {
     expect(routeKey(combo("s"), "global")).toEqual({ kind: "toggle-mode" });
     expect(routeKey(combo(" "), "global")).toEqual({ kind: "toggle-pause" });
-    expect(routeKey(combo("ArrowDown"), "global")).toEqual({ kind: "select-step", offset: 1 });
-    expect(routeKey(combo("ArrowUp"), "global")).toEqual({ kind: "select-step", offset: -1 });
+    expect(routeKey(combo("ArrowDown"), "global")).toEqual({
+      kind: "select-step",
+      offset: 1,
+      extend: false,
+    });
+    expect(routeKey(combo("ArrowUp"), "global")).toEqual({
+      kind: "select-step",
+      offset: -1,
+      extend: false,
+    });
     expect(routeKey(combo("Enter"), "global")).toEqual({ kind: "play-selected" });
     expect(routeKey(combo("Escape"), "global")).toEqual({ kind: "escape" });
   });
@@ -26,13 +34,41 @@ describe("routeKey — global zone", () => {
     expect(routeKey(combo("S"), "global")).toEqual({ kind: "toggle-mode" });
   });
 
+  it("shift-arrows extend the selection (audit P1)", () => {
+    expect(routeKey(combo("ArrowDown", { shift: true }), "global")).toEqual({
+      kind: "select-step",
+      offset: 1,
+      extend: true,
+    });
+  });
+
+  it("Home/End/PageUp/PageDown navigate the table (audit P1)", () => {
+    expect(routeKey(combo("Home"), "global")).toEqual({ kind: "select-edge", edge: "first" });
+    expect(routeKey(combo("End"), "global")).toEqual({ kind: "select-edge", edge: "last" });
+    expect(routeKey(combo("PageDown"), "global")).toEqual({ kind: "select-page", offset: 1 });
+    expect(routeKey(combo("PageUp"), "global")).toEqual({ kind: "select-page", offset: -1 });
+  });
+
+  it("printable characters feed type-ahead (audit P1)", () => {
+    expect(routeKey(combo("b"), "global")).toEqual({ kind: "type-ahead", char: "b" });
+    expect(routeKey(combo("S", { shift: true }), "global")).toEqual({
+      kind: "type-ahead",
+      char: "S",
+    });
+  });
+
+  it("⌘A selects all visible rows (audit P1)", () => {
+    expect(routeKey(combo("a", { meta: true }), "global")).toEqual({ kind: "select-all" });
+    expect(routeKey(combo("a", { meta: true }), "input")).toEqual({ kind: "native" });
+  });
+
   it("nudges the seek position with ←/→ (audit P1)", () => {
     expect(routeKey(combo("ArrowRight"), "global")).toEqual({ kind: "seek-nudge", secs: 5 });
     expect(routeKey(combo("ArrowLeft"), "global")).toEqual({ kind: "seek-nudge", secs: -5 });
   });
 
-  it("passes unknown keys and unmapped ⌘-chords through", () => {
-    expect(routeKey(combo("x"), "global")).toEqual({ kind: "native" });
+  it("passes non-printable keys and unmapped ⌘-chords through", () => {
+    expect(routeKey(combo("F5"), "global")).toEqual({ kind: "native" });
     expect(routeKey(combo("c", { meta: true }), "global")).toEqual({ kind: "native" });
   });
 
@@ -86,7 +122,11 @@ describe("routeKey — button zone (audit P0: focus fight)", () => {
   });
 
   it("non-activation keys stay global (arrows still move selection)", () => {
-    expect(routeKey(combo("ArrowDown"), "button")).toEqual({ kind: "select-step", offset: 1 });
+    expect(routeKey(combo("ArrowDown"), "button")).toEqual({
+      kind: "select-step",
+      offset: 1,
+      extend: false,
+    });
     expect(routeKey(combo("s"), "button")).toEqual({ kind: "toggle-mode" });
     expect(routeKey(combo("Escape"), "button")).toEqual({ kind: "escape" });
   });

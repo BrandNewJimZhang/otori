@@ -6,11 +6,14 @@ import {
   clickSelect,
   contextTargets,
   displayTitle,
+  edgeSelect,
   emptySelection,
   filterTracks,
+  selectAll,
   sortTracks,
   stepSelect,
   toggleSort,
+  typeAheadSelect,
   type Selection,
 } from "./library";
 import type { TrackRow } from "./types";
@@ -197,5 +200,66 @@ describe("selection model", () => {
 
   it("selection survives an empty visible list without crashing", () => {
     expect(stepSelect(emptySelection, [], 1)).toEqual(emptySelection);
+  });
+
+  it("shift-arrows extend a range from the anchor (audit P1)", () => {
+    let sel: Selection = clickSelect(emptySelection, rows, 2, none);
+    sel = stepSelect(sel, rows, 1, true);
+    expect([...sel.ids].sort()).toEqual([2, 3]);
+    sel = stepSelect(sel, rows, 1, true);
+    expect([...sel.ids].sort()).toEqual([2, 3, 4]);
+    // Reversing direction shrinks the range back toward the anchor.
+    sel = stepSelect(sel, rows, -1, true);
+    expect([...sel.ids].sort()).toEqual([2, 3]);
+    expect(sel.anchor).toBe(2);
+  });
+
+  it("shift-arrows extend upward too", () => {
+    let sel: Selection = clickSelect(emptySelection, rows, 3, none);
+    sel = stepSelect(sel, rows, -1, true);
+    expect([...sel.ids].sort()).toEqual([2, 3]);
+  });
+
+  it("selectAll selects the visible list", () => {
+    const sel = selectAll(clickSelect(emptySelection, rows, 2, none), rows);
+    expect([...sel.ids].sort()).toEqual([1, 2, 3, 4, 5]);
+    expect(sel.anchor).toBe(2);
+  });
+
+  it("edgeSelect jumps to first/last (Home/End)", () => {
+    expect([...edgeSelect(rows, "first").ids]).toEqual([1]);
+    expect([...edgeSelect(rows, "last").ids]).toEqual([5]);
+    expect(edgeSelect([], "first")).toEqual(emptySelection);
+  });
+});
+
+describe("typeAheadSelect", () => {
+  const rows = [
+    track(1, { title: "Bad Apple!!" }),
+    track(2, { title: "Brain Power" }),
+    track(3, { title: "Ｂｒａｉｎ Ｄｉｖｅｒ" }), // fullwidth (NFKC folds)
+    track(4, { title: null, path: "/m/conflict.mp3" }),
+  ];
+
+  it("jumps to the first title starting with the buffer", () => {
+    expect([...typeAheadSelect(emptySelection, rows, "br").ids]).toEqual([2]);
+  });
+
+  it("repeating the prefix walks to the next match, wrapping around", () => {
+    const first = typeAheadSelect(emptySelection, rows, "br");
+    const second = typeAheadSelect(first, rows, "br");
+    expect([...second.ids]).toEqual([3]); // NFKC folds fullwidth
+    const third = typeAheadSelect(second, rows, "br");
+    expect([...third.ids]).toEqual([2]);
+  });
+
+  it("matches the basename fallback and falls back to contains", () => {
+    expect([...typeAheadSelect(emptySelection, rows, "conf").ids]).toEqual([4]);
+    expect([...typeAheadSelect(emptySelection, rows, "apple").ids]).toEqual([1]);
+  });
+
+  it("no match leaves the selection unchanged", () => {
+    const sel = typeAheadSelect(emptySelection, rows, "zzz");
+    expect(sel).toEqual(emptySelection);
   });
 });

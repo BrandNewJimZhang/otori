@@ -19,7 +19,11 @@ export type KeyAction =
   | { kind: "blur-input" }
   | { kind: "toggle-mode" }
   | { kind: "toggle-pause" }
-  | { kind: "select-step"; offset: 1 | -1 }
+  | { kind: "select-step"; offset: 1 | -1; extend: boolean }
+  | { kind: "select-all" }
+  | { kind: "select-edge"; edge: "first" | "last" }
+  | { kind: "select-page"; offset: 1 | -1 }
+  | { kind: "type-ahead"; char: string }
   | { kind: "play-selected" }
   | { kind: "seek-nudge"; secs: number }
   | { kind: "step-track"; offset: 1 | -1 }
@@ -37,6 +41,10 @@ export function routeKey(combo: KeyCombo, zone: KeyZone): KeyAction {
   }
   if (combo.meta && zone !== "input" && combo.key === "ArrowLeft") {
     return { kind: "step-track", offset: -1 };
+  }
+  // ⌘A selects all visible rows outside text fields.
+  if (combo.meta && zone !== "input" && combo.key.toLowerCase() === "a") {
+    return { kind: "select-all" };
   }
   // Other ⌘-chords are the system's (⌘Q, ⌘W, ⌘C…).
   if (combo.meta) return { kind: "native" };
@@ -59,22 +67,36 @@ export function routeKey(combo: KeyCombo, zone: KeyZone): KeyAction {
   switch (combo.key) {
     case "s":
     case "S": // CapsLock must not disable the toggle (audit P3)
-      return { kind: "toggle-mode" };
+      // Shift+S is deliberate typing, not the mode toggle — but only
+      // when it could reach type-ahead below; keep the plain toggle.
+      return combo.shift ? { kind: "type-ahead", char: combo.key } : { kind: "toggle-mode" };
     case " ":
       return { kind: "toggle-pause" };
     case "ArrowDown":
-      return { kind: "select-step", offset: 1 };
+      return { kind: "select-step", offset: 1, extend: combo.shift };
     case "ArrowUp":
-      return { kind: "select-step", offset: -1 };
+      return { kind: "select-step", offset: -1, extend: combo.shift };
     case "ArrowRight":
       return { kind: "seek-nudge", secs: SEEK_NUDGE_SEC };
     case "ArrowLeft":
       return { kind: "seek-nudge", secs: -SEEK_NUDGE_SEC };
+    case "Home":
+      return { kind: "select-edge", edge: "first" };
+    case "End":
+      return { kind: "select-edge", edge: "last" };
+    case "PageDown":
+      return { kind: "select-page", offset: 1 };
+    case "PageUp":
+      return { kind: "select-page", offset: -1 };
     case "Enter":
       return { kind: "play-selected" };
     case "Escape":
       return { kind: "escape" };
     default:
+      // Printable characters feed table type-ahead (Finder-style).
+      if (combo.key.length === 1 && /\S/.test(combo.key)) {
+        return { kind: "type-ahead", char: combo.key };
+      }
       return { kind: "native" };
   }
 }

@@ -18,11 +18,14 @@ import {
   clickSelect,
   contextTargets,
   displayTitle,
+  edgeSelect,
   emptySelection,
   filterTracks,
+  selectAll,
   sortTracks,
   stepSelect,
   toggleSort,
+  typeAheadSelect,
   type Selection,
   type SortKey,
   type SortSpec,
@@ -124,6 +127,8 @@ function App() {
   repeatRef.current = repeat;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  // Type-ahead buffer: keystrokes within 800ms accumulate (Finder-style).
+  const typeAheadRef = useRef<{ buffer: string; timer: number }>({ buffer: "", timer: 0 });
 
   const refresh = useCallback(() => {
     listTracks().then(setTracks).catch((e) => setError(String(e)));
@@ -498,8 +503,37 @@ function App() {
           if (currentRef.current) togglePause();
           break;
         case "select-step":
-          setSelection((sel) => stepSelect(sel, visibleRef.current, action.offset));
+          setSelection((sel) =>
+            stepSelect(sel, visibleRef.current, action.offset, action.extend),
+          );
           break;
+        case "select-all":
+          setSelection((sel) => selectAll(sel, visibleRef.current));
+          break;
+        case "select-edge":
+          setSelection(edgeSelect(visibleRef.current, action.edge));
+          break;
+        case "select-page": {
+          // One "page" ≈ 20 rows; a viewport-derived count needs the
+          // row height, which lives in CSS — good enough for triage.
+          const PAGE = 20;
+          setSelection((sel) => {
+            let s = sel;
+            for (let i = 0; i < PAGE; i++) s = stepSelect(s, visibleRef.current, action.offset);
+            return s;
+          });
+          break;
+        }
+        case "type-ahead": {
+          const ta = typeAheadRef.current;
+          window.clearTimeout(ta.timer);
+          ta.buffer += action.char;
+          ta.timer = window.setTimeout(() => {
+            ta.buffer = "";
+          }, 800);
+          setSelection((sel) => typeAheadSelect(sel, visibleRef.current, ta.buffer));
+          break;
+        }
         case "play-selected": {
           const sel = selectionRef.current;
           const track = visibleRef.current.find((tr) => sel.ids.has(tr.id));
