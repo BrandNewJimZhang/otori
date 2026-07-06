@@ -428,8 +428,12 @@ function App() {
   }, [engine, step]);
 
   // Position sampling at rAF rate while in Stage mode (lyrics sync).
+  // Paused position is frozen: sample once and stop the loop; seekTo
+  // keeps the frozen sample honest.
   useEffect(() => {
     if (mode !== "stage") return;
+    setPositionMs(engine.positionMs);
+    if (paused) return;
     let raf = 0;
     const tick = () => {
       raf = requestAnimationFrame(tick);
@@ -437,7 +441,7 @@ function App() {
     };
     tick();
     return () => cancelAnimationFrame(raf);
-  }, [mode, engine]);
+  }, [mode, engine, paused]);
 
   const togglePause = useCallback(() => {
     engine.togglePause();
@@ -740,6 +744,8 @@ function App() {
     transitionArmed.current = null;
     engine.seek(secs);
     setPosition(secs);
+    // Stage's paused position loop is stopped — refresh its sample.
+    setPositionMs(secs * 1000);
   }
 
   /** Commit a scrub drag: one decoder seek on release (audit P0). */
@@ -1038,7 +1044,7 @@ function App() {
           MIX{crossfadeSec ? ` ${crossfadeSec}s` : ""}
         </button>
 
-        <Spectrum analyser={engine.analyser} />
+        <Spectrum analyser={engine.analyser} paused={paused} />
       </footer>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}

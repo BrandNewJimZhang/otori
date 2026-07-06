@@ -1,9 +1,13 @@
 // Live spectrum: real-time bar analyzer tuned for electronic music
 // (PRODUCT.md Pillar 2) — log-frequency binning so kick/bass gets
 // visual weight, dB scaling with a range that makes drops hit,
-// peak-hold caps for percussive afterglow, 60fps canvas.
+// peak-hold caps for percussive afterglow, 60fps canvas. Paused
+// audio decays to silence; once the bars and caps settle the loop
+// stops scheduling frames (vizidle) instead of drawing a static
+// image at 60fps.
 
 import { useEffect, useRef } from "react";
+import { shouldKeepDrawing } from "./vizidle";
 
 const BAR_COUNT = 48;
 const DB_FLOOR = -72; // dynamic range floor; lower = busier quiet parts
@@ -14,14 +18,21 @@ const PEAK_FALL = 0.55; // px/frame (in CSS px) the peak cap falls
 
 export function Spectrum({
   analyser,
+  paused = false,
   mirror = false,
 }: {
   analyser: AnalyserNode | null;
+  /** Playback state: paused + settled visuals stop the frame loop. */
+  paused?: boolean;
   /** Stage mode: mirrored floor-reflection below the bars. */
   mirror?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const peaksRef = useRef<Float32Array>(new Float32Array(BAR_COUNT));
+  // Read inside the frame loop without re-running the canvas effect.
+  const pausedRef = useRef(paused);
+  // Resume hook: the paused-flip effect restarts a stopped loop.
+  const drawRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -73,7 +84,6 @@ export function Spectrum({
 
     let raf = 0;
     const draw = () => {
-      raf = requestAnimationFrame(draw);
       analyser.getFloatFrequencyData(data);
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
@@ -82,6 +92,8 @@ export function Spectrum({
       const peaks = peaksRef.current;
       // Mirror mode: bars grow from a floor line, reflection below it.
       const floor = mirror ? height * 0.72 : height;
+      // Residual motion: tallest bar or cap still visibly up.
+      let motion = 0;
 
       for (let i = 0; i < BAR_COUNT; i++) {
         // Max within the bar's bin range: percussive hits stay sharp
@@ -110,15 +122,35 @@ export function Spectrum({
           ctx2d.fillStyle = peakColor;
           ctx2d.fillRect(i * barW + 1, floor - peaks[i] - 2, barW - 2, 2);
         }
+        motion = Math.max(motion, h, peaks[i]);
       }
+
+      // Schedule the next frame only while there's something to move;
+      // the paused-flip effect below restarts the loop on resume.
+      if (shouldKeepDrawing(pausedRef.current, motion)) {
+        raf = requestAnimationFrame(draw);
+      } else {
+        raf = 0;
+      }
+    };
+    drawRef.current = () => {
+      if (raf === 0) draw(); // guard: never stack a second loop
     };
     draw();
     return () => {
       cancelAnimationFrame(raf);
+      drawRef.current = null;
       observer.disconnect();
       themeObserver.disconnect();
     };
   }, [analyser, mirror]);
+
+  // Track paused without restarting the whole loop; when playback
+  // resumes and the loop had stopped, kick a fresh frame.
+  useEffect(() => {
+    pausedRef.current = paused;
+    if (!paused) drawRef.current?.();
+  }, [paused]);
 
   return <canvas ref={canvasRef} className="spectrum" />;
 }
