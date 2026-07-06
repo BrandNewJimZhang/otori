@@ -10,7 +10,7 @@ const DB_FLOOR = -72; // dynamic range floor; lower = busier quiet parts
 const DB_CEIL = -8;
 const FREQ_MIN = 30; // Hz — below this is rumble, not rhythm
 const FREQ_MAX = 16000;
-const PEAK_FALL = 0.55; // px/frame the peak cap falls
+const PEAK_FALL = 0.55; // px/frame (in CSS px) the peak cap falls
 const SPECTRUM_COLOR = "#a78bfa"; // purple: the spectrum's accent (PRODUCT.md)
 const PEAK_COLOR = "#f472b6"; // pink flair on the caps
 
@@ -26,6 +26,19 @@ export function Spectrum({ analyser }: { analyser: AnalyserNode | null }) {
     const sampleRate = analyser.context.sampleRate;
     const binHz = sampleRate / analyser.fftSize;
 
+    // Backing store tracks CSS size × devicePixelRatio so bars stay
+    // crisp on Retina and undistorted at any layout width.
+    const dpr = window.devicePixelRatio || 1;
+    const resize = () => {
+      const { width, height } = canvas.getBoundingClientRect();
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS px
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+
     // Precompute log-spaced FFT bin ranges per bar.
     const edges: number[] = [];
     for (let i = 0; i <= BAR_COUNT; i++) {
@@ -37,7 +50,8 @@ export function Spectrum({ analyser }: { analyser: AnalyserNode | null }) {
     const draw = () => {
       raf = requestAnimationFrame(draw);
       analyser.getFloatFrequencyData(data);
-      const { width, height } = canvas;
+      const width = canvas.width / dpr;
+      const height = canvas.height / dpr;
       ctx2d.clearRect(0, 0, width, height);
       const barW = width / BAR_COUNT;
       const peaks = peaksRef.current;
@@ -66,8 +80,11 @@ export function Spectrum({ analyser }: { analyser: AnalyserNode | null }) {
       }
     };
     draw();
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
   }, [analyser]);
 
-  return <canvas ref={canvasRef} width={900} height={120} className="spectrum" />;
+  return <canvas ref={canvasRef} className="spectrum" />;
 }
