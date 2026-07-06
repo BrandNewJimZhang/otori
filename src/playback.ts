@@ -73,8 +73,13 @@ class TwoDeckEngine implements PlaybackEngine {
   private transitionAdvanceCb: ((path: string) => void) | null = null;
   private errorCb: ((message: string) => void) | null = null;
   private timeCb: ((secs: number) => void) | null = null;
-  /** rAF id of the running transition loop; 0 when idle. */
+  /** rAF id of the beat-matched rate-ramp loop; 0 when idle. */
   private transitionRaf = 0;
+  /** setTimeout id of the transition finalizer; 0 when idle. This — not
+      the rAF — is the source of truth for "a transition is running":
+      fades are scheduled on the audio clock and complete even if
+      WKWebView freezes rAF in a hidden window. */
+  private transitionTimer = 0;
 
   constructor() {
     this.decks = [this.makeDeck(0), this.makeDeck(1)];
@@ -186,48 +191,77 @@ class TwoDeckEngine implements PlaybackEngine {
 
   preloadNext(source: TrackSource | null): void {
     this.next = source;
+    // Mid-transition the "idle" deck is the still-audible outgoing
+    // track — touching its src would cut it dead. Record the intent;
+    // the finalizer materializes it once that deck retires.
+    if (this.transitioning) return;
+    this.materializePreload();
+  }
+
+  /** Load `this.next` onto the idle deck (or clear it). Single writer
+      for preload deck state — called on preloadNext and on transition
+      finalize. */
+  private materializePreload(): void {
     const idle = this.idleDeck;
-    if (!source) {
+    if (!this.next) {
       if (idle.source) {
         idle.audio.removeAttribute("src");
         idle.source = null;
       }
       return;
     }
-    if (idle.source?.path === source.path) return;
-    idle.audio.src = convertFileSrc(source.path);
-    idle.source = source;
+    if (idle.source?.path === this.next.path) return;
+    idle.audio.src = convertFileSrc(this.next.path);
+    idle.source = this.next;
     idle.audio.load();
   }
 
   get transitioning(): boolean {
-    return this.transitionRaf !== 0;
+    return this.transitionTimer !== 0;
   }
 
   private cancelTransition(): void {
-    if (this.transitionRaf) {
-      cancelAnimationFrame(this.transitionRaf);
-      this.transitionRaf = 0;
-      for (const deck of this.decks) {
-        deck.audio.playbackRate = 1;
-        this.applyGain(deck);
-      }
+    if (!this.transitionTimer && !this.transitionRaf) return;
+    clearTimeout(this.transitionTimer);
+    this.transitionTimer = 0;
+    cancelAnimationFrame(this.transitionRaf);
+    this.transitionRaf = 0;
+    const now = this.ctx?.currentTime ?? 0;
+    for (const deck of this.decks) {
+      deck.gain?.gain.cancelScheduledValues(now);
+      deck.audio.playbackRate = 1;
+      this.applyGain(deck);
     }
+  }
+
+  /** Sample a 0..1 gain curve into audio-clock automation values. */
+  private static sampleCurve(
+    fn: (t: number) => number,
+    base: number,
+    durationSec: number,
+  ): Float32Array {
+    // 100 points/sec (capped): well past audible for gain envelopes.
+    const n = Math.max(2, Math.min(1024, Math.ceil(durationSec * 100)));
+    const curve = new Float32Array(n);
+    for (let k = 0; k < n; k++) curve[k] = base * fn(k / (n - 1));
+    return curve;
   }
 
   /**
    * Execute a transition plan into the preloaded track. The outgoing
    * deck ramps tempo and fades out; the incoming deck enters on its
-   * planned offset, tempo-matched, and settles to unity. Driven by a
-   * rAF loop writing playbackRate + gain each frame — WebAudio can
-   * ramp gains natively but playbackRate lives on the media element,
-   * so one loop drives both for coherence.
+   * planned offset, tempo-matched, and settles to unity. Fades are
+   * scheduled once on the audio clock (setValueCurveAtTime) so they
+   * survive a hidden window — WKWebView freezes rAF there, and a
+   * frame-driven fade would stall silent. Only playbackRate, which
+   * lives on the media element and can't be automated, rides a rAF
+   * loop; a wall-clock timer finalizes the handoff.
    */
   beginTransition(plan: TransitionPlan): boolean {
     const from = this.activeDeck;
     const to = this.idleDeck;
     if (!this.next || to.source?.path !== this.next.path) return false;
-    if (to.audio.readyState < 3 || this.transitionRaf) return false;
+    if (to.audio.readyState < 3 || this.transitionTimer) return false;
 
     const toPath = to.source.path;
     const baseFrom = effectiveGain(from.source?.replaygainDb ?? null, this.volumeValue);
@@ -242,6 +276,19 @@ class TwoDeckEngine implements PlaybackEngine {
     if (to.gain) to.gain.gain.value = 0;
     void to.audio.play().catch((e) => this.errorCb?.(String(e)));
 
+    // Schedule both fades in one shot on the audio clock.
+    const now = this.ctx!.currentTime;
+    from.gain?.gain.setValueCurveAtTime(
+      TwoDeckEngine.sampleCurve(plan.gainOut, baseFrom, plan.durationSec),
+      now,
+      plan.durationSec,
+    );
+    to.gain?.gain.setValueCurveAtTime(
+      TwoDeckEngine.sampleCurve(plan.gainIn, baseTo, plan.durationSec),
+      now,
+      plan.durationSec,
+    );
+
     // Hand off deck ownership immediately: UI follows the incoming track.
     this.active = 1 - this.active;
     this.next = null;
@@ -249,30 +296,34 @@ class TwoDeckEngine implements PlaybackEngine {
 
     const startedAt = performance.now();
     const durationMs = plan.durationSec * 1000;
-    const tick = () => {
-      const t = Math.min(1, (performance.now() - startedAt) / durationMs);
-      if (from.gain) from.gain.gain.value = baseFrom * plan.gainOut(t);
-      if (to.gain) to.gain.gain.value = baseTo * plan.gainIn(t);
-      if (plan.kind === "beatmatched") {
-        // Linear tempo ramps; audible pitch drift stays within ±8%.
+    if (plan.kind === "beatmatched") {
+      // Linear tempo ramps; audible pitch drift stays within ±8%.
+      const tick = () => {
+        const t = Math.min(1, (performance.now() - startedAt) / durationMs);
         const o = plan.outgoing;
         const i = plan.incoming;
         from.audio.playbackRate = o.rateFrom + (o.rateTo - o.rateFrom) * t;
         to.audio.playbackRate = i.rateFrom + (i.rateTo - i.rateFrom) * t;
-      }
-      if (t < 1) {
-        this.transitionRaf = requestAnimationFrame(tick);
-      } else {
+        this.transitionRaf = t < 1 ? requestAnimationFrame(tick) : 0;
+      };
+      this.transitionRaf = requestAnimationFrame(tick);
+    }
+    this.transitionTimer = setTimeout(() => {
+      this.transitionTimer = 0;
+      if (this.transitionRaf) {
+        cancelAnimationFrame(this.transitionRaf);
         this.transitionRaf = 0;
-        from.audio.pause();
-        from.audio.removeAttribute("src");
-        from.audio.playbackRate = 1;
-        from.source = null;
-        to.audio.playbackRate = 1;
-        this.applyGain(to);
       }
-    };
-    this.transitionRaf = requestAnimationFrame(tick);
+      from.audio.pause();
+      from.audio.removeAttribute("src");
+      from.audio.playbackRate = 1;
+      from.source = null;
+      to.audio.playbackRate = 1;
+      this.applyGain(to);
+      // The outgoing deck just retired — load any preload that arrived
+      // during the fade (it was deferred to protect this deck's audio).
+      this.materializePreload();
+    }, durationMs);
     return true;
   }
 
