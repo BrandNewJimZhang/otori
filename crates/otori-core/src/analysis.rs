@@ -35,9 +35,12 @@ pub struct DetectedBpm {
 
 /// Tracks never analyzed (bpm_analyzed_at IS NULL), oldest first.
 pub fn list_bpm_pending(conn: &Connection) -> rusqlite::Result<Vec<PendingTrack>> {
+    // Blank cells fill before stale re-verifications: a track with no
+    // number at all hurts more than one showing a probably-right value.
     let mut stmt = conn.prepare(
         "SELECT id, path, bpm_hint, bpm_hint_max FROM tracks
-         WHERE bpm_analyzed_at IS NULL ORDER BY id",
+         WHERE bpm_analyzed_at IS NULL
+         ORDER BY bpm IS NOT NULL, id",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(PendingTrack {
