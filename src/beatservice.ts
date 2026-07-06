@@ -40,14 +40,20 @@ export function beatGridFor(path: string): Promise<BeatGrid | null> {
   return hit;
 }
 
-/** Whole-track tempo verdict (BPM column / sweeper). */
-export function tempoAnalysisFor(path: string): Promise<TempoAnalysis | null> {
-  let hit = tempoCache.get(path);
+/** Whole-track tempo verdict (BPM column / sweeper). The hint (tag /
+    provider value from the index) anchors octave folding; it keys the
+    cache so a newly imported hint re-analyzes. */
+export function tempoAnalysisFor(
+  path: string,
+  hintBpm?: number | null,
+): Promise<TempoAnalysis | null> {
+  const key = `${path}\u0000${hintBpm ?? ""}`;
+  let hit = tempoCache.get(key);
   if (!hit) {
     hit = decodeEnvelope(path, FULL_SECONDS)
-      .then((env) => (env ? analyzeTempo(env) : null))
+      .then((env) => (env ? analyzeTempo(env, hintBpm) : null))
       .catch(() => null);
-    tempoCache.set(path, hit);
+    tempoCache.set(key, hit);
   }
   return hit;
 }

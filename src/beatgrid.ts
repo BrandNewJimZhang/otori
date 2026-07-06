@@ -11,8 +11,11 @@
 /** Envelope sample rate (Hz). 100Hz = 10ms resolution, plenty for beats. */
 export const ENVELOPE_HZ = 100;
 
+// Range covers Japanese electronic music: J-core/rhythm-game tiers
+// live at 170-230+ (dnb 174, J-core 180-200, denpa/boss tiers 200+).
+// The old 180 ceiling folded those to half tempo.
 const BPM_MIN = 70;
-const BPM_MAX = 180;
+const BPM_MAX = 230;
 /** Autocorrelation needs several periods to lock; require 8s of signal. */
 const MIN_SIGNAL_SEC = 8;
 
@@ -31,6 +34,8 @@ export interface TempoAnalysis {
   /** Range ceiling for variable-tempo (soflan) material; null = steady. */
   bpmMax: number | null;
   confidence: number;
+  /** An external hint anchored the octave (or confirmed the value). */
+  hintApplied: boolean;
 }
 
 /**
@@ -130,11 +135,13 @@ const STEADY_TOLERANCE = 0.05;
  * whose windows disagree get a bpm..bpmMax range with reduced
  * confidence. Null when nothing periodic is found anywhere.
  */
-export function analyzeTempo(envelope: Float32Array): TempoAnalysis | null {
+export function analyzeTempo(envelope: Float32Array, hintBpm?: number | null): TempoAnalysis | null {
   const win = WINDOW_SEC * ENVELOPE_HZ;
   if (envelope.length < win * 2) {
     const grid = detectBeats(envelope);
-    return grid ? { bpm: grid.bpm, bpmMax: null, confidence: grid.confidence } : null;
+    return grid
+      ? applyHint({ bpm: grid.bpm, bpmMax: null, confidence: grid.confidence, hintApplied: false }, hintBpm)
+      : null;
   }
 
   const bpms: number[] = [];
@@ -159,12 +166,44 @@ export function analyzeTempo(envelope: Float32Array): TempoAnalysis | null {
   if (hi / lo <= 1 + STEADY_TOLERANCE) {
     // Steady: report the median (robust to one flaky window).
     const sorted = [...bpms].sort((a, b) => a - b);
-    return { bpm: sorted[Math.floor(sorted.length / 2)], bpmMax: null, confidence };
+    return applyHint(
+      { bpm: sorted[Math.floor(sorted.length / 2)], bpmMax: null, confidence, hintApplied: false },
+      hintBpm,
+    );
   }
   // Variable tempo: a range is honest; halve confidence — a single
   // number can't represent this track, and crossfade planning should
-  // not trust either endpoint blindly.
-  return { bpm: lo, bpmMax: hi, confidence: confidence * 0.5 };
+  // not trust either endpoint blindly. Hints don't re-fold ranges:
+  // a soflan range is a measurement, not an octave ambiguity.
+  return { bpm: lo, bpmMax: hi, confidence: confidence * 0.5, hintApplied: false };
+}
+
+/** Octave tolerance when comparing a detection to an external hint. */
+const HINT_MATCH_TOLERANCE = 0.06;
+
+/**
+ * Reconcile a steady detection with an external hint (tag / provider /
+ * wiki — founding-user decision: hints anchor analysis, never replace
+ * it). Detection's octave is its weak axis: sparse kicks read half,
+ * busy hats read double. If the hint sits on a ×0.5/×1/×2/×3 relation
+ * of the measurement, fold the measurement onto the hint's octave and
+ * mark it verified (small confidence boost on exact agreement).
+ * A non-harmonic hint is someone else's number — keep the measurement.
+ */
+function applyHint(result: TempoAnalysis, hintBpm?: number | null): TempoAnalysis {
+  if (hintBpm == null || result.bpmMax != null) return result;
+  for (const factor of [1, 2, 0.5, 3, 1 / 3]) {
+    const folded = result.bpm * factor;
+    if (Math.abs(folded - hintBpm) / hintBpm <= HINT_MATCH_TOLERANCE) {
+      return {
+        bpm: folded,
+        bpmMax: null,
+        confidence: Math.min(1, result.confidence + (factor === 1 ? 0.1 : 0.05)),
+        hintApplied: true,
+      };
+    }
+  }
+  return result;
 }
 
 /**

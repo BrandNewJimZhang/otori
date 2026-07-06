@@ -11,6 +11,7 @@ export interface TrackRow {
   bpm: number | null;
   bpm_max: number | null;
   bpm_confidence: number | null;
+  bpm_hint: number | null;
   title: string | null;
   artist: string | null;
   album: string | null;

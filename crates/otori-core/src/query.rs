@@ -18,8 +18,10 @@ pub struct TrackRow {
     pub bpm: Option<f64>,
     /// Range ceiling for variable-tempo (soflan) tracks; NULL = steady.
     pub bpm_max: Option<f64>,
-    /// 0..1 detector confidence; 1.0 for release-authored tag values.
+    /// 0..1 detector confidence.
     pub bpm_confidence: Option<f64>,
+    /// External anchor awaiting/used in verification (tag/provider).
+    pub bpm_hint: Option<f64>,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -30,7 +32,7 @@ pub struct TrackRow {
 pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
     let mut stmt = conn.prepare(
         "SELECT t.id, t.path, t.format, t.duration_secs, t.replaygain_db,
-                t.bpm, t.bpm_max, t.bpm_confidence,
+                t.bpm, t.bpm_max, t.bpm_confidence, t.bpm_hint,
                 MAX(CASE WHEN v.field = 'title' THEN v.value END) AS title,
                 MAX(CASE WHEN v.field = 'artist' THEN v.value END) AS artist,
                 MAX(CASE WHEN v.field = 'album' THEN v.value END) AS album
@@ -49,9 +51,10 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
             bpm: row.get(5)?,
             bpm_max: row.get(6)?,
             bpm_confidence: row.get(7)?,
-            title: row.get(8)?,
-            artist: row.get(9)?,
-            album: row.get(10)?,
+            bpm_hint: row.get(8)?,
+            title: row.get(9)?,
+            artist: row.get(10)?,
+            album: row.get(11)?,
         })
     })?;
     rows.collect()

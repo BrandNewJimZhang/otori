@@ -38,11 +38,15 @@ interface Props {
   onPlay(track: TrackRow): void;
 }
 
-/** BPM cell: steady tempo, a min–max range (variable/soflan), or "—". */
+/** BPM cell: verified tempo, a min–max range (variable/soflan), an
+    unverified hint ("≈185"), or "—". */
 function formatBpm(t: TrackRow): string {
-  if (t.bpm == null) return "—";
-  if (t.bpm_max != null) return `${Math.round(t.bpm)}–${Math.round(t.bpm_max)}`;
-  return t.bpm.toFixed(1);
+  if (t.bpm != null) {
+    if (t.bpm_max != null) return `${Math.round(t.bpm)}–${Math.round(t.bpm_max)}`;
+    return t.bpm.toFixed(1);
+  }
+  if (t.bpm_hint != null) return `≈${Math.round(t.bpm_hint)}`;
+  return "—";
 }
 
 /** Three animated bars; freezes when paused (CSS drives the motion). */
@@ -165,12 +169,17 @@ export function LibraryTable({
               <td className="col-duration">{formatTime(t.duration_secs)}</td>
               <td
                 className={`col-bpm ${
-                  t.bpm != null && (t.bpm_confidence ?? 0) < 0.4 ? "low-confidence" : ""
+                  (t.bpm != null && (t.bpm_confidence ?? 0) < 0.4) ||
+                  (t.bpm == null && t.bpm_hint != null)
+                    ? "low-confidence"
+                    : ""
                 }`}
                 title={
                   t.bpm != null && t.bpm_confidence != null
                     ? `confidence ${(t.bpm_confidence * 100).toFixed(0)}%`
-                    : undefined
+                    : t.bpm_hint != null
+                      ? "external value, not yet verified by analysis"
+                      : undefined
                 }
               >
                 {formatBpm(t)}

@@ -92,9 +92,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Record a provider-sourced BPM into the index (generic import
-    /// surface for external tooling; trust ladder tag > provider >
-    /// detected applies)
+    /// Record a provider-sourced BPM hint into the index (external
+    /// values anchor the detector's verification; they are never the
+    /// final bpm themselves)
     ImportBpm {
         path: PathBuf,
         /// Tempo, or the range floor for variable-tempo tracks
@@ -497,24 +497,23 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .map_err(|_| CliError::bad_input("track is not in the library index (scan first)"))?;
-            if source.as_deref() == Some("tag") {
-                return Err(CliError::bad_input(
-                    "track has a release-authored TBPM tag; that outranks provider data",
-                ));
-            }
-            otori_core::analysis::set_provider_bpm(&conn, track_id, bpm, bpm_max, &provider)
-                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            let _ = source; // hints replace hints; no ladder gate needed
+            otori_core::analysis::set_bpm_hint(
+                &conn, track_id, bpm, bpm_max, &format!("provider:{provider}"),
+            )
+            .map_err(|e| CliError::bad_input(e.to_string()))?;
             if json {
                 println!(
                     "{}",
                     serde_json::json!({
-                        "applied": true, "bpm": bpm, "bpm_max": bpm_max,
-                        "source": format!("provider:{provider}"),
+                        "applied": true, "hint_bpm": bpm, "hint_bpm_max": bpm_max,
+                        "hint_source": format!("provider:{provider}"),
+                        "note": "hint recorded; detector will verify on next sweep",
                     })
                 );
             } else {
                 println!(
-                    "BPM saved: {bpm}{} (provider:{provider})",
+                    "BPM hint saved: {bpm}{} (provider:{provider}); detector verifies on next sweep",
                     bpm_max.map(|m| format!("\u{2013}{m}")).unwrap_or_default()
                 );
             }
@@ -529,19 +528,13 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             }
             let conn = open_library(cli.db.clone())?;
             let path_str = path.to_string_lossy();
-            let (track_id, source): (i64, Option<String>) = conn
+            let track_id: i64 = conn
                 .query_row(
-                    "SELECT id, bpm_source FROM tracks WHERE path = ?1",
+                    "SELECT id FROM tracks WHERE path = ?1",
                     [path_str.as_ref()],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| r.get(0),
                 )
                 .map_err(|_| CliError::bad_input("track is not in the library index (scan first)"))?;
-            // Trust ladder: a TBPM tag outranks any database.
-            if source.as_deref() == Some("tag") {
-                return Err(CliError::bad_input(
-                    "track has a release-authored TBPM tag; that outranks provider data",
-                ));
-            }
             let tags = otori_core::read_track_tags(&path)
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             let title = tags
@@ -597,19 +590,20 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 return Ok(ExitCode::SUCCESS);
             }
 
-            otori_core::analysis::set_provider_bpm(&conn, track_id, bpm, hit.bpm_max, "vocadb")
+            otori_core::analysis::set_bpm_hint(&conn, track_id, bpm, hit.bpm_max, "provider:vocadb")
                 .map_err(|e| CliError::library(e.to_string()))?;
             if json {
                 println!(
                     "{}",
                     serde_json::json!({
                         "matched": true, "applied": true,
-                        "bpm": bpm, "bpm_max": hit.bpm_max,
-                        "source": "provider:vocadb",
+                        "hint_bpm": bpm, "hint_bpm_max": hit.bpm_max,
+                        "hint_source": "provider:vocadb",
+                        "note": "hint recorded; detector will verify on next sweep",
                     })
                 );
             } else {
-                println!("BPM saved: {bpm}{} (provider:vocadb)",
+                println!("BPM hint saved: {bpm}{} (provider:vocadb); detector verifies on next sweep",
                     hit.bpm_max.map(|m| format!("\u{2013}{m}")).unwrap_or_default());
             }
             Ok(ExitCode::SUCCESS)

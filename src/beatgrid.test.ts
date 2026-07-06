@@ -51,10 +51,14 @@ describe("detectBeats", () => {
     expect(detectBeats(new Float32Array(30 * ENVELOPE_HZ))).toBeNull();
   });
 
-  it("is honest about tempos outside the DJ range", () => {
-    // 60 BPM pure clicks have no energy at any lag inside the 70-180
-    // window — the honest answer is "no grid", never a made-up tempo.
-    expect(detectBeats(clicks(60, 30))).toBeNull();
+  it("finds high-BPM Japanese electronic tempos without halving", () => {
+    // J-core / rhythm-game boss tiers: the old 180 ceiling forced
+    // these to fold to half tempo (founding-user report).
+    // At 100Hz envelope resolution a 190+ BPM lag is ~30 samples, so
+    // quantization costs ~1 BPM — fine for display and mixing.
+    expect(Math.abs(detectBeats(clicks(190, 30))!.bpm - 190)).toBeLessThan(2);
+    expect(Math.abs(detectBeats(clicks(200, 30))!.bpm - 200)).toBeLessThan(2);
+    expect(Math.abs(detectBeats(clicks(222, 30))!.bpm - 222)).toBeLessThan(2);
   });
 
   it("reports high confidence for clean clicks", () => {
@@ -106,5 +110,34 @@ describe("analyzeTempo", () => {
     const r = analyzeTempo(clicks(120, 10));
     expect(r).not.toBeNull();
     expect(r!.bpm).toBeCloseTo(120, 0);
+  });
+
+  it("a hint folds a half-tempo detection up to the anchored octave", () => {
+    // Sparse kick pattern reads as 87; the wiki says 174 — the hint
+    // re-folds the octave. Simulate with a 87 click + 174 hint.
+    const r = analyzeTempo(clicks(87, 40), 174)!;
+    expect(r.bpm).toBeCloseTo(174, 0);
+    expect(r.hintApplied).toBe(true);
+  });
+
+  it("a hint folds a double-tempo detection down", () => {
+    const r = analyzeTempo(clicks(174, 40), 87)!;
+    expect(r.bpm).toBeCloseTo(87, 0);
+    expect(r.hintApplied).toBe(true);
+  });
+
+  it("a hint that disagrees non-harmonically is ignored", () => {
+    // Detection 128 vs hint 174: not an octave relation — the hint is
+    // wrong or the song differs; keep the measurement, flag nothing.
+    const r = analyzeTempo(clicks(128, 40), 174)!;
+    expect(r.bpm).toBeCloseTo(128, 0);
+    expect(r.hintApplied).toBe(false);
+  });
+
+  it("hint agreement within tolerance boosts confidence", () => {
+    const plain = analyzeTempo(clicks(174, 40))!;
+    const hinted = analyzeTempo(clicks(174, 40), 174)!;
+    expect(hinted.confidence).toBeGreaterThanOrEqual(plain.confidence);
+    expect(hinted.hintApplied).toBe(true);
   });
 });

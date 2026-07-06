@@ -27,7 +27,7 @@ export function startBpmSweep(): void {
     try {
       const pending = await listBpmPending();
       for (const track of pending) {
-        const tempo = await tempoAnalysisFor(track.path);
+        const tempo = await tempoAnalysisFor(track.path, track.hint_bpm);
         // Persist even null (beatless): "analyzed, no beat" must not
         // be re-attempted every launch. IPC failure aborts the sweep
         // (index unavailable) rather than spinning.
@@ -40,6 +40,7 @@ export function startBpmSweep(): void {
                 confidence: Math.round(tempo.confidence * 100) / 100,
               }
             : null,
+          tempo?.hintApplied ?? false,
         );
         await sleep(PACE_MS);
       }
