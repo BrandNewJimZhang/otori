@@ -1,0 +1,9 @@
+[package]
+name = "otori-core"
+description = "Ōtori core: library index, tag read/write, lyrics parsing"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
