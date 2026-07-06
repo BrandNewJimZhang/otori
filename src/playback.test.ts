@@ -235,4 +235,46 @@ describe("TwoDeckEngine transitions", () => {
       expect(gain.gain.cancelScheduledValues).toHaveBeenCalled();
     }
   });
+
+  it("seek during a transition finalizes it: outgoing retires, incoming full gain", async () => {
+    const engine = await createEngineWithAB();
+    const outgoing = audios[1];
+    const incoming = audios[0];
+    engine.beginTransition(plainPlan(4));
+    engine.preloadNext(track("/c.flac")); // deferred behind the fade
+
+    engine.seek(30);
+
+    // The fade's premise (this tail against this head) is gone: the
+    // incoming track wins immediately, at full gain, on the new spot.
+    expect(engine.transitioning).toBe(false);
+    expect(incoming.currentTime).toBe(30);
+    expect(incoming.paused).toBe(false);
+    expect(outgoing.paused).toBe(true);
+    const incomingGain = gains[0];
+    expect(incomingGain.gain.cancelScheduledValues).toHaveBeenCalled();
+    expect(incomingGain.gain.value).toBe(1);
+    // The deferred preload materialized on the retired deck.
+    expect(outgoing.src).toBe("asset:///c.flac");
+  });
+
+  it("seek outside a transition just seeks", async () => {
+    const engine = await createEngineWithAB();
+    engine.seek(12);
+    expect(audios[1].currentTime).toBe(12); // active deck (A)
+    expect(engine.transitioning).toBe(false);
+  });
+
+  it("a finalized-by-seek transition does not re-finalize on its timer", async () => {
+    const engine = await createEngineWithAB();
+    engine.beginTransition(plainPlan(4));
+    engine.seek(30);
+    const pausesBefore = audios[1].paused;
+
+    vi.advanceTimersByTime(4000); // the original timer slot
+
+    // No double-retire, no stray state flips.
+    expect(audios[1].paused).toBe(pausesBefore);
+    expect(engine.transitioning).toBe(false);
+  });
 });

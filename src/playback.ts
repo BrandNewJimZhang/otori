@@ -80,6 +80,11 @@ class TwoDeckEngine implements PlaybackEngine {
       fades are scheduled on the audio clock and complete even if
       WKWebView freezes rAF in a hidden window. */
   private transitionTimer = 0;
+  /** Retires the outgoing deck of the running transition; null when
+      idle. Runs on the timer normally, or early from seek() — a seek
+      mid-fade invalidates the plan's premise (this tail against this
+      head), so the incoming track wins immediately. */
+  private finalizeTransition: (() => void) | null = null;
 
   constructor() {
     this.decks = [this.makeDeck(0), this.makeDeck(1)];
@@ -226,6 +231,7 @@ class TwoDeckEngine implements PlaybackEngine {
     this.transitionTimer = 0;
     cancelAnimationFrame(this.transitionRaf);
     this.transitionRaf = 0;
+    this.finalizeTransition = null;
     const now = this.ctx?.currentTime ?? 0;
     for (const deck of this.decks) {
       deck.gain?.gain.cancelScheduledValues(now);
@@ -308,8 +314,10 @@ class TwoDeckEngine implements PlaybackEngine {
       };
       this.transitionRaf = requestAnimationFrame(tick);
     }
-    this.transitionTimer = setTimeout(() => {
+    this.finalizeTransition = () => {
+      clearTimeout(this.transitionTimer);
       this.transitionTimer = 0;
+      this.finalizeTransition = null;
       if (this.transitionRaf) {
         cancelAnimationFrame(this.transitionRaf);
         this.transitionRaf = 0;
@@ -319,11 +327,15 @@ class TwoDeckEngine implements PlaybackEngine {
       from.audio.playbackRate = 1;
       from.source = null;
       to.audio.playbackRate = 1;
+      // Clear any pending fade automation before restoring unity gain
+      // (a no-op on natural completion; load-bearing on early finalize).
+      to.gain?.gain.cancelScheduledValues(this.ctx!.currentTime);
       this.applyGain(to);
       // The outgoing deck just retired — load any preload that arrived
       // during the fade (it was deferred to protect this deck's audio).
       this.materializePreload();
-    }, durationMs);
+    };
+    this.transitionTimer = setTimeout(() => this.finalizeTransition?.(), durationMs);
     return true;
   }
 
@@ -334,6 +346,11 @@ class TwoDeckEngine implements PlaybackEngine {
   }
 
   seek(secs: number): void {
+    // Seeking mid-fade breaks the plan's premise (this tail against
+    // this head): finalize now — outgoing retires, incoming takes
+    // full gain — then seek. The UI already follows the incoming
+    // track, so this matches what the user believes they're seeking.
+    this.finalizeTransition?.();
     this.activeDeck.audio.currentTime = secs;
   }
 
