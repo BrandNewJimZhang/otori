@@ -129,3 +129,88 @@ fn rescan_does_not_duplicate_tracks() {
         .unwrap();
     assert_eq!(count, 1);
 }
+
+#[test]
+fn scan_records_its_root_for_later_rescan() {
+    let lib = tempfile::tempdir().unwrap();
+    write_tagged_mp3(&lib.path().join("a.mp3"), "A", "B");
+
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap(); // re-scan must not duplicate the root
+
+    let (count, root): (i64, String) = conn
+        .query_row("SELECT count(*), max(root) FROM scan_roots", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(root, lib.path().to_string_lossy());
+}
+
+#[test]
+fn rescan_all_walks_every_recorded_root() {
+    let lib_a = tempfile::tempdir().unwrap();
+    let lib_b = tempfile::tempdir().unwrap();
+    write_tagged_mp3(&lib_a.path().join("a.mp3"), "A", "X");
+    write_tagged_mp3(&lib_b.path().join("b.mp3"), "B", "Y");
+
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib_a.path()).unwrap();
+    scan::scan(&mut conn, lib_b.path()).unwrap();
+
+    // New files appear in both roots after the initial scans.
+    write_tagged_mp3(&lib_a.path().join("a2.mp3"), "A2", "X");
+    write_tagged_mp3(&lib_b.path().join("b2.mp3"), "B2", "Y");
+
+    let report = scan::rescan_all(&mut conn).unwrap();
+    assert_eq!(report.added, 2);
+    assert_eq!(report.updated, 2);
+}
+
+#[test]
+fn rescan_all_without_recorded_roots_is_a_no_op() {
+    let mut conn = db::open_in_memory().unwrap();
+    let report = scan::rescan_all(&mut conn).unwrap();
+    assert_eq!(report.added, 0);
+    assert_eq!(report.updated, 0);
+}
+
+#[test]
+fn backfill_durations_fills_only_null_rows_from_indexed_files() {
+    let lib = tempfile::tempdir().unwrap();
+    write_tagged_mp3(&lib.path().join("old.mp3"), "Old", "X");
+
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+
+    // Simulate a pre-v3 library: indexed track, duration never recorded,
+    // and (pre-v4) no scan root to re-walk.
+    conn.execute("UPDATE tracks SET duration_secs = NULL", []).unwrap();
+    conn.execute("DELETE FROM scan_roots", []).unwrap();
+
+    let filled = scan::backfill_durations(&mut conn).unwrap();
+    assert_eq!(filled, 1);
+    let d: f64 = conn
+        .query_row("SELECT duration_secs FROM tracks WHERE path LIKE '%old.mp3'", [], |r| r.get(0))
+        .unwrap();
+    assert!(d > 0.0);
+
+    // Second run touches nothing — only NULL rows are candidates.
+    assert_eq!(scan::backfill_durations(&mut conn).unwrap(), 0);
+}
+
+#[test]
+fn backfill_durations_skips_missing_files_without_failing() {
+    let mut conn = db::open_in_memory().unwrap();
+    conn.execute(
+        "INSERT INTO tracks (path, format, first_seen, last_scanned)
+         VALUES ('/gone/away.mp3', 'mp3', datetime('now'), datetime('now'))",
+        [],
+    )
+    .unwrap();
+
+    // A vanished file is not corruption of the index — it is the normal
+    // fate of paths over time; the backfill reports 0 and moves on.
+    assert_eq!(scan::backfill_durations(&mut conn).unwrap(), 0);
+}

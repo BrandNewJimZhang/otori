@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -86,6 +86,14 @@ CREATE TABLE tx_changes (
     new_value   TEXT,
     new_source  TEXT NOT NULL
 );
+
+-- Directories the user has scanned; rescan-on-launch walks these
+-- (PRODUCT.md: rescan-on-launch + manual refresh instead of FSEvents).
+CREATE TABLE scan_roots (
+    root          TEXT PRIMARY KEY,
+    first_scanned TEXT NOT NULL,
+    last_scanned  TEXT NOT NULL
+);
 "#;
 
 /// Default library location: `~/Library/Application Support/otori/library.db`
@@ -136,6 +144,17 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
         // v3: duration for the player seek bar; backfilled by the next scan.
         conn.execute_batch("ALTER TABLE tracks ADD COLUMN duration_secs REAL;")?;
         conn.pragma_update(None, "user_version", 3)?;
+    }
+    if (1..=3).contains(&version) {
+        // v4: remember scan roots so launch/manual rescans can re-walk them.
+        conn.execute_batch(
+            "CREATE TABLE scan_roots (
+                root          TEXT PRIMARY KEY,
+                first_scanned TEXT NOT NULL,
+                last_scanned  TEXT NOT NULL
+            );",
+        )?;
+        conn.pragma_update(None, "user_version", 4)?;
     }
     Ok(conn)
 }
