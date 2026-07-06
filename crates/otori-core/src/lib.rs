@@ -7,6 +7,7 @@
 
 use serde::Serialize;
 
+pub mod analysis;
 pub mod artwork;
 pub mod backup;
 pub mod db;

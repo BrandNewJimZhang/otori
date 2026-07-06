@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -26,6 +26,8 @@ CREATE TABLE tracks (
     format       TEXT NOT NULL,
     duration_secs REAL,            -- file property, no provenance; refreshed each scan
     replaygain_db REAL,            -- RG track gain in dB; file property like duration
+    bpm          REAL,             -- detected tempo; see bpm_analyzed_at
+    bpm_analyzed_at TEXT,          -- set once analysis ran (bpm NULL = beatless)
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
     first_seen   TEXT NOT NULL,
@@ -162,6 +164,16 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
         // backfilled by the next scan like duration was in v3.
         conn.execute_batch("ALTER TABLE tracks ADD COLUMN replaygain_db REAL;")?;
         conn.pragma_update(None, "user_version", 5)?;
+    }
+    if (1..=5).contains(&version) {
+        // v6: detected tempo. bpm_analyzed_at records that analysis
+        // ran; bpm stays NULL for beatless material, so the sweeper
+        // can tell "pending" from "no steady beat".
+        conn.execute_batch(
+            "ALTER TABLE tracks ADD COLUMN bpm REAL;
+             ALTER TABLE tracks ADD COLUMN bpm_analyzed_at TEXT;",
+        )?;
+        conn.pragma_update(None, "user_version", 6)?;
     }
     Ok(conn)
 }

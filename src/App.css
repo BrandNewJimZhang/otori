@@ -369,6 +369,13 @@ tbody tr:hover .row-play {
   font-variant-numeric: tabular-nums;
 }
 
+.col-bpm {
+  width: 62px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 .col-format {
   width: 68px;
   color: var(--text-dim);

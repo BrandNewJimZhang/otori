@@ -34,7 +34,7 @@ const DEFAULTS: Prefs = {
   density: "comfortable",
   columnWidths: {},
 };
-const SORT_KEYS = new Set(["title", "artist", "album", "duration_secs", "format"]);
+const SORT_KEYS = new Set(["title", "artist", "album", "duration_secs", "bpm", "format"]);
 const REPEAT_MODES = new Set<RepeatMode>(["off", "all", "one"]);
 const THEMES = new Set<Theme>(["dark", "light"]);
 const CROSSFADE_MAX_SEC = 30;

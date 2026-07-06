@@ -22,6 +22,7 @@ function track(id: number, over: Partial<TrackRow> = {}): TrackRow {
     format: "flac",
     duration_secs: id * 10,
     replaygain_db: null,
+    bpm: null,
     title: `Track ${id}`,
     artist: null,
     album: null,

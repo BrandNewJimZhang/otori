@@ -9,7 +9,7 @@ export function displayTitle(t: TrackRow): string {
 
 // ---- sorting ----
 
-export type SortKey = "title" | "artist" | "album" | "duration_secs" | "format";
+export type SortKey = "title" | "artist" | "album" | "duration_secs" | "bpm" | "format";
 
 export interface SortSpec {
   key: SortKey;
