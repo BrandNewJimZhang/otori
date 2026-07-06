@@ -4,10 +4,20 @@
 // to a plain equal-power crossfade. The playback engine executes plans;
 // this module only computes them (pure, tested).
 
-import type { BeatGrid } from "./beatgrid";
-
 /** Max pitch bend a listener won't clock: ±8% (industry nudge range). */
 const MAX_RATE_STRETCH = 0.08;
+
+/**
+ * A local beat grid at the point where a track meets the mix: the
+ * outgoing track's TAIL anchor or the incoming track's HEAD anchor
+ * (persisted per end — a whole-track tempo can't stand in for either
+ * on variable-tempo material). `beatSec` is any beat inside that
+ * window, in absolute track seconds.
+ */
+export interface MixPoint {
+  bpm: number;
+  beatSec: number;
+}
 
 export interface DeckRamp {
   /** playbackRate at the start / end of the transition. */
@@ -51,34 +61,37 @@ function foldedRatio(from: number, to: number): number {
 }
 
 /**
- * Plan the transition between two tracks. `requestedSec` is advisory:
- * beat-matched plans quantize it to whole bars (4/4 assumed — this
- * library is electronic) of the outgoing tempo.
+ * Plan the transition between two tracks from the outgoing TAIL
+ * anchor and the incoming HEAD anchor. Either missing (unstable end,
+ * beatless, not yet analyzed) → plain equal-power fade. `requestedSec`
+ * is advisory: beat-matched plans quantize it to whole bars (4/4
+ * assumed — this library is electronic) of the outgoing tail tempo.
  */
 export function planTransition(
-  outgoing: BeatGrid | null,
-  incoming: BeatGrid | null,
+  outgoingTail: MixPoint | null,
+  incomingHead: MixPoint | null,
   requestedSec: number,
 ): TransitionPlan {
-  if (!outgoing || !incoming) {
+  if (!outgoingTail || !incomingHead) {
     return { kind: "plain", durationSec: requestedSec, ...equalPower };
   }
-  const ratio = foldedRatio(outgoing.bpm, incoming.bpm);
+  const ratio = foldedRatio(outgoingTail.bpm, incomingHead.bpm);
   if (Math.abs(ratio - 1) > MAX_RATE_STRETCH) {
     return { kind: "plain", durationSec: requestedSec, ...equalPower };
   }
 
-  // Bar-quantize the duration to the outgoing tempo (4/4).
-  const barSec = (60 / outgoing.bpm) * 4;
+  // Bar-quantize the duration to the outgoing tail tempo (4/4).
+  const barSec = (60 / outgoingTail.bpm) * 4;
   const bars = Math.max(1, Math.round(requestedSec / barSec));
   const durationSec = bars * barSec;
 
   // Incoming starts on its own downbeat nearest to a musically useful
   // entry (skip at least the first beat; land on a bar boundary of its
-  // own grid so the phrase lines up).
-  const inPeriod = 60 / incoming.bpm;
+  // own grid so the phrase lines up). Fold the anchor beat back to the
+  // first beat of the head window before stepping in.
+  const inPeriod = 60 / incomingHead.bpm;
   const inBar = inPeriod * 4;
-  const startOffsetSec = incoming.firstBeatSec + inBar; // enter at bar 2
+  const startOffsetSec = (incomingHead.beatSec % inPeriod) + inBar; // enter at bar 2
 
   return {
     kind: "beatmatched",

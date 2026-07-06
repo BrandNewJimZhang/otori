@@ -47,8 +47,8 @@ import {
   SunIcon,
   VolumeIcon,
 } from "./icons";
-import { beatGridFor } from "./beatservice";
-import { startBpmSweep } from "./bpmsweep";
+import { headMixPoint, tailMixPoint } from "./beatservice";
+import { startAnalysisSweep } from "./analysissweep";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
@@ -136,9 +136,10 @@ function App() {
 
   useEffect(refresh, [refresh]);
 
-  // Background BPM sweep: fill the index's pending list this session.
-  // Kicks on mount and again on library changes (new scans add rows).
-  useEffect(startBpmSweep, []);
+  // Background analysis sweep: fill the index's pending list (BPM +
+  // mix anchors) this session. Kicks on mount and again on library
+  // changes (new scans add rows).
+  useEffect(startAnalysisSweep, []);
 
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
   // shell emits `library-changed` when an external writer (CLI/agent)
@@ -146,7 +147,7 @@ function App() {
   useEffect(() => {
     const unlisten = listen("library-changed", () => {
       refresh();
-      startBpmSweep();
+      startAnalysisSweep();
     });
     return () => {
       unlisten.then((off) => off());
@@ -244,8 +245,7 @@ function App() {
       if (next) {
         if (next.id === cur?.id) {
           // Repeat-one replay: restart instead of reloading the file.
-          engine.seek(0);
-          setPosition(0);
+          seekTo(0);
           if (engine.paused) {
             engine.togglePause();
             setPaused(false);
@@ -288,22 +288,33 @@ function App() {
     const id = queuedId ?? nextId(order, current?.id ?? null, 1, repeat, false);
     const next = id != null ? visible.find((t) => t.id === id) : undefined;
     engine.preloadNext(next ? { path: next.path, replaygainDb: next.replaygain_db } : null);
-    if (current) void beatGridFor(current.path);
-    if (next) void beatGridFor(next.path);
+    // Warm mix points for the pair (no-op when the sweeper already
+    // persisted anchors — planning then reads the index, zero decode).
+    if (current) void tailMixPoint(current);
+    if (next) void headMixPoint(next);
   }, [engine, visible, current, shuffle, repeat, queue]);
 
   // DJ crossfade: when enabled and the track nears its end, plan a
-  // transition from the two beat grids and hand it to the engine.
-  // Beat-matched when tempos are compatible; equal-power otherwise.
+  // transition from the persisted mix anchors and hand it to the
+  // engine. Arming is a revocable reservation, not a one-shot latch:
+  // scrubbing out of the end window (or any seek — planEpoch bumps)
+  // voids it, and re-entering the window re-plans. Cheap to re-plan:
+  // anchors come from the index, not a decode.
   const transitionArmed = useRef<string | null>(null);
+  const planEpoch = useRef(0);
   useEffect(() => {
     if (!crossfadeSec || !current) return;
     if (position <= 0 || !Number.isFinite(engine.duration)) return;
     const remaining = engine.duration - position;
     // Lead time: the planned fade plus one beat of slack for planning.
-    if (remaining > crossfadeSec + 1 || engine.transitioning) return;
+    if (remaining > crossfadeSec + 1) {
+      transitionArmed.current = null; // scrubbed back out: void the reservation
+      return;
+    }
+    if (engine.transitioning) return;
     if (transitionArmed.current === current.path) return;
     transitionArmed.current = current.path;
+    const epoch = planEpoch.current;
 
     // "Next" follows the queue then the play order, same as preload.
     // Repeat-one replays the same file — a crossfade into itself is
@@ -320,14 +331,19 @@ function App() {
     const next = id != null && id !== current.id ? visibleRef.current.find((t) => t.id === id) : undefined;
     if (!next) return;
     void (async () => {
-      const [gridOut, gridIn] = await Promise.all([
-        beatGridFor(current.path),
-        beatGridFor(next.path),
+      // Role-correct grids: the outgoing track leaves through its TAIL,
+      // the incoming enters through its HEAD. A missing anchor (soflan
+      // boundary, rit. ending, beatless, unanalyzed) degrades the plan
+      // to a plain equal-power crossfade.
+      const [tailOut, headIn] = await Promise.all([
+        tailMixPoint(current),
+        headMixPoint(next),
       ]);
-      // Low-confidence grids must not drive a tempo bend: passing null
-      // degrades the plan to a plain equal-power crossfade.
-      const trusted = (g: typeof gridOut) => (g && g.confidence >= 0.4 ? g : null);
-      const plan = planTransition(trusted(gridOut), trusted(gridIn), crossfadeSec);
+      // A seek landed while we were planning: the premise (track is
+      // ending) may no longer hold — drop this plan; the effect
+      // re-arms if the position still (or again) qualifies.
+      if (planEpoch.current !== epoch) return;
+      const plan = planTransition(tailOut, headIn, crossfadeSec);
       // Engine returns false if the preload isn't ready — the track
       // then ends naturally and the gapless path takes over.
       engine.beginTransition(plan);
@@ -426,10 +442,7 @@ function App() {
     ms.setActionHandler("previoustrack", () => step(-1));
     ms.setActionHandler("nexttrack", () => step(1));
     ms.setActionHandler("seekto", (d) => {
-      if (d.seekTime != null) {
-        engine.seek(d.seekTime);
-        setPosition(d.seekTime);
-      }
+      if (d.seekTime != null) seekTo(d.seekTime);
     });
     return () => {
       ms.setActionHandler("play", null);
@@ -571,8 +584,7 @@ function App() {
         case "seek-nudge":
           if (currentRef.current && Number.isFinite(engine.duration)) {
             const pos = Math.max(0, Math.min(engine.duration, engine.currentTime + action.secs));
-            engine.seek(pos);
-            setPosition(pos);
+            seekTo(pos);
           }
           break;
         case "step-track":
@@ -679,6 +691,10 @@ function App() {
   }, [menu, play, queue]);
 
   function seekTo(secs: number) {
+    // Any seek invalidates in-flight and armed transition plans; the
+    // position effect re-arms if the new spot still qualifies.
+    planEpoch.current++;
+    transitionArmed.current = null;
     engine.seek(secs);
     setPosition(secs);
   }

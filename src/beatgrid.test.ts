@@ -3,7 +3,7 @@
 // audio touches it.
 
 import { describe, expect, it } from "vitest";
-import { analyzeTempo, detectBeats, ENVELOPE_HZ } from "./beatgrid";
+import { analyzeTempo, detectBeats, extractMixAnchors, ENVELOPE_HZ } from "./beatgrid";
 
 /** Synthesize an onset envelope: a spike every `period` seconds. */
 function clicks(bpm: number, seconds: number, phase = 0, jitter = 0): Float32Array {
@@ -139,5 +139,74 @@ describe("analyzeTempo", () => {
     const hinted = analyzeTempo(clicks(174, 40), 174)!;
     expect(hinted.confidence).toBeGreaterThanOrEqual(plain.confidence);
     expect(hinted.hintApplied).toBe(true);
+  });
+});
+
+/** Concatenate tempo sections with arbitrary lengths. */
+function sections(...parts: Array<[bpm: number, secs: number]>): Float32Array {
+  const arrays = parts.map(([bpm, secs]) => clicks(bpm, secs));
+  const out = new Float32Array(arrays.reduce((n, a) => n + a.length, 0));
+  let at = 0;
+  for (const a of arrays) {
+    out.set(a, at);
+    at += a.length;
+  }
+  return out;
+}
+
+describe("extractMixAnchors", () => {
+  it("steady track: both ends anchored at the same tempo", () => {
+    const env = clicks(128, 180);
+    const { head, tail } = extractMixAnchors(env);
+    expect(head).not.toBeNull();
+    expect(tail).not.toBeNull();
+    expect(head!.bpm).toBeCloseTo(128, 0);
+    expect(tail!.bpm).toBeCloseTo(128, 0);
+    // Tail anchor is absolute (in-track seconds), inside the tail
+    // window, and sits on the TRUE click grid (multiples of 60/128
+    // from t=0) — checking against the detected period instead would
+    // amplify sub-BPM detector error by ~300 beats of absolute time.
+    const truePeriod = 60 / 128;
+    expect(tail!.beatSec).toBeGreaterThan(180 - 46);
+    const phase = tail!.beatSec % truePeriod;
+    expect(Math.min(phase, truePeriod - phase)).toBeLessThan(0.06);
+  });
+
+  it("tail anchor reports the LOCAL tail tempo after a mid-track change", () => {
+    // 140 for 60s, then 178 to the end: the whole-track average is a
+    // lie, but each mix window is locally steady — both ends anchor.
+    // ±2 BPM: envelope quantization at fast tempos (lag ~34 samples).
+    const env = sections([140, 60], [178, 60]);
+    const { head, tail } = extractMixAnchors(env);
+    expect(Math.abs(head!.bpm - 140)).toBeLessThan(2);
+    expect(Math.abs(tail!.bpm - 178)).toBeLessThan(2);
+  });
+
+  it("refuses an anchor when the tempo changes inside the mix window", () => {
+    // Change 23s before the end: the tail window straddles it.
+    const env = sections([140, 97], [178, 23]);
+    const { head, tail } = extractMixAnchors(env);
+    expect(head).not.toBeNull();
+    expect(tail).toBeNull();
+  });
+
+  it("beatless material anchors nowhere", () => {
+    const flat = new Float32Array(120 * ENVELOPE_HZ).fill(0.5);
+    const { head, tail } = extractMixAnchors(flat);
+    expect(head).toBeNull();
+    expect(tail).toBeNull();
+  });
+
+  it("a truncated decode never anchors the tail it didn't see", () => {
+    const env = clicks(128, 180);
+    const { head, tail } = extractMixAnchors(env, true);
+    expect(head).not.toBeNull();
+    expect(tail).toBeNull();
+  });
+
+  it("tracks too short for stable halves anchor nowhere", () => {
+    const { head, tail } = extractMixAnchors(clicks(128, 12));
+    expect(head).toBeNull();
+    expect(tail).toBeNull();
   });
 });

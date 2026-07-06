@@ -33,13 +33,15 @@ export function updateTray(title: string | null, paused: boolean): Promise<void>
 export interface PendingTrack {
   id: number;
   path: string;
+  /** false = BPM verdict already recorded; mix anchors only. */
+  needs_bpm: boolean;
   hint_bpm: number | null;
   hint_bpm_max: number | null;
 }
 
-/** Tracks never BPM-analyzed (index-side worklist for the sweeper). */
-export function listBpmPending(): Promise<PendingTrack[]> {
-  return invoke<PendingTrack[]>("list_bpm_pending");
+/** Tracks with analysis missing (index-side worklist for the sweeper). */
+export function listAnalysisPending(): Promise<PendingTrack[]> {
+  return invoke<PendingTrack[]>("list_analysis_pending");
 }
 
 export interface DetectedBpm {
@@ -56,6 +58,20 @@ export function setBpm(
   usedHint = false,
 ): Promise<void> {
   return invoke<void>("set_bpm", { trackId, detected, usedHint });
+}
+
+export interface MixAnchorArg {
+  bpm: number;
+  beat_sec: number;
+}
+
+/** Persist per-end mix anchors; null end = unstable, plain fade there. */
+export function setMixAnchors(
+  trackId: number,
+  head: MixAnchorArg | null,
+  tail: MixAnchorArg | null,
+): Promise<void> {
+  return invoke<void>("set_mix_anchors", { trackId, head, tail });
 }
 
 /** Hold/release the display-sleep assertion (Stage mode playing). */

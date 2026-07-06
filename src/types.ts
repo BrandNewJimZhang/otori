@@ -12,6 +12,13 @@ export interface TrackRow {
   bpm_max: number | null;
   bpm_confidence: number | null;
   bpm_hint: number | null;
+  /** Mix anchors: local tempo + a measured beat per end. null with
+      mix_analyzed = that end is unstable — plan a plain fade. */
+  mix_head_bpm: number | null;
+  mix_head_beat_sec: number | null;
+  mix_tail_bpm: number | null;
+  mix_tail_beat_sec: number | null;
+  mix_analyzed: boolean;
   title: string | null;
   artist: string | null;
   album: string | null;
