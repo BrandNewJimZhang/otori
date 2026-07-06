@@ -5,7 +5,7 @@
 use std::sync::Mutex;
 
 use otori_core::{analysis, db, query, scan};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 
@@ -187,6 +187,76 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// macOS menu bar. Items forward to the frontend as `menu-command`
+/// events (same handler set as the tray/transport). The Edit submenu's
+/// predefined clipboard roles are what make ⌘C/⌘V/⌘X work inside the
+/// webview's text fields on macOS — do not remove them. In-app keys
+/// (Space, S, arrows) stay in the webview router; menu items carry
+/// accelerators only where the webview doesn't already own the chord.
+fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
+    let handle = app.handle();
+    let app_menu = Submenu::with_items(
+        handle,
+        "Ōtori",
+        true,
+        &[
+            &PredefinedMenuItem::about(handle, None, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::hide(handle, None)?,
+            &PredefinedMenuItem::hide_others(handle, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::quit(handle, Some("Quit Ōtori"))?,
+        ],
+    )?;
+    let file = Submenu::with_items(
+        handle,
+        "File",
+        true,
+        &[&MenuItem::with_id(handle, "menu_scan", "Scan Folder…", true, Some("CmdOrCtrl+O"))?],
+    )?;
+    let edit = Submenu::with_items(
+        handle,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(handle, None)?,
+            &PredefinedMenuItem::redo(handle, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::cut(handle, None)?,
+            &PredefinedMenuItem::copy(handle, None)?,
+            &PredefinedMenuItem::paste(handle, None)?,
+        ],
+    )?;
+    let playback = Submenu::with_items(
+        handle,
+        "Playback",
+        true,
+        &[
+            &MenuItem::with_id(handle, "menu_playpause", "Play/Pause", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "menu_next", "Next Track", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "menu_prev", "Previous Track", true, None::<&str>)?,
+        ],
+    )?;
+    let view = Submenu::with_items(
+        handle,
+        "View",
+        true,
+        &[
+            &MenuItem::with_id(handle, "menu_stage", "Toggle Stage", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::fullscreen(handle, None)?,
+        ],
+    )?;
+    let menu = Menu::with_items(handle, &[&app_menu, &file, &edit, &playback, &view])?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if let Some(cmd) = event.id().as_ref().strip_prefix("menu_") {
+            let _ = app.emit("menu-command", cmd);
+        }
+    });
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -200,6 +270,7 @@ pub fn run() {
             spawn_library_watcher(app.handle().clone(), path.clone());
             spawn_launch_rescan(app.handle().clone(), path);
             setup_tray(app)?;
+            setup_app_menu(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
