@@ -178,7 +178,12 @@ is a separate, explicit, journaled `--apply` operation if ever wanted.
 **Quality floor**: jackets must be ≥500px on the shorter side
 (`otori artwork` verifies from image headers and exits 2 below the
 floor) — Stage mode renders art large, and a blurry jacket is worse
-than the placeholder.
+than the placeholder. One authorized exception: SilentBlue.RED's
+site maximum is 400px; its jackets are accepted at 400px
+(founding-user authorization 2026-07-07).
+**Jacket priority** (founding-user, 2026-07-07): self-titled single
+cover → rhythm-game jacket (maimai first, then プロセカ) →
+studio/compilation cover as last resort.
 
 ### Two source tiers
 

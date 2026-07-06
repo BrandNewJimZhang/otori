@@ -26,6 +26,12 @@ pub struct Match {
     pub artist_string: String,
     pub album_id: Option<i64>,
     pub album_name: Option<String>,
+    /// Jacket source tier (founding-user priority, 2026-07-07):
+    /// self-titled single > rhythm-game jacket (outside this provider:
+    /// maimai, then プロセカ, via the wiki workflow) > studio/compilation.
+    /// `true` = the chosen album is self-titled (auto-deliver);
+    /// `false` = fallback tier (deliver only on explicit opt-in).
+    pub album_is_self_titled: bool,
 }
 
 #[derive(Deserialize)]
@@ -54,10 +60,18 @@ struct NameRef {
 
 impl SongItem {
     fn has_name(&self, title: &str) -> bool {
-        let wanted = nfc(title).to_lowercase();
-        std::iter::once(&self.name)
-            .chain(self.names.iter().map(|n| &n.value))
-            .any(|n| nfc(n).to_lowercase() == wanted)
+        self.primary_name_is(title)
+            || self
+                .names
+                .iter()
+                .any(|n| nfc(&n.value).to_lowercase() == nfc(title).to_lowercase())
+    }
+
+    /// The display name itself matches (not just an alias). Re-records
+    /// like "X (10th Anniversary)" carry plain "X" as an alias; when a
+    /// tie needs breaking, the primary-name entry is the original.
+    fn primary_name_is(&self, title: &str) -> bool {
+        nfc(&self.name).to_lowercase() == nfc(title).to_lowercase()
     }
 }
 
@@ -65,6 +79,28 @@ impl SongItem {
 struct AlbumRef {
     id: i64,
     name: String,
+    #[serde(rename = "discType", default)]
+    disc_type: String,
+}
+
+/// Pick the album per the jacket priority: a self-titled album (name ==
+/// song title; prefer discType "Single" among them) wins; otherwise the
+/// first listed album, marked as fallback tier.
+fn choose_album<'a>(albums: &'a [AlbumRef], title: &str) -> Option<(&'a AlbumRef, bool)> {
+    let wanted = nfc(title).to_lowercase();
+    let mut self_titled = albums
+        .iter()
+        .filter(|a| nfc(&a.name).to_lowercase() == wanted);
+    if let Some(single) = self_titled
+        .clone()
+        .find(|a| a.disc_type.eq_ignore_ascii_case("Single"))
+    {
+        return Some((single, true));
+    }
+    if let Some(any_self_titled) = self_titled.next() {
+        return Some((any_self_titled, true));
+    }
+    albums.first().map(|a| (a, false))
 }
 
 /// Decide which search hit (if any) is *the* song. Exact title match
@@ -124,6 +160,18 @@ pub fn pick_match(
                 candidates = all_contained;
             }
         }
+        // Alias-only matches (re-records: "X (10th Anniversary)" carries
+        // "X" as alias) lose to entries whose display name IS the title.
+        if candidates.len() > 1 {
+            let primary: Vec<&SongItem> = candidates
+                .iter()
+                .filter(|c| c.primary_name_is(title))
+                .copied()
+                .collect();
+            if !primary.is_empty() {
+                candidates = primary;
+            }
+        }
     }
 
     // Zero hits → no match. Multiple hits: VocaDB has duplicate entries
@@ -150,12 +198,14 @@ pub fn pick_match(
                 .unwrap_or(&candidates[0])
         }
     };
+    let chosen = choose_album(&hit.albums, title);
     Ok(Some(Match {
         song_id: hit.id,
         song_name: hit.name.clone(),
         artist_string: hit.artist_string.clone(),
-        album_id: hit.albums.first().map(|a| a.id),
-        album_name: hit.albums.first().map(|a| a.name.clone()),
+        album_id: chosen.map(|(a, _)| a.id),
+        album_name: chosen.map(|(a, _)| a.name.clone()),
+        album_is_self_titled: chosen.map(|(_, st)| st).unwrap_or(false),
     }))
 }
 
