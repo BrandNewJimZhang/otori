@@ -25,8 +25,13 @@ import {
   type SortSpec,
 } from "./library";
 import { NextIcon, PauseIcon, PlayIcon, PrevIcon, VolumeIcon } from "./icons";
+import { loadPrefs, savePrefs } from "./prefs";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 import "./App.css";
+
+// Volume/sort survive restarts (window size: tauri-plugin-window-state
+// if it ever matters). Read once at module load, saved on change.
+const initialPrefs = loadPrefs(localStorage);
 
 type Mode = "backstage" | "stage";
 
@@ -48,9 +53,9 @@ function App() {
   const [report, setReport] = useState<ScanReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState(0);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolume] = useState(initialPrefs.volume);
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortSpec | null>(null);
+  const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const engine = useMemo(createEngine, []);
@@ -73,6 +78,15 @@ function App() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  // Apply the persisted volume to the engine once it exists.
+  useEffect(() => {
+    engine.volume = initialPrefs.volume;
+  }, [engine]);
+
+  useEffect(() => {
+    savePrefs(localStorage, { volume, sort });
+  }, [volume, sort]);
 
   const play = useCallback(
     async (track: TrackRow) => {
@@ -130,6 +144,31 @@ function App() {
     engine.togglePause();
     setPaused(engine.paused);
   }, [engine]);
+
+  // System Now Playing / media keys via MediaSession; no-op where the
+  // WebView doesn't expose it.
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    ms.metadata = current
+      ? new MediaMetadata({
+          title: displayTitle(current),
+          artist: current.artist ?? undefined,
+          album: current.album ?? undefined,
+          artwork: artwork ? [{ src: artwork }] : [],
+        })
+      : null;
+    ms.setActionHandler("play", togglePause);
+    ms.setActionHandler("pause", togglePause);
+    ms.setActionHandler("previoustrack", () => step(-1));
+    ms.setActionHandler("nexttrack", () => step(1));
+    return () => {
+      ms.setActionHandler("play", null);
+      ms.setActionHandler("pause", null);
+      ms.setActionHandler("previoustrack", null);
+      ms.setActionHandler("nexttrack", null);
+    };
+  }, [current, artwork, togglePause, step]);
 
   // Keyboard: Tab/S mode, Space play/pause, ↑↓ select, Enter play,
   // ⌘F search, Esc dismiss (search → selection → Stage).
