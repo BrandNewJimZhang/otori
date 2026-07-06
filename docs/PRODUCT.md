@@ -156,19 +156,46 @@ written as sidecars with provenance `agent`, never silently embedded.
 
 ## Metadata providers
 
-Agent tag-fixing runs against a source matrix ordered by fit for this
-library, not by general popularity:
+**The founding library's text tags are complete and hand-curated
+(780/780 albums filled); what's actually missing is jackets** — cover
+art for Stage mode. Provider design is therefore jacket-first: text
+corrections are a side benefit that flows through the L2 diff like any
+other agent proposal.
+
+### Delivery: sidecar images, not tag writes
+
+Fetched jackets land as `<stem>.jpg` next to the audio file. The
+artwork chain (embedded picture → sidecar image → folder cover) picks
+them up in GUI and CLI alike. No audio file is modified, no provenance
+ceremony needed, undo = delete the image. Embedding into the file tag
+is a separate, explicit, journaled `--apply` operation if ever wanted.
+
+### Two source tiers
+
+**Tier 1 — structured APIs (in core, as code)**, ordered by fit:
 
 1. **VocaDB** (Vocaloid: producer/vocalist/original-song relations,
-   public REST API)
-2. **TouhouDB** (Touhou arranges, including which ZUN original a track
-   arranges — same open-source platform as VocaDB)
-3. **VGMdb** (doujin albums, M3/Reitaisai/BMS releases)
+   public REST API) — covers the 107 Vocaloid tracks
+2. **TouhouDB** (Touhou arranges — same platform as VocaDB) — covers
+   the 57 Touhou tracks
+3. **VGMdb** (doujin albums, M3/Reitaisai/BMS releases) — Contest and
+   doujin album long tail
 4. **MusicBrainz** (fallback for everything else)
 
-Provider answers are suggestions, never authority: they fill empty
-fields and propose corrections through the L2 dry-run diff, and they
-never touch curated fields.
+**Tier 2 — game wikis (agent workflow, not code).** Rhythm-game tracks
+are 411 of 780 (53%), spread across 35+ games; their jackets live on
+community wikis with no stable APIs. Writing scrapers for 35 wikis is
+a maintenance treadmill — instead, the agent reads the wiki like a
+human would and delivers via the sidecar path. The per-game source
+mapping is maintained in AGENTS.md (SilentBlue.RED for the SEGA
+four — 244 tracks; wikiwiki.jp for many JP communities; Sekaipedia,
+Arcaea Fandom, RemyWiki, and per-game Fandom/miraheze wikis for the
+rest). Agents are the rule engine — same logic that descoped smart
+playlists.
+
+Provider answers remain suggestions, never authority: text-field
+corrections go through the L2 dry-run diff, and they never touch
+curated fields.
 
 ## Competitive gap
 

@@ -46,6 +46,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Locate cover art (embedded -> sidecar image -> folder cover)
+    Artwork {
+        path: PathBuf,
+        /// Write the image bytes to this file (otherwise report only)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Edit tag fields (dry-run by default; --apply to write)
     Set {
         path: PathBuf,
@@ -217,6 +226,47 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 None => println!("(no lyrics: not embedded, no sidecar .lrc)"),
             }
             Ok(ExitCode::SUCCESS)
+        }
+        Command::Artwork { path, out, json } => {
+            if !path.is_file() {
+                return Err(CliError::bad_input(format!(
+                    "not a file: {}",
+                    path.display()
+                )));
+            }
+            let art = otori_core::artwork::resolve(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            match art {
+                Some(art) => {
+                    if let Some(out) = &out {
+                        std::fs::write(out, &art.data).map_err(|e| {
+                            CliError::bad_input(format!("cannot write {}: {e}", out.display()))
+                        })?;
+                    }
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "source": art.source,
+                                "mime": art.mime,
+                                "bytes": art.data.len(),
+                                "written_to": out,
+                            })
+                        );
+                    } else {
+                        println!("{} ({}, {} bytes)", art.source, art.mime, art.data.len());
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                None if json => {
+                    println!("null");
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => {
+                    println!("(no artwork: not embedded, no sidecar, no folder cover)");
+                    Ok(ExitCode::SUCCESS)
+                }
+            }
         }
         Command::Set { path, title, artist, album, apply, agent, override_curated, json } => {
             use otori_core::write::{Actor, FieldChange, PlanOutcome};

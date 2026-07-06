@@ -31,6 +31,7 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori list [--json]` | List indexed tracks | ordered artist → title |
 | `otori tags <file>` | Read tags straight from a file | bypasses the index |
 | `otori lyrics <file> [--json]` | Lyrics: embedded tag, then sidecar `.lrc` | JSON includes sync kind (`word_synced`/`line_synced`/`static`) |
+| `otori artwork <file> [--out <img>] [--json]` | Locate cover art: embedded → sidecar image → folder cover | `--out` extracts the bytes |
 | `otori set <file> --title/--artist/--album <v> [--agent <id>] [--apply] [--override-curated] [--json]` | Edit tags | dry-run without `--apply`; exit 2 when curated fields were skipped |
 | `otori curate <file>` / `otori curate --all` | Mark existing values as protected | the onboarding oath |
 | `otori undo <txid>` | Roll back an applied transaction | fails if already undone |
@@ -75,6 +76,55 @@ otori journal --json                                     # what happened before 
 
 The index SQLite schema is readable directly (read-only!) at the
 `--db` path; writes go through the CLI only.
+
+## Canonical workflow: fetching jackets
+
+The library's text tags are complete; the recurring agent job is
+finding cover art (jackets), especially for rhythm-game tracks
+(`[Rhythm Game, <game>] …` titles — 400+ tracks). Delivery is a
+sidecar image, never a tag write:
+
+```bash
+# 1. Which tracks lack any artwork?
+otori list --json | jq -r '.[].path' | while read -r f; do
+  [ "$(otori artwork "$f" --json)" = "null" ] && echo "$f"
+done
+
+# 2. Identify the source from the title's game marker, fetch the
+#    jacket from the wiki (table below), save it next to the file:
+#    "/path/to/[Rhythm Game, Arcaea] Tempestissimo.mp3"
+#    → "/path/to/[Rhythm Game, Arcaea] Tempestissimo.jpg"
+
+# 3. Verify pickup (source: "sidecar"):
+otori artwork "/path/to/track.mp3" --json
+```
+
+A running GUI shows the new jacket on next play — no notification
+needed. Wrong image? Delete the sidecar; the chain falls back.
+
+### Per-game jacket sources
+
+| Game marker | Source |
+|---|---|
+| maimai / maimai DX / Chunithm / オンゲキ | SilentBlue.RED (JP wiki, covers all SEGA arcade titles) |
+| プロセカ | Sekaipedia / プロセカ攻略 wiki (wikiwiki.jp) |
+| Arcaea | Arcaea Fandom wiki |
+| WACCA / Muse Dash / Phigros / Lanota / Dynamix / Rotaeno | per-game Fandom or wikiwiki.jp community wiki |
+| IIDX / Sound Voltex / jubeat / REFLEC BEAT | RemyWiki (KONAMI standard source) |
+| osu! family | osu! official song listing / beatmap pages |
+| anything unlisted | search "<game> wiki <song title>"; wikiwiki.jp hosts many JP game wikis |
+
+Rules of engagement: match by exact song title AND artist (rhythm
+games love same-name covers); prefer the highest-resolution jacket
+the wiki offers; when the wiki shows several versions (original vs
+game edit), pick the one matching the track's `[…]` marker; **unsure
+= ask, never guess** — a wrong jacket on the Stage is worse than none.
+
+### Text-tag sources (structured APIs, for the non-game tiers)
+
+Vocaloid → VocaDB · Touhou arranges → TouhouDB · doujin albums →
+VGMdb · fallback → MusicBrainz. Corrections flow through the normal
+`set --agent` dry-run diff; curated fields stay untouchable.
 
 ## This file cannot rot
 
