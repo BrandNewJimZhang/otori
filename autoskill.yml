@@ -1,0 +1,9 @@
+# AutoSkill project configuration — otori
+#
+# verify runs before every ship (git-ship gate). Keep it fast and
+# deterministic: core engine tests + typecheck + frontend unit tests.
+# rustup's `run` shim is broken on this host; prepend the resolved
+# toolchain bin dir instead (arch-neutral).
+
+verify:
+  command: PATH="$(dirname "$(rustup which cargo)"):$PATH" cargo test -p otori-core --quiet && pnpm exec tsc --noEmit && pnpm exec vitest run --silent
