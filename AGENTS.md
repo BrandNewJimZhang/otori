@@ -212,6 +212,19 @@ Sweep it with `fetch-bpm` (VocaDB, below) per track; rhythm-game
 tracks resolve via the wiki workflow or local tooling into
 `import-bpm`. Re-runs converge: hinted tracks drop out of the list.
 
+### BPM sources per catalog
+
+| Catalog | Source | Access |
+|---|---|---|
+| Vocaloid / doujin circles | VocaDB (built-in `fetch-bpm`) | API, editor-curated, milli-BPM ranges |
+| SEGA arcade (maimai/Chunithm/オンゲキ) | OTOGE DB — github.com/zvuc/otoge-db | open JSON (`<game>/data/music-ex.json`), per-title bpm; import as `--provider otogedb` |
+| Other rhythm games | per-game wiki (jacket sources table above) | manual/agent lookup → `import-bpm` |
+
+OTOGE DB is fan-maintained open data on GitHub — a *clean* source,
+preferred over scraping wherever its catalog reaches (field-verified
+2026-07-07: 1559 maimai / 1730 chunithm / 1087 ongeki entries, BPM
+on nearly all).
+
 Fetch an editor-curated hint when detection is dimmed (low confidence)
 or shows the wrong octave:
 
