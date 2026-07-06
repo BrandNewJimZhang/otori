@@ -209,6 +209,18 @@ otori fetch-bpm "track.mp3" --apply  # write index (source provider:vocadb)
 - TouhouDB is VocaDB-shaped (same API); a `--provider` flag can come
   when Touhou arranges need it.
 
+For sources without a built-in fetcher (rhythm-game originals are
+outside VocaDB's scope), `import-bpm` is the generic write surface —
+external tooling resolves the value however it does, then records it:
+
+```bash
+otori import-bpm "track.mp3" --bpm 175 --provider tunebat
+otori import-bpm "track.mp3" --bpm 140 --bpm-max 180 --provider tunebat
+```
+
+Same ladder (refuses TBPM-tagged tracks), same sanity window
+(20-400, ceiling >= floor), provider name lowercase alphanumeric.
+
 ## This file cannot rot
 
 Every workflow above is exercised by `scripts/acceptance.sh` (run it

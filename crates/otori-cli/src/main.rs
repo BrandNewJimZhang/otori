@@ -92,6 +92,24 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Record a provider-sourced BPM into the index (generic import
+    /// surface for external tooling; trust ladder tag > provider >
+    /// detected applies)
+    ImportBpm {
+        path: PathBuf,
+        /// Tempo, or the range floor for variable-tempo tracks
+        #[arg(long)]
+        bpm: f64,
+        /// Range ceiling for variable-tempo (soflan) tracks
+        #[arg(long)]
+        bpm_max: Option<f64>,
+        /// Provider name, lowercase alphanumeric (lands in bpm_source
+        /// as 'provider:<name>')
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Fetch an editor-curated BPM from VocaDB into the index
     FetchBpm {
         path: PathBuf,
@@ -466,6 +484,39 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 );
             } else {
                 println!("lyrics saved: {}", sidecar.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::ImportBpm { path, bpm, bpm_max, provider, json } => {
+            let conn = open_library(cli.db.clone())?;
+            let path_str = path.to_string_lossy();
+            let (track_id, source): (i64, Option<String>) = conn
+                .query_row(
+                    "SELECT id, bpm_source FROM tracks WHERE path = ?1",
+                    [path_str.as_ref()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|_| CliError::bad_input("track is not in the library index (scan first)"))?;
+            if source.as_deref() == Some("tag") {
+                return Err(CliError::bad_input(
+                    "track has a release-authored TBPM tag; that outranks provider data",
+                ));
+            }
+            otori_core::analysis::set_provider_bpm(&conn, track_id, bpm, bpm_max, &provider)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "applied": true, "bpm": bpm, "bpm_max": bpm_max,
+                        "source": format!("provider:{provider}"),
+                    })
+                );
+            } else {
+                println!(
+                    "BPM saved: {bpm}{} (provider:{provider})",
+                    bpm_max.map(|m| format!("\u{2013}{m}")).unwrap_or_default()
+                );
             }
             Ok(ExitCode::SUCCESS)
         }

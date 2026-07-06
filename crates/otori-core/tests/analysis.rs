@@ -196,3 +196,24 @@ fn detection_never_overwrites_a_provider_value() {
     analysis::set_provider_bpm(&conn, id, 175.0, None, "vocadb").unwrap();
     assert!(analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 92.0, bpm_max: None, confidence: 0.9 })).is_err());
 }
+
+#[test]
+fn provider_names_are_validated() {
+    let (conn, id) = seeded_library();
+    // Lowercase alphanum only: the name lands inside bpm_source and
+    // must stay greppable/parseable ('provider:tunebat', not
+    // 'provider:My Cool Scraper!!').
+    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "").is_err());
+    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "has space").is_err());
+    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "Tag").is_err());
+    assert!(analysis::set_provider_bpm(&conn, id, 150.0, None, "tunebat").is_ok());
+}
+
+#[test]
+fn provider_bpm_values_are_sanity_checked() {
+    let (conn, id) = seeded_library();
+    assert!(analysis::set_provider_bpm(&conn, id, 0.0, None, "tunebat").is_err());
+    assert!(analysis::set_provider_bpm(&conn, id, 3000.0, None, "tunebat").is_err());
+    // Inverted range is data error, not a range.
+    assert!(analysis::set_provider_bpm(&conn, id, 180.0, Some(140.0), "tunebat").is_err());
+}
