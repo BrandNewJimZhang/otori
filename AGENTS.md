@@ -132,7 +132,11 @@ games love same-name covers); **the resolution floor is 500px on the
 shorter side** — after saving a sidecar, run
 `otori artwork <file> --json` and treat `below_min_size: true`
 (exit 2) as failure: find a larger image or report the gap, never
-leave a low-res jacket in place; when the wiki shows several versions
+leave a low-res jacket in place; **do not trust wiki API size
+claims** — Fandom `pageimages&pithumbsize=1400` reports the requested
+thumb size, not the original's (field-verified: three "1400px" images
+delivered at 314–369px; the floor caught all three) — the local
+verify step is the only truth; when the wiki shows several versions
 (original vs game edit), pick the one matching the track's `[…]`
 marker; **unsure = ask, never guess** — a wrong jacket on the Stage
 is worse than none.
