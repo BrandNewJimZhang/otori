@@ -1,8 +1,11 @@
-/* Ōtori — dark stage-like default. Four accent colors map to the four
-   functional areas (PRODUCT.md Pillar 2):
-   orange=library, green=playback, pink=lyrics (Cut 3), purple=spectrum. */
+/* Ōtori — dark stage-like default, with a light Backstage variant.
+   Four accent colors map to the four functional areas (PRODUCT.md
+   Pillar 2): orange=library, green=playback, pink=lyrics (Cut 3),
+   purple=spectrum. Theme rides `data-theme` on <html>; Stage mode
+   re-declares the dark tokens so the stage never lights up. */
 
-:root {
+:root,
+.stage-mode {
   --bg: #101014;
   --bg-raised: #17171d;
   --bg-hover: #1f1f27;
@@ -13,8 +16,25 @@
   --playback: #4ade80;
   --lyrics: #f472b6;
   --spectrum: #a78bfa;
+}
+
+:root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f5f3;
+  --bg-raised: #ffffff;
+  --bg-hover: #ecebe8;
+  --text: #1c1b1f;
+  --text-dim: #6f6e76;
+  --border: #dedcd7;
+  --library: #ea7317;
+  --playback: #16a34a;
+  --lyrics: #db2777;
+  --spectrum: #7c3aed;
+  color-scheme: light;
 }
 
 * {
@@ -55,6 +75,11 @@ button {
   padding: 10px 16px 10px 84px;
   background: var(--bg-raised);
   border-bottom: 1px solid var(--border);
+}
+
+/* Fullscreen hides the traffic lights — reclaim their reserved space. */
+.toolbar.fullscreen {
+  padding-left: 16px;
 }
 
 .brand {
@@ -337,6 +362,25 @@ tbody tr:hover .row-play {
   height: 13px;
 }
 
+/* Shuffle/repeat toggles: borderless, lit by --playback when active. */
+.transport .mode-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border-color: transparent;
+  background: none;
+  color: var(--text-dim);
+}
+
+.transport .mode-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.transport .mode-btn.on {
+  color: var(--playback);
+}
+
 .now-playing {
   display: flex;
   align-items: center;
@@ -485,6 +529,20 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   margin-left: auto;
   font-size: 11px;
   color: var(--text-dim);
+}
+
+/* Square icon button (toolbar theme toggle). */
+.toolbar .icon-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--text-dim);
+}
+
+.toolbar .icon-btn:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .stage {
@@ -651,9 +709,19 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 }
 
 .stage-lighting {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 0 32px 24px;
   position: relative;
   z-index: 1;
+}
+
+/* Stage seek: same slider chrome as the player bar, stage-wide. */
+.stage-seek {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .stage-lighting .spectrum {

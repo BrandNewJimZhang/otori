@@ -4,9 +4,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, getLyrics, listTracks, scanLibrary } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary, updateTray } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
@@ -26,8 +27,19 @@ import {
   type SortKey,
   type SortSpec,
 } from "./library";
-import { NextIcon, PauseIcon, PlayIcon, PrevIcon, VolumeIcon } from "./icons";
-import { loadPrefs, savePrefs } from "./prefs";
+import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
+import {
+  MoonIcon,
+  NextIcon,
+  PauseIcon,
+  PlayIcon,
+  PrevIcon,
+  RepeatIcon,
+  ShuffleIcon,
+  SunIcon,
+  VolumeIcon,
+} from "./icons";
+import { loadPrefs, savePrefs, type Theme } from "./prefs";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
 import "./App.css";
 
@@ -57,12 +69,20 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState(0);
   const [volume, setVolume] = useState(initialPrefs.volume);
+  const [shuffle, setShuffle] = useState(initialPrefs.shuffle);
+  const [repeat, setRepeat] = useState<RepeatMode>(initialPrefs.repeat);
+  const [theme, setTheme] = useState<Theme>(initialPrefs.theme);
+  const [fullscreen, setFullscreen] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const engine = useMemo(createEngine, []);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Shuffle order is frozen when shuffle turns on (or a track starts
+  // outside it) and reconciled against the visible list per step, so
+  // filtering mid-shuffle doesn't reshuffle what's already queued.
+  const shuffleOrderRef = useRef<number[]>([]);
 
   // Playback order follows what the user sees: filtered, then sorted.
   const visible = useMemo(
@@ -75,6 +95,10 @@ function App() {
   currentRef.current = current;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const shuffleRef = useRef(shuffle);
+  shuffleRef.current = shuffle;
+  const repeatRef = useRef(repeat);
+  repeatRef.current = repeat;
 
   const refresh = useCallback(() => {
     listTracks().then(setTracks).catch((e) => setError(String(e)));
@@ -98,8 +122,28 @@ function App() {
   }, [engine]);
 
   useEffect(() => {
-    savePrefs(localStorage, { volume, sort });
-  }, [volume, sort]);
+    savePrefs(localStorage, { volume, sort, shuffle, repeat, theme });
+  }, [volume, sort, shuffle, repeat, theme]);
+
+  // Theme rides a root attribute so CSS owns the palettes; Stage stays
+  // dark regardless (a lit stage is not a stage).
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  // Fullscreen hides the traffic lights, so the toolbar's left padding
+  // for them must go too (the audit's "empty corner" in fullscreen).
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const sync = () => {
+      win.isFullscreen().then(setFullscreen).catch(() => {});
+    };
+    sync();
+    const unlisten = win.onResized(sync);
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, []);
 
   const play = useCallback(
     async (track: TrackRow) => {
@@ -120,25 +164,63 @@ function App() {
     [engine],
   );
 
-  // Step through the visible listing order; wraps nothing, just stops.
+  // Step through the play order (visible listing, or the frozen
+  // shuffle permutation). `manual` distinguishes a user skip from a
+  // natural track end — repeat-one only replays on natural ends.
   const step = useCallback(
-    (offset: number) => {
+    (offset: 1 | -1, manual = true) => {
       const list = visibleRef.current;
       const cur = currentRef.current;
-      const idx = list.findIndex((t) => t.id === cur?.id);
-      const next = idx >= 0 ? list[idx + offset] : undefined;
-      if (next) void play(next);
+      const visibleIds = list.map((t) => t.id);
+      const order = shuffleRef.current
+        ? effectiveOrder(visibleIds, shuffleOrderRef.current)
+        : visibleIds;
+      const id = nextId(order, cur?.id ?? null, offset, repeatRef.current, manual);
+      const next = id != null ? list.find((t) => t.id === id) : undefined;
+      if (next) {
+        if (next.id === cur?.id) {
+          // Repeat-one replay: restart instead of reloading the file.
+          engine.seek(0);
+          setPosition(0);
+          if (engine.paused) {
+            engine.togglePause();
+            setPaused(false);
+          }
+        } else {
+          void play(next);
+        }
+      }
       return Boolean(next);
     },
-    [play],
+    [play, engine],
   );
 
-  // Keep the idle deck preloaded with the next visible track (gapless).
+  const toggleShuffle = useCallback(() => {
+    setShuffle((on) => {
+      const next = !on;
+      if (next) {
+        // Freeze a permutation of what's visible now, current track first.
+        shuffleOrderRef.current = shuffledIds(
+          visibleRef.current.map((t) => t.id),
+          currentRef.current?.id ?? null,
+          Math.random,
+        );
+      }
+      return next;
+    });
+  }, []);
+
+  // Keep the idle deck preloaded with the track a natural end leads to
+  // (gapless). "Next" follows the play order — shuffle permutation and
+  // repeat included (repeat-one preloads the same file for a gapless
+  // replay) — not merely the next visible row.
   useEffect(() => {
-    const idx = visible.findIndex((t) => t.id === current?.id);
-    const next = idx >= 0 ? visible[idx + 1] : undefined;
+    const visibleIds = visible.map((t) => t.id);
+    const order = shuffle ? effectiveOrder(visibleIds, shuffleOrderRef.current) : visibleIds;
+    const id = nextId(order, current?.id ?? null, 1, repeat, false);
+    const next = id != null ? visible.find((t) => t.id === id) : undefined;
     engine.preloadNext(next ? { path: next.path, replaygainDb: next.replaygain_db } : null);
-  }, [engine, visible, current]);
+  }, [engine, visible, current, shuffle, repeat]);
 
   useEffect(() => {
     engine.onEnded((advancedTo) => {
@@ -153,7 +235,9 @@ function App() {
           return;
         }
       }
-      if (!step(1)) setPaused(true);
+      // No handoff (repeat off at the edge, or preload miss): step the
+      // play order as a natural end; nothing next → stop.
+      if (!step(1, false)) setPaused(true);
     });
     engine.onError(setError);
     engine.onTimeUpdate(setPosition);
@@ -223,6 +307,26 @@ function App() {
       playbackRate: 1,
     });
   }, [current, position, engine]);
+
+  // Status-bar (tray) menu, UI half: mirror playback state into the
+  // menu labels; failures are cosmetic and must not touch playback.
+  useEffect(() => {
+    updateTray(current ? displayTitle(current) : null, paused).catch(() => {});
+  }, [current, paused]);
+
+  // Tray menu clicks arrive as a `tray-command` event (shell side:
+  // src-tauri). Same handlers as the on-screen transport.
+  useEffect(() => {
+    const unlisten = listen<string>("tray-command", (e) => {
+      if (e.payload === "playpause") {
+        if (currentRef.current) togglePause();
+      } else if (e.payload === "next") step(1);
+      else if (e.payload === "prev") step(-1);
+    });
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, [togglePause, step]);
 
   // Keyboard: S toggles mode (Tab stays with the focus system),
   // Space play/pause, ↑↓ select, Enter play, ⌘F search,
@@ -303,6 +407,16 @@ function App() {
     ];
   }, [menu, play]);
 
+  function seekTo(secs: number) {
+    engine.seek(secs);
+    setPosition(secs);
+  }
+
+  // Engine duration once metadata loads; index duration until then.
+  const duration = Number.isFinite(engine.duration)
+    ? engine.duration
+    : current?.duration_secs ?? NaN;
+
   if (mode === "stage" && current) {
     return (
       <div className="app stage-mode" onDoubleClick={() => setMode("backstage")}>
@@ -312,14 +426,11 @@ function App() {
           lyrics={lyrics}
           analyser={engine.analyser}
           positionMs={positionMs}
+          duration={duration}
+          onSeek={seekTo}
         />
       </div>
     );
-  }
-
-  function seekTo(secs: number) {
-    engine.seek(secs);
-    setPosition(secs);
   }
 
   function changeVolume(v: number) {
@@ -331,14 +442,9 @@ function App() {
     setSort((s) => toggleSort(s, key));
   }
 
-  // Engine duration once metadata loads; index duration until then.
-  const duration = Number.isFinite(engine.duration)
-    ? engine.duration
-    : current?.duration_secs ?? NaN;
-
   return (
     <div className="app">
-      <header className="toolbar" data-tauri-drag-region>
+      <header className={`toolbar ${fullscreen ? "fullscreen" : ""}`} data-tauri-drag-region>
         <h1 className="brand">Ōtori</h1>
         <button onClick={pickAndScan} disabled={scanning}>
           {scanning ? "Scanning…" : "Scan folder…"}
@@ -364,6 +470,14 @@ function App() {
         <span className="mode-hint">
           {current ? "S → Stage · Space → play/pause" : ""}
         </span>
+        <button
+          className="icon-btn theme-toggle"
+          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={theme === "dark" ? "Light theme" : "Dark theme"}
+        >
+          {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+        </button>
       </header>
 
       {scanning && <div className="scan-progress" role="progressbar" aria-label="Scanning" />}
@@ -413,6 +527,15 @@ function App() {
       <footer className="player-bar">
         <div className="transport">
           <button
+            className={`mode-btn ${shuffle ? "on" : ""}`}
+            onClick={toggleShuffle}
+            aria-label="Shuffle"
+            aria-pressed={shuffle}
+            title={shuffle ? "Shuffle on" : "Shuffle off"}
+          >
+            <ShuffleIcon />
+          </button>
+          <button
             className="step-btn"
             onClick={() => step(-1)}
             disabled={!current}
@@ -435,6 +558,14 @@ function App() {
             aria-label="Next track"
           >
             <NextIcon />
+          </button>
+          <button
+            className={`mode-btn ${repeat !== "off" ? "on" : ""}`}
+            onClick={() => setRepeat(cycleRepeat)}
+            aria-label={`Repeat: ${repeat}`}
+            title={`Repeat: ${repeat}`}
+          >
+            <RepeatIcon one={repeat === "one"} />
           </button>
         </div>
 

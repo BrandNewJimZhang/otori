@@ -45,6 +45,63 @@ export function NextIcon() {
   );
 }
 
+export function ShuffleIcon() {
+  return (
+    <svg {...P}>
+      <path
+        d="M4 7h3l3 4m0 2 3 4h4m0 0-2-2m2 2-2 2M4 17h3l2.4-3.2M13 7h4m0 0-2-2m2 2-2 2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function RepeatIcon({ one = false }: { one?: boolean }) {
+  return (
+    <svg {...P}>
+      <path
+        d="M7 6h8a4 4 0 0 1 4 4v1M17 18H9a4 4 0 0 1-4-4v-1m2-7L5 8l2 2m10 6 2 2-2 2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {one && (
+        <text x="12" y="14.5" textAnchor="middle" fontSize="8" fontWeight="700" fill="currentColor" stroke="none">
+          1
+        </text>
+      )}
+    </svg>
+  );
+}
+
+export function SunIcon() {
+  return (
+    <svg {...P}>
+      <circle cx="12" cy="12" r="4.2" />
+      <path
+        d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function MoonIcon() {
+  return (
+    <svg {...P}>
+      <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z" />
+    </svg>
+  );
+}
+
 export function VolumeIcon() {
   return (
     <svg {...P}>

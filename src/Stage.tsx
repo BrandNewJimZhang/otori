@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LyricsDoc, TrackRow } from "./types";
 import { bandEnergy, Smoother } from "./energy";
 import { displayTitle } from "./library";
+import { formatTime } from "./format";
 import { Spectrum } from "./Spectrum";
 
 interface StageProps {
@@ -20,6 +21,9 @@ interface StageProps {
   analyser: AnalyserNode | null;
   /** Current playback position in ms, sampled by the parent at rAF rate. */
   positionMs: number;
+  /** Track length in seconds; NaN until engine metadata loads. */
+  duration: number;
+  onSeek: (secs: number) => void;
 }
 
 /** Index of the last line at or before `positionMs`; -1 before the first. */
@@ -32,7 +36,15 @@ function currentLineIndex(doc: LyricsDoc, positionMs: number): number {
   return idx;
 }
 
-export function Stage({ track, artwork, lyrics, analyser, positionMs }: StageProps) {
+export function Stage({
+  track,
+  artwork,
+  lyrics,
+  analyser,
+  positionMs,
+  duration,
+  onSeek,
+}: StageProps) {
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState(-1);
@@ -145,6 +157,22 @@ export function Stage({ track, artwork, lyrics, analyser, positionMs }: StagePro
       </div>
 
       <div className="stage-lighting">
+        {/* stopPropagation: rapid slider clicks must not hit the
+            app-level double-click that exits Stage. */}
+        <div className="stage-seek" onDoubleClick={(e) => e.stopPropagation()}>
+          <span className="time">{formatTime(positionMs / 1000)}</span>
+          <input
+            type="range"
+            min={0}
+            max={Number.isFinite(duration) ? duration : 0}
+            step={0.1}
+            value={Math.min(positionMs / 1000, Number.isFinite(duration) ? duration : 0)}
+            disabled={!Number.isFinite(duration)}
+            onChange={(e) => onSeek(Number(e.target.value))}
+            aria-label="Seek"
+          />
+          <span className="time">{formatTime(Number.isFinite(duration) ? duration : null)}</span>
+        </div>
         <Spectrum analyser={analyser} mirror />
       </div>
 
