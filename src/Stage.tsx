@@ -29,6 +29,7 @@ import { seekMax, seekShown } from "./seekbar";
 import { NextIcon, PauseIcon, PlayIcon, PrevIcon, RepeatIcon, ShuffleIcon } from "./icons";
 import { currentLineIndex, lyricClock, wordProgress } from "./lyrictime";
 import { Spectrum } from "./Spectrum";
+import { shouldKeepDrawing } from "./vizidle";
 
 interface StageProps {
   track: TrackRow;
@@ -102,6 +103,11 @@ export function Stage({
 
   // Beat drive: bass (kick) pulses the art, highs shimmer the lighting.
   // Fast attack / slow release so hits punch and glow decays musically.
+  // Paused audio decays to silence; once the smoothed pulses settle the
+  // loop stops scheduling frames (vizidle) and the paused-flip below
+  // restarts it on resume.
+  const beatPausedRef = useRef(paused);
+  const beatResumeRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !analyser) return;
@@ -111,16 +117,29 @@ export function Stage({
     const highs = new Smoother(0.82);
     let raf = 0;
     const tick = () => {
-      raf = requestAnimationFrame(tick);
       analyser.getFloatFrequencyData(data);
       const b = bass.push(bandEnergy(data, binHz, 30, 150));
       const h = highs.push(bandEnergy(data, binHz, 4000, 16000));
       stage.style.setProperty("--bass", b.toFixed(3));
       stage.style.setProperty("--highs", h.toFixed(3));
+      raf = shouldKeepDrawing(beatPausedRef.current, Math.max(b, h))
+        ? requestAnimationFrame(tick)
+        : 0;
+    };
+    beatResumeRef.current = () => {
+      if (raf === 0) tick(); // guard: never stack a second loop
     };
     tick();
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      beatResumeRef.current = null;
+    };
   }, [analyser]);
+
+  useEffect(() => {
+    beatPausedRef.current = paused;
+    if (!paused) beatResumeRef.current?.();
+  }, [paused]);
 
   // Gel change-over on track change. No usable color (grayscale cover,
   // no artwork) → drop the overrides so the CSS house gels apply: that
@@ -382,7 +401,7 @@ export function Stage({
       </div>
 
       <div className="stage-lighting">
-        <Spectrum analyser={analyser} mirror />
+        <Spectrum analyser={analyser} paused={paused} mirror />
       </div>
 
       <div className={`stage-offset-hud ${offsetHud ? "" : "hidden"}`}>
