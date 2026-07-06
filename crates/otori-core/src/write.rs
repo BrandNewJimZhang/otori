@@ -341,6 +341,80 @@ pub fn undo(conn: &mut Connection, tx_id: i64) -> Result<(), WriteError> {
     Ok(())
 }
 
+/// Embed the track's resolved artwork (sidecar or folder cover) into
+/// the audio file itself. A real file write → full L2: first-touch
+/// snapshot, journal (undo removes the picture; the source image stays
+/// on disk as the fallback). Refuses when a picture is already
+/// embedded (replacement = undo/remove first, then re-embed) and when
+/// there is nothing to embed.
+pub fn embed_artwork(
+    conn: &mut Connection,
+    path: &Path,
+    actor: Actor<'_>,
+) -> Result<i64, WriteError> {
+    let path_str = path.to_string_lossy().into_owned();
+    let track_id = find_track(conn, &path_str)?;
+
+    let art = crate::artwork::resolve(path)?;
+    let art = match art {
+        Some(a) if a.source == "embedded" => {
+            return Err(WriteError::UnknownField(
+                "a picture is already embedded; undo the embed or strip it first".to_string(),
+            ))
+        }
+        Some(a) => a,
+        None => {
+            return Err(WriteError::UnknownField(
+                "no artwork to embed (no sidecar image, no folder cover)".to_string(),
+            ))
+        }
+    };
+
+    let tx = conn.transaction().map_err(WriteError::Db)?;
+
+    // First touch: same immutable snapshot rule as tag writes.
+    let original = crate::read_track_tags(path)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO first_touch_snapshots (track_id, snapshot, captured_at)
+         VALUES (?1, ?2, datetime('now'))",
+        params![track_id, serde_json::to_string(&original).unwrap()],
+    )?;
+    tx.execute(
+        "INSERT INTO transactions (actor, started_at) VALUES (?1, datetime('now'))",
+        [actor.label()],
+    )?;
+    let tx_id = tx.last_insert_rowid();
+
+    // Disk first: failure rolls back snapshot + journal together.
+    let tagged = lofty::read_from_path(path)?;
+    let mut tag = tagged
+        .primary_tag()
+        .or_else(|| tagged.first_tag())
+        .cloned()
+        .unwrap_or_else(|| Tag::new(tagged.primary_tag_type()));
+    let mime = match art.mime.as_str() {
+        "image/png" => lofty::picture::MimeType::Png,
+        "image/webp" => lofty::picture::MimeType::Unknown("image/webp".to_string()),
+        _ => lofty::picture::MimeType::Jpeg,
+    };
+    let picture = lofty::picture::Picture::unchecked(art.data)
+        .pic_type(lofty::picture::PictureType::CoverFront)
+        .mime_type(mime)
+        .build();
+    tag.push_picture(picture);
+    tag.save_to_path(path, WriteOptions::default())?;
+
+    // Journal: old = no picture, new = picture from this source. The
+    // journal stores provenance, not bytes — undo means "remove".
+    tx.execute(
+        "INSERT INTO tx_changes (tx_id, track_id, field, old_value, old_source, old_curated, new_value, new_source)
+         VALUES (?1, ?2, 'picture', NULL, NULL, 0, ?3, ?4)",
+        params![tx_id, track_id, art.source, actor.source()],
+    )?;
+    tx.commit()?;
+    Ok(tx_id)
+}
+
 /// The onboarding oath: mark existing values as curated so past labor
 /// is protected before any agent touches the library. `path = None`
 /// curates the whole library. Returns how many fields were protected.
@@ -389,6 +463,21 @@ fn write_fields_to_file<'a>(
             ("artist", None) => tag.remove_artist(),
             ("album", Some(v)) => tag.set_album(v.to_string()),
             ("album", None) => tag.remove_album(),
+            // Undo of embed_artwork. The journal cannot hold image bytes,
+            // so only removal is expressible — which is exactly what
+            // undoing an embed means (the sidecar the image came from is
+            // kept on disk; the chain falls back to it).
+            ("picture", None) => {
+                while !tag.pictures().is_empty() {
+                    tag.remove_picture(0);
+                }
+            }
+            ("picture", Some(_)) => {
+                return Err(WriteError::UnknownField(
+                    "picture cannot be restored from the journal; re-embed from the sidecar"
+                        .to_string(),
+                ))
+            }
             (other, _) => return Err(WriteError::UnknownField(other.to_string())),
         }
     }
