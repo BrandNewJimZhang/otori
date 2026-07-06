@@ -29,10 +29,18 @@ pub struct ScanReport {
     pub unreadable: Vec<String>,
 }
 
-/// Scan `root` recursively into the library database.
+/// Scan `root` recursively into the library database, remembering the
+/// root so `rescan_all` (launch / manual refresh) can re-walk it.
 pub fn scan(conn: &mut Connection, root: &Path) -> rusqlite::Result<ScanReport> {
     let mut report = ScanReport::default();
     let tx = conn.transaction()?;
+
+    tx.execute(
+        "INSERT INTO scan_roots (root, first_scanned, last_scanned)
+         VALUES (?1, datetime('now'), datetime('now'))
+         ON CONFLICT (root) DO UPDATE SET last_scanned = datetime('now')",
+        [root.to_string_lossy()],
+    )?;
 
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         if !entry.file_type().is_file() {
@@ -115,6 +123,53 @@ pub fn scan(conn: &mut Connection, root: &Path) -> rusqlite::Result<ScanReport> 
 
     tx.commit()?;
     Ok(report)
+}
+
+/// Re-walk every recorded scan root (rescan-on-launch / manual refresh).
+/// No roots recorded — e.g. a library from before scan_roots existed —
+/// is a valid empty state, not an error; the report is simply empty.
+pub fn rescan_all(conn: &mut Connection) -> rusqlite::Result<ScanReport> {
+    let roots: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT root FROM scan_roots ORDER BY root")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let mut total = ScanReport::default();
+    for root in roots {
+        let report = scan(conn, Path::new(&root))?;
+        total.added += report.added;
+        total.updated += report.updated;
+        total.skipped_icloud.extend(report.skipped_icloud);
+        total.unreadable.extend(report.unreadable);
+    }
+    Ok(total)
+}
+
+/// Fill duration for indexed tracks that predate schema v3 (duration
+/// column) — pre-v4 libraries also lack scan_roots, so rescan_all
+/// cannot reach them. Reads each file directly; vanished or unreadable
+/// files are skipped (paths dying is normal, not index corruption).
+/// Returns how many rows were filled.
+pub fn backfill_durations(conn: &mut Connection) -> rusqlite::Result<u64> {
+    let candidates: Vec<(i64, String)> = {
+        let mut stmt =
+            conn.prepare("SELECT id, path FROM tracks WHERE duration_secs IS NULL")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let tx = conn.transaction()?;
+    let mut filled = 0u64;
+    for (id, path) in candidates {
+        if let Ok(scanned) = read_file(Path::new(&path)) {
+            tx.execute(
+                "UPDATE tracks SET duration_secs = ?1 WHERE id = ?2",
+                rusqlite::params![scanned.duration_secs, id],
+            )?;
+            filled += 1;
+        }
+    }
+    tx.commit()?;
+    Ok(filled)
 }
 
 fn has_audio_extension(name: &str) -> bool {

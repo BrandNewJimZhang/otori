@@ -52,7 +52,8 @@ pub fn run() {
             let path = db::default_path()?;
             let conn = db::open(&path)?;
             app.manage(Library(Mutex::new(conn)));
-            spawn_library_watcher(app.handle().clone(), path);
+            spawn_library_watcher(app.handle().clone(), path.clone());
+            spawn_launch_rescan(app.handle().clone(), path);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -63,6 +64,36 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Rescan-on-launch (PRODUCT.md: rescan-on-launch + manual refresh
+/// instead of FSEvents watching). Runs on its own connection off the
+/// main thread so startup never blocks on a large library walk; the
+/// data_version watcher turns its commit into `library-changed`, so
+/// the UI refreshes through the same path as any external writer.
+/// Backfills duration_secs for pre-v3 libraries as a side effect.
+fn spawn_launch_rescan(app: tauri::AppHandle, db_path: std::path::PathBuf) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        let Ok(mut conn) = db::open(&db_path) else {
+            eprintln!("launch rescan: cannot open {}", db_path.display());
+            return;
+        };
+        match scan::rescan_all(&mut conn) {
+            // No-commit outcomes (empty roots / nothing changed) still
+            // notify: a pre-v4 library has no roots recorded yet, and
+            // the UI treats the event as a cheap refresh either way.
+            Ok(_) => {
+                // Pre-v4 libraries have no roots, so the rescan can't
+                // reach their NULL durations — fill them directly.
+                if let Err(e) = scan::backfill_durations(&mut conn) {
+                    eprintln!("duration backfill failed: {e}");
+                }
+                let _ = app.emit("library-changed", ());
+            }
+            Err(e) => eprintln!("launch rescan failed: {e}"),
+        }
+    });
 }
 
 /// L5 coexistence, shell side: when an agent edits the library from the
