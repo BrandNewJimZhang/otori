@@ -77,3 +77,60 @@ pub fn resolve(audio: &Path) -> Result<Option<Artwork>, lofty::error::LoftyError
 
     Ok(None)
 }
+
+/// Read pixel dimensions from image header bytes (PNG IHDR, JPEG SOFn,
+/// WebP VP8/VP8L/VP8X). `None` for unrecognized or truncated data —
+/// callers treat that as "cannot verify", not as an error.
+/// Header-only parsing: no decoder dependency for a size check.
+pub fn probe_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    // PNG: 8-byte signature, IHDR fixed at offset 16 (width) / 20 (height).
+    if data.starts_with(&[0x89, b'P', b'N', b'G']) && data.len() >= 24 {
+        let width = u32::from_be_bytes(data[16..20].try_into().ok()?);
+        let height = u32::from_be_bytes(data[20..24].try_into().ok()?);
+        return Some((width, height));
+    }
+    // JPEG: walk markers to the first SOFn (C0-CF minus C4/C8/CC).
+    if data.starts_with(&[0xFF, 0xD8]) {
+        let mut i = 2;
+        while i + 9 <= data.len() {
+            if data[i] != 0xFF {
+                return None; // marker desync
+            }
+            let marker = data[i + 1];
+            if matches!(marker, 0xC0..=0xCF) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+                let height = u32::from(u16::from_be_bytes([data[i + 5], data[i + 6]]));
+                let width = u32::from(u16::from_be_bytes([data[i + 7], data[i + 8]]));
+                return Some((width, height));
+            }
+            if marker == 0xD9 {
+                return None; // EOI before any SOF
+            }
+            let len = usize::from(u16::from_be_bytes([data[i + 2], data[i + 3]]));
+            i += 2 + len;
+        }
+        return None;
+    }
+    // WebP: RIFF container, then VP8X (extended) / VP8L (lossless) / VP8 (lossy).
+    if data.len() >= 30 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        match &data[12..16] {
+            b"VP8X" => {
+                let w = 1 + u32::from_le_bytes([data[24], data[25], data[26], 0]);
+                let h = 1 + u32::from_le_bytes([data[27], data[28], data[29], 0]);
+                return Some((w, h));
+            }
+            b"VP8L" if data.len() >= 25 => {
+                let bits = u32::from_le_bytes(data[21..25].try_into().ok()?);
+                let w = (bits & 0x3FFF) + 1;
+                let h = ((bits >> 14) & 0x3FFF) + 1;
+                return Some((w, h));
+            }
+            b"VP8 " if data.len() >= 30 => {
+                let w = u32::from(u16::from_le_bytes([data[26], data[27]]) & 0x3FFF);
+                let h = u32::from(u16::from_le_bytes([data[28], data[29]]) & 0x3FFF);
+                return Some((w, h));
+            }
+            _ => return None,
+        }
+    }
+    None
+}

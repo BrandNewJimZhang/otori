@@ -8,6 +8,7 @@
 use serde::Serialize;
 
 pub mod artwork;
+pub mod backup;
 pub mod db;
 pub mod lyrics;
 pub mod query;

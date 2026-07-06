@@ -100,6 +100,35 @@ printf '[00:01.00]Line one\n' > "$TD/song.lrc"
 "$OTORI" lyrics "$TD/song.mp3" --json | jq -e '.kind == "line_synced" and .source == "sidecar"' >/dev/null \
   || fail "lyrics shape wrong"
 
+step "apply created an auto-backup (trust layer is protected)"
+BACKUPS=$(ls "$TD"/backups/library-*.db 2>/dev/null | wc -l | tr -d ' ')
+[ "$BACKUPS" -ge 1 ] || fail "no auto-backup found after --apply"
+
+step "manual backup works and refuses to overwrite"
+"$OTORI" --db "$DB" backup "$TD/manual-backup.db" --json | jq -e '.bytes > 0' >/dev/null \
+  || fail "manual backup failed"
+set +e
+"$OTORI" --db "$DB" backup "$TD/manual-backup.db" 2>/dev/null
+CODE=$?
+set -e
+[ "$CODE" = "4" ] || fail "backup overwrite exit $CODE, expected 4 (refusal)"
+
+step "artwork enforces the resolution floor (exit 2 below min-size)"
+python3 - "$TD" <<'EOF'
+import struct, sys
+h = '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c62000100000500010d0a2db40000000049454e44ae426082'
+png = bytearray(bytes.fromhex(h))
+png[16:20] = struct.pack('>I', 1200); png[20:24] = struct.pack('>I', 1200)
+open(f"{sys.argv[1]}/song.png", "wb").write(bytes(png))
+EOF
+"$OTORI" artwork "$TD/song.mp3" --json | jq -e '.below_min_size == false and .width == 1200' >/dev/null \
+  || fail "artwork floor check wrong for good jacket"
+set +e
+"$OTORI" artwork "$TD/song.mp3" --min-size 2000 >/dev/null
+CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "below-floor artwork exit $CODE, expected 2"
+
 step "bad input exits 3 with structured error"
 set +e
 ERR=$("$OTORI" --db "$DB" scan /nonexistent 2>&1 >/dev/null)

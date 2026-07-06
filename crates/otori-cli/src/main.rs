@@ -52,6 +52,17 @@ enum Command {
         /// Write the image bytes to this file (otherwise report only)
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Minimum acceptable dimension in px (exit 2 below; jackets
+        /// for the Stage need at least this on the shorter side)
+        #[arg(long, default_value_t = 500)]
+        min_size: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Snapshot the library db (provenance/journal are not rebuildable)
+    Backup {
+        /// Destination file (default: timestamped name next to the db)
+        dest: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -227,7 +238,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Command::Artwork { path, out, json } => {
+        Command::Artwork { path, out, min_size, json } => {
             if !path.is_file() {
                 return Err(CliError::bad_input(format!(
                     "not a file: {}",
@@ -238,6 +249,14 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             match art {
                 Some(art) => {
+                    let dims = otori_core::artwork::probe_dimensions(&art.data);
+                    // Quality floor: a low-res jacket on the Stage is worse
+                    // than none. Unknown dimensions count as below-floor —
+                    // the agent must deliver something verifiable.
+                    let below_floor = match dims {
+                        Some((w, h)) => w.min(h) < min_size,
+                        None => true,
+                    };
                     if let Some(out) = &out {
                         std::fs::write(out, &art.data).map_err(|e| {
                             CliError::bad_input(format!("cannot write {}: {e}", out.display()))
@@ -250,11 +269,24 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                                 "source": art.source,
                                 "mime": art.mime,
                                 "bytes": art.data.len(),
+                                "width": dims.map(|d| d.0),
+                                "height": dims.map(|d| d.1),
+                                "below_min_size": below_floor,
+                                "min_size": min_size,
                                 "written_to": out,
                             })
                         );
                     } else {
-                        println!("{} ({}, {} bytes)", art.source, art.mime, art.data.len());
+                        let size = dims
+                            .map(|(w, h)| format!("{w}x{h}"))
+                            .unwrap_or_else(|| "unknown size".to_string());
+                        println!("{} ({}, {}, {} bytes)", art.source, art.mime, size, art.data.len());
+                        if below_floor {
+                            println!("WARNING: below the {min_size}px floor — replace with a larger jacket");
+                        }
+                    }
+                    if below_floor {
+                        return Ok(ExitCode::from(EXIT_PARTIAL));
                     }
                     Ok(ExitCode::SUCCESS)
                 }
@@ -267,6 +299,35 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                     Ok(ExitCode::SUCCESS)
                 }
             }
+        }
+        Command::Backup { dest, json } => {
+            let db_path = match &cli.db {
+                Some(p) => p.clone(),
+                None => otori_core::db::default_path().map_err(CliError::library)?,
+            };
+            let conn = otori_core::db::open(&db_path).map_err(CliError::library)?;
+            let dest = match dest {
+                Some(d) => d,
+                None => {
+                    let dir = db_path
+                        .parent()
+                        .ok_or_else(|| CliError::bad_input("db path has no parent directory"))?
+                        .join("backups");
+                    otori_core::backup::default_backup_path(&dir)
+                        .map_err(CliError::library)?
+                }
+            };
+            otori_core::backup::backup(&conn, &dest).map_err(CliError::library)?;
+            let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "backup": dest, "bytes": size })
+                );
+            } else {
+                println!("backed up to {} ({size} bytes)", dest.display());
+            }
+            Ok(ExitCode::SUCCESS)
         }
         Command::Set { path, title, artist, album, apply, agent, override_curated, json } => {
             use otori_core::write::{Actor, FieldChange, PlanOutcome};
@@ -284,12 +345,15 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 Some(id) => Actor::Agent { id },
                 None => Actor::Human { via: "cli" },
             };
-            let mut conn = open_library(cli.db)?;
+            let mut conn = open_library(cli.db.clone())?;
 
             let plan =
                 otori_core::write::plan_set(&mut conn, &path, &changes, actor, override_curated)
                     .map_err(|e| CliError::bad_input(e.to_string()))?;
             let tx_id = if apply && plan.outcome() == PlanOutcome::Changes {
+                // Safety net before any destructive write: the trust layer
+                // (provenance/journal) lives only in this db.
+                auto_backup(&cli.db)?;
                 otori_core::write::apply_set(&mut conn, &path, &changes, actor, override_curated)
                     .map_err(CliError::library)?
             } else {
@@ -352,7 +416,9 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Undo { tx_id } => {
-            let mut conn = open_library(cli.db)?;
+            let mut conn = open_library(cli.db.clone())?;
+            // Undo rewrites files and the trust layer — same safety net.
+            auto_backup(&cli.db)?;
             otori_core::write::undo(&mut conn, tx_id)
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             println!("transaction {tx_id} rolled back");
@@ -437,4 +503,21 @@ fn open_library(db: Option<PathBuf>) -> Result<otori_core::Connection, CliError>
         None => otori_core::db::default_path().map_err(CliError::library)?,
     };
     otori_core::db::open(&path).map_err(CliError::library)
+}
+
+/// Pre-destructive-write safety net: timestamped snapshot into
+/// `<db-dir>/backups/`, keeping the newest few. Failure aborts the
+/// write — no backup, no mutation.
+fn auto_backup(db: &Option<PathBuf>) -> Result<(), CliError> {
+    let db_path = match db {
+        Some(p) => p.clone(),
+        None => otori_core::db::default_path().map_err(CliError::library)?,
+    };
+    let conn = otori_core::db::open(&db_path).map_err(CliError::library)?;
+    let dir = db_path
+        .parent()
+        .ok_or_else(|| CliError::bad_input("db path has no parent directory"))?
+        .join("backups");
+    otori_core::backup::auto_backup(&conn, &dir).map_err(CliError::library)?;
+    Ok(())
 }
