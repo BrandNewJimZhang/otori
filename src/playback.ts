@@ -1,14 +1,30 @@
 // Playback engine behind an interface (ADR-0001 §5): the MVP engine is
-// the WebView <audio> element + Web Audio AnalyserNode. If WKWebView's
-// format ceiling (FLAC) or gapless playback forces a native engine
+// WebView <audio> elements + Web Audio. If WKWebView's format ceiling
+// (FLAC) or true sample-level gapless forces a native engine
 // (symphonia + cpal), only this file changes — UI code never touches
 // the engine directly.
+//
+// Two-deck architecture: each track plays on a Deck (audio element +
+// gain node). The next track preloads on the idle deck and starts the
+// moment the current one ends — near-gapless (the seam is one event
+// loop turn, not a src-swap + network + decode). The deck graph is
+// also the substrate crossfade needs: two simultaneously audible
+// sources with independent gains.
 
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { effectiveGain } from "./gain";
+
+export interface TrackSource {
+  path: string;
+  /** ReplayGain track gain in dB; null = no data, play at unity. */
+  replaygainDb: number | null;
+}
 
 export interface PlaybackEngine {
   /** Start playing a local file; resolves when playback begins. */
-  play(path: string): Promise<void>;
+  play(source: TrackSource): Promise<void>;
+  /** Preload a track on the idle deck for gapless handoff; null clears. */
+  preloadNext(source: TrackSource | null): void;
   togglePause(): void;
   seek(secs: number): void;
   readonly paused: boolean;
@@ -20,29 +36,52 @@ export interface PlaybackEngine {
   volume: number;
   /** Analyser for visualizers; null until first play(). */
   readonly analyser: AnalyserNode | null;
-  onEnded(cb: () => void): void;
+  /** Fires when a track ends. If the ended track was gaplessly handed
+      off to the preloaded one, `advancedTo` carries its path. */
+  onEnded(cb: (advancedTo: string | null) => void): void;
   onError(cb: (message: string) => void): void;
   /** ~4Hz progress ticks while playing (media timeupdate cadence). */
   onTimeUpdate(cb: (secs: number) => void): void;
 }
 
-class AudioElementEngine implements PlaybackEngine {
-  private audio = new Audio();
+/** One audio element + its gain node, addressable inside the graph. */
+interface Deck {
+  audio: HTMLAudioElement;
+  gain: GainNode | null;
+  /** What's loaded (or loading) on this deck. */
+  source: TrackSource | null;
+}
+
+class TwoDeckEngine implements PlaybackEngine {
+  private decks: [Deck, Deck];
+  private active = 0;
   private ctx: AudioContext | null = null;
   private analyserNode: AnalyserNode | null = null;
-  private gainNode: GainNode | null = null;
   private volumeValue = 1;
-  private endedCb: (() => void) | null = null;
+  /** Source queued for gapless handoff (loaded on the idle deck). */
+  private next: TrackSource | null = null;
+  private endedCb: ((advancedTo: string | null) => void) | null = null;
   private errorCb: ((message: string) => void) | null = null;
   private timeCb: ((secs: number) => void) | null = null;
 
   constructor() {
-    this.audio.addEventListener("ended", () => this.endedCb?.());
-    this.audio.addEventListener("timeupdate", () =>
-      this.timeCb?.(this.audio.currentTime),
-    );
-    this.audio.addEventListener("error", () => {
-      const err = this.audio.error;
+    this.decks = [this.makeDeck(0), this.makeDeck(1)];
+  }
+
+  private makeDeck(index: number): Deck {
+    const deck: Deck = { audio: new Audio(), gain: null, source: null };
+    deck.audio.preload = "auto";
+    deck.audio.addEventListener("ended", () => {
+      if (this.deckIndex(deck) !== this.active) return;
+      const advanced = this.tryGaplessAdvance();
+      this.endedCb?.(advanced);
+    });
+    deck.audio.addEventListener("timeupdate", () => {
+      if (this.deckIndex(deck) === this.active) this.timeCb?.(deck.audio.currentTime);
+    });
+    deck.audio.addEventListener("error", () => {
+      if (this.deckIndex(deck) !== this.active) return; // preload errors surface on switch
+      const err = deck.audio.error;
       // MEDIA_ERR_SRC_NOT_SUPPORTED (4) is the WKWebView format ceiling.
       const message =
         err?.code === 4
@@ -50,52 +89,128 @@ class AudioElementEngine implements PlaybackEngine {
           : `Playback error (code ${err?.code ?? "?"})`;
       this.errorCb?.(message);
     });
+    void index;
+    return deck;
   }
 
-  async play(path: string): Promise<void> {
-    // AudioContext must be created after a user gesture; first play() is one.
-    if (!this.ctx) {
-      this.ctx = new AudioContext();
-      const source = this.ctx.createMediaElementSource(this.audio);
-      this.analyserNode = this.ctx.createAnalyser();
-      this.analyserNode.fftSize = 4096; // ~10.8Hz/bin at 44.1kHz — enough lows for log binning
-      this.analyserNode.smoothingTimeConstant = 0.75;
+  private deckIndex(deck: Deck): number {
+    return this.decks[0] === deck ? 0 : 1;
+  }
+
+  private get activeDeck(): Deck {
+    return this.decks[this.active];
+  }
+
+  private get idleDeck(): Deck {
+    return this.decks[1 - this.active];
+  }
+
+  /** Build the Web Audio graph once (requires a user gesture). */
+  private ensureGraph(): void {
+    if (this.ctx) return;
+    this.ctx = new AudioContext();
+    this.analyserNode = this.ctx.createAnalyser();
+    this.analyserNode.fftSize = 4096; // ~10.8Hz/bin at 44.1kHz — enough lows for log binning
+    this.analyserNode.smoothingTimeConstant = 0.75;
+    this.analyserNode.connect(this.ctx.destination);
+    for (const deck of this.decks) {
+      const source = this.ctx.createMediaElementSource(deck.audio);
       // WebKit ignores HTMLMediaElement.volume once the element is routed
-      // through Web Audio — a GainNode is the authoritative volume control.
-      this.gainNode = this.ctx.createGain();
-      this.gainNode.gain.value = this.volumeValue;
-      source.connect(this.analyserNode);
-      this.analyserNode.connect(this.gainNode);
-      this.gainNode.connect(this.ctx.destination);
+      // through Web Audio — per-deck GainNodes are the authoritative
+      // volume control (user volume × ReplayGain).
+      deck.gain = this.ctx.createGain();
+      source.connect(deck.gain);
+      deck.gain.connect(this.analyserNode);
     }
-    if (this.ctx.state === "suspended") await this.ctx.resume();
-    this.audio.src = convertFileSrc(path);
-    await this.audio.play();
+  }
+
+  private applyGain(deck: Deck): void {
+    if (deck.gain) {
+      deck.gain.gain.value = effectiveGain(deck.source?.replaygainDb ?? null, this.volumeValue);
+    }
+  }
+
+  /** Hand off to the preloaded deck if it holds the queued track and is
+      ready to start without a fetch/decode stall. */
+  private tryGaplessAdvance(): string | null {
+    const idle = this.idleDeck;
+    if (!this.next || idle.source?.path !== this.next.path) return null;
+    // HAVE_FUTURE_DATA(3)+: enough buffered to start immediately.
+    if (idle.audio.readyState < 3) return null;
+    this.active = 1 - this.active;
+    this.next = null;
+    this.applyGain(idle);
+    void idle.audio.play().catch((e) => this.errorCb?.(String(e)));
+    return idle.source.path;
+  }
+
+  async play(source: TrackSource): Promise<void> {
+    this.ensureGraph();
+    if (this.ctx!.state === "suspended") await this.ctx!.resume();
+
+    const idle = this.idleDeck;
+    // Reuse the preload if it's already sitting on the idle deck.
+    if (idle.source?.path !== source.path) {
+      idle.audio.src = convertFileSrc(source.path);
+      idle.source = source;
+    }
+    // Stop the old deck only after the new one is ready to sound —
+    // play() resolving is the cleanest "it started" signal.
+    const previous = this.activeDeck;
+    this.active = 1 - this.active;
+    this.applyGain(idle);
+    try {
+      await idle.audio.play();
+    } catch (e) {
+      this.active = 1 - this.active; // roll back; previous deck still owns playback
+      throw e;
+    }
+    previous.audio.pause();
+    previous.audio.removeAttribute("src");
+    previous.source = null;
+    this.next = null;
+  }
+
+  preloadNext(source: TrackSource | null): void {
+    this.next = source;
+    const idle = this.idleDeck;
+    if (!source) {
+      if (idle.source) {
+        idle.audio.removeAttribute("src");
+        idle.source = null;
+      }
+      return;
+    }
+    if (idle.source?.path === source.path) return;
+    idle.audio.src = convertFileSrc(source.path);
+    idle.source = source;
+    idle.audio.load();
   }
 
   togglePause(): void {
-    if (this.audio.paused) void this.audio.play();
-    else this.audio.pause();
+    const { audio } = this.activeDeck;
+    if (audio.paused) void audio.play();
+    else audio.pause();
   }
 
   seek(secs: number): void {
-    this.audio.currentTime = secs;
+    this.activeDeck.audio.currentTime = secs;
   }
 
   get paused(): boolean {
-    return this.audio.paused;
+    return this.activeDeck.audio.paused;
   }
 
   get positionMs(): number {
-    return this.audio.currentTime * 1000;
+    return this.activeDeck.audio.currentTime * 1000;
   }
 
   get currentTime(): number {
-    return this.audio.currentTime;
+    return this.activeDeck.audio.currentTime;
   }
 
   get duration(): number {
-    return this.audio.duration;
+    return this.activeDeck.audio.duration;
   }
 
   get volume(): number {
@@ -104,14 +219,14 @@ class AudioElementEngine implements PlaybackEngine {
 
   set volume(v: number) {
     this.volumeValue = v;
-    if (this.gainNode) this.gainNode.gain.value = v;
+    for (const deck of this.decks) this.applyGain(deck);
   }
 
   get analyser(): AnalyserNode | null {
     return this.analyserNode;
   }
 
-  onEnded(cb: () => void): void {
+  onEnded(cb: (advancedTo: string | null) => void): void {
     this.endedCb = cb;
   }
 
@@ -125,5 +240,5 @@ class AudioElementEngine implements PlaybackEngine {
 }
 
 export function createEngine(): PlaybackEngine {
-  return new AudioElementEngine();
+  return new TwoDeckEngine();
 }

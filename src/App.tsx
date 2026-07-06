@@ -105,7 +105,7 @@ function App() {
     async (track: TrackRow) => {
       setError(null);
       try {
-        await engine.play(track.path);
+        await engine.play({ path: track.path, replaygainDb: track.replaygain_db });
         setCurrent(track);
         setPaused(false);
         setPosition(0);
@@ -133,8 +133,26 @@ function App() {
     [play],
   );
 
+  // Keep the idle deck preloaded with the next visible track (gapless).
   useEffect(() => {
-    engine.onEnded(() => {
+    const idx = visible.findIndex((t) => t.id === current?.id);
+    const next = idx >= 0 ? visible[idx + 1] : undefined;
+    engine.preloadNext(next ? { path: next.path, replaygainDb: next.replaygain_db } : null);
+  }, [engine, visible, current]);
+
+  useEffect(() => {
+    engine.onEnded((advancedTo) => {
+      if (advancedTo) {
+        // Engine already handed off gaplessly — sync UI state to it.
+        const track = visibleRef.current.find((t) => t.path === advancedTo);
+        if (track) {
+          setCurrent(track);
+          setPosition(0);
+          getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
+          getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
+          return;
+        }
+      }
       if (!step(1)) setPaused(true);
     });
     engine.onError(setError);

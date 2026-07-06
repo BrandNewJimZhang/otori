@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -25,6 +25,7 @@ CREATE TABLE tracks (
     file_hash    TEXT,             -- move/exact-dup detection, NOT format linking
     format       TEXT NOT NULL,
     duration_secs REAL,            -- file property, no provenance; refreshed each scan
+    replaygain_db REAL,            -- RG track gain in dB; file property like duration
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
     first_seen   TEXT NOT NULL,
@@ -155,6 +156,12 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
             );",
         )?;
         conn.pragma_update(None, "user_version", 4)?;
+    }
+    if (1..=4).contains(&version) {
+        // v5: ReplayGain track gain for loudness normalization;
+        // backfilled by the next scan like duration was in v3.
+        conn.execute_batch("ALTER TABLE tracks ADD COLUMN replaygain_db REAL;")?;
+        conn.pragma_update(None, "user_version", 5)?;
     }
     Ok(conn)
 }

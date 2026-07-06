@@ -100,11 +100,11 @@ pub fn scan(conn: &mut Connection, root: &Path) -> rusqlite::Result<ScanReport> 
 
         match read_file(path) {
             Ok(scanned) => {
-                // Duration is a file property, not a tag: no provenance,
-                // refreshed on every scan.
+                // Duration and ReplayGain are file properties, not tags:
+                // no provenance, refreshed on every scan.
                 tx.execute(
-                    "UPDATE tracks SET duration_secs = ?1 WHERE id = ?2",
-                    rusqlite::params![scanned.duration_secs, track_id],
+                    "UPDATE tracks SET duration_secs = ?1, replaygain_db = ?2 WHERE id = ?3",
+                    rusqlite::params![scanned.duration_secs, scanned.replaygain_db, track_id],
                 )?;
                 for (field, value) in scanned.fields {
                     // Scan never overwrites: only fills fields the index
@@ -177,16 +177,21 @@ fn has_audio_extension(name: &str) -> bool {
         .is_some_and(|(_, ext)| AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
 }
 
-/// What one file yields at scan time: duration plus readable tag fields.
+/// What one file yields at scan time: file properties plus readable
+/// tag fields.
 struct ScannedFile {
     duration_secs: f64,
+    /// ReplayGain track gain in dB, parsed from "-7.25 dB" style tags.
+    replaygain_db: Option<f64>,
     fields: Vec<(&'static str, String)>,
 }
 
 fn read_file(path: &Path) -> Result<ScannedFile, lofty::error::LoftyError> {
+    use lofty::tag::ItemKey;
     let tagged = lofty::read_from_path(path)?;
     let duration_secs = tagged.properties().duration().as_secs_f64();
     let mut fields = Vec::new();
+    let mut replaygain_db = None;
     if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
         if let Some(v) = tag.title() {
             fields.push(("title", v.into_owned()));
@@ -197,6 +202,21 @@ fn read_file(path: &Path) -> Result<ScannedFile, lofty::error::LoftyError> {
         if let Some(v) = tag.album() {
             fields.push(("album", v.into_owned()));
         }
+        replaygain_db = tag
+            .get_string(ItemKey::ReplayGainTrackGain)
+            .and_then(parse_replaygain_db);
     }
-    Ok(ScannedFile { duration_secs, fields })
+    Ok(ScannedFile { duration_secs, replaygain_db, fields })
+}
+
+/// "−7.25 dB" / "-7.25dB" / "-7.25" → dB value. Unparseable → None:
+/// a malformed tag is missing data, not a 0 dB adjustment.
+fn parse_replaygain_db(raw: &str) -> Option<f64> {
+    raw.trim()
+        .trim_end_matches("dB")
+        .trim_end_matches("DB")
+        .trim()
+        .replace('\u{2212}', "-") // typographic minus, seen in the wild
+        .parse()
+        .ok()
 }
