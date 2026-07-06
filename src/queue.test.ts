@@ -2,7 +2,7 @@
 // preempts the play order. Pure functions, App owns the state.
 
 import { describe, expect, it } from "vitest";
-import { dequeue, enqueueNext, queueRemove } from "./queue";
+import { dequeue, enqueueNext, queueMove, queueRemove } from "./queue";
 
 describe("enqueueNext", () => {
   it("adds ids at the front, preserving the picked order", () => {
@@ -28,5 +28,21 @@ describe("dequeue", () => {
 describe("queueRemove", () => {
   it("drops ids that left the library or were unqueued", () => {
     expect(queueRemove([1, 2, 3], new Set([2]))).toEqual([1, 3]);
+  });
+});
+
+describe("queueMove", () => {
+  it("moves an id up and down one slot (audit r5: queue panel reorder)", () => {
+    expect(queueMove([1, 2, 3], 2, -1)).toEqual([2, 1, 3]);
+    expect(queueMove([1, 2, 3], 2, 1)).toEqual([1, 3, 2]);
+  });
+
+  it("clamps at the edges", () => {
+    expect(queueMove([1, 2, 3], 1, -1)).toEqual([1, 2, 3]);
+    expect(queueMove([1, 2, 3], 3, 1)).toEqual([1, 2, 3]);
+  });
+
+  it("is a no-op for ids not in the queue", () => {
+    expect(queueMove([1, 2], 9, 1)).toEqual([1, 2]);
   });
 });

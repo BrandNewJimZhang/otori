@@ -34,7 +34,8 @@ import {
   type SortSpec,
 } from "./library";
 import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
-import { dequeue, enqueueNext } from "./queue";
+import { dequeue, enqueueNext, queueMove, queueRemove } from "./queue";
+import { QueuePanel } from "./QueuePanel";
 import { escapeIntent, routeKey, type KeyZone } from "./uikeys";
 import { seekMax, seekShown, sliderFill } from "./seekbar";
 import {
@@ -45,6 +46,7 @@ import {
   PauseIcon,
   PlayIcon,
   PrevIcon,
+  QueueIcon,
   RepeatIcon,
   ShuffleIcon,
   StageIcon,
@@ -113,6 +115,9 @@ function App() {
   const [scrub, setScrub] = useState<number | null>(null);
   // Play-next queue (audit P1): explicit picks preempt the play order.
   const [queue, setQueue] = useState<number[]>([]);
+  // Up-next panel (audit r5 P0): queue + order preview, toggled from
+  // the player bar.
+  const [queueOpen, setQueueOpen] = useState(false);
   const engine = useMemo(createEngine, []);
   const searchRef = useRef<HTMLInputElement>(null);
   // Shuffle order is frozen when shuffle turns on (or a track starts
@@ -130,6 +135,31 @@ function App() {
     () => new Map(queue.map((id, i) => [id, i + 1])),
     [queue],
   );
+  // Up-next panel data: queued rows in order, then where the play
+  // order continues after the queue drains (short preview).
+  const queueTracks = useMemo(() => {
+    const byId = new Map(visible.map((t) => [t.id, t]));
+    return queue.map((id) => byId.get(id)).filter((t): t is TrackRow => t != null);
+  }, [queue, visible]);
+  const upcoming = useMemo(() => {
+    if (!queueOpen) return []; // panel closed: skip the walk
+    const visibleIds = visible.map((t) => t.id);
+    const order = shuffle ? effectiveOrder(visibleIds, shuffleOrderRef.current) : visibleIds;
+    const queued = new Set(queue);
+    const out: TrackRow[] = [];
+    let cursor = current?.id ?? null;
+    for (let i = 0; i < 5; i++) {
+      const id = nextId(order, cursor, 1, repeat === "one" ? "all" : repeat, true);
+      if (id == null || id === current?.id) break;
+      cursor = id;
+      if (queued.has(id)) continue; // already shown in the queue section
+      const track = visible.find((t) => t.id === id);
+      if (!track) break;
+      if (out.some((t) => t.id === id)) break; // repeat-all wrapped around
+      out.push(track);
+    }
+    return out;
+  }, [queueOpen, visible, current, shuffle, repeat, queue]);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const currentRef = useRef(current);
@@ -1063,6 +1093,17 @@ function App() {
           />
         </div>
 
+        <button
+          className={`icon-btn queue-toggle ${queueOpen ? "on" : ""}`}
+          onClick={() => setQueueOpen((v) => !v)}
+          aria-label="Play queue"
+          aria-pressed={queueOpen}
+          data-tip={queue.length > 0 ? `Up next (${queue.length} queued)` : "Up next"}
+        >
+          <QueueIcon />
+          {queue.length > 0 && <span className="queue-count">{queue.length}</span>}
+        </button>
+
         <div className="mix-cluster">
           <button
             className={`crossfade-toggle ${crossfadeSec ? "on" : ""}`}
@@ -1112,6 +1153,21 @@ function App() {
 
         <Spectrum analyser={engine.analyser} paused={paused} />
       </footer>
+
+      {queueOpen && (
+        <QueuePanel
+          queueTracks={queueTracks}
+          upcoming={upcoming}
+          onPlay={(t) => {
+            setQueue((q) => q.filter((id) => id !== t.id));
+            void play(t);
+          }}
+          onMove={(id, offset) => setQueue((q) => queueMove(q, id, offset))}
+          onRemove={(id) => setQueue((q) => queueRemove(q, new Set([id])))}
+          onClear={() => setQueue([])}
+          onClose={() => setQueueOpen(false)}
+        />
+      )}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 

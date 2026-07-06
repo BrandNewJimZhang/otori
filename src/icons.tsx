@@ -168,3 +168,18 @@ export function AutoThemeIcon() {
     </svg>
   );
 }
+
+/** Up-next queue toggle: a list with a play wedge on the top row. */
+export function QueueIcon() {
+  return (
+    <svg {...P}>
+      <path d="M4 6.5 9 9.25 4 12V6.5z" />
+      <path
+        d="M12 8h8M4 14.5h16M4 19h16"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

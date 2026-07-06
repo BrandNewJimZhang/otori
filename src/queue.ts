@@ -20,3 +20,15 @@ export function dequeue(queue: number[]): { id: number | null; rest: number[] } 
 export function queueRemove(queue: number[], ids: ReadonlySet<number>): number[] {
   return queue.filter((id) => !ids.has(id));
 }
+
+/** Move `id` one slot up (-1) or down (+1); clamped, unknown ids no-op.
+    Single-slot steps are all the queue panel's arrows need (audit r5). */
+export function queueMove(queue: number[], id: number, offset: 1 | -1): number[] {
+  const from = queue.indexOf(id);
+  const to = from + offset;
+  if (from < 0 || to < 0 || to >= queue.length) return queue;
+  const next = [...queue];
+  next[from] = next[to];
+  next[to] = id;
+  return next;
+}
