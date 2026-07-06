@@ -6,6 +6,8 @@ import { useEffect, useRef } from "react";
 export interface MenuItem {
   label: string;
   action(): void;
+  /** Draw a group separator above this item (audit r5 P1). */
+  separator?: boolean;
 }
 
 interface Props {
@@ -71,16 +73,17 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
   return (
     <div className="context-menu" ref={ref} style={style} role="menu">
       {items.map((item) => (
-        <button
-          key={item.label}
-          role="menuitem"
-          onClick={() => {
-            item.action();
-            onClose();
-          }}
-        >
-          {item.label}
-        </button>
+        <div key={item.label} className={item.separator ? "menu-group" : undefined}>
+          <button
+            role="menuitem"
+            onClick={() => {
+              item.action();
+              onClose();
+            }}
+          >
+            {item.label}
+          </button>
+        </div>
       ))}
     </div>
   );

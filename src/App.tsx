@@ -13,6 +13,8 @@ import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { LibraryTable, type ColumnWidths } from "./LibraryTable";
+import { ToastStack } from "./ToastStack";
+import { dismissToast, pushToast, type Toast } from "./toasts";
 import { formatTime } from "./format";
 import {
   clickSelect,
@@ -51,7 +53,7 @@ import { headMixPoint, tailMixPoint } from "./beatservice";
 import { startAnalysisSweep } from "./analysissweep";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
-import type { LyricsDoc, ScanReport, TrackRow } from "./types";
+import type { LyricsDoc, TrackRow } from "./types";
 import "./App.css";
 
 // Volume/sort survive restarts (window size: tauri-plugin-window-state
@@ -77,8 +79,13 @@ function App() {
   const [artwork, setArtwork] = useState<string | null>(null);
   const [paused, setPaused] = useState(true);
   const [scanning, setScanning] = useState(false);
-  const [report, setReport] = useState<ScanReport | null>(null);
+  // Toast stack (audit r5 P1): scan reports and transient info; the
+  // error keeps its own slot (persistent until dismissed).
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastSeq = useRef(0);
   const [error, setError] = useState<string | null>(null);
+  // Drag-over scan affordance (audit r5 P1): full-window drop zone.
+  const [dragOver, setDragOver] = useState(false);
   const [position, setPosition] = useState(0);
   const [volume, setVolume] = useState(initialPrefs.volume);
   const [shuffle, setShuffle] = useState(initialPrefs.shuffle);
@@ -86,6 +93,9 @@ function App() {
   const [theme, setTheme] = useState<Theme>(initialPrefs.theme);
   const [fullscreen, setFullscreen] = useState(false);
   const [crossfadeSec, setCrossfadeSec] = useState(initialPrefs.crossfadeSec);
+  // MIX popover (audit r5 P1): the wheel-to-adjust gesture was
+  // undiscoverable; right-click opens an explicit slider.
+  const [mixPopover, setMixPopover] = useState(false);
   const [density, setDensity] = useState<Density>(initialPrefs.density);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(initialPrefs.columnWidths);
   const [muted, setMuted] = useState(false);
@@ -635,6 +645,23 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [togglePause, play, step, engine, mode, nudgeLyrics]);
 
+  // MIX popover dismissal: any click outside the cluster, or Escape.
+  useEffect(() => {
+    if (!mixPopover) return;
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest(".mix-cluster")) setMixPopover(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMixPopover(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [mixPopover]);
+
   async function pickAndScan() {
     const dir = await openDialog({ directory: true });
     if (typeof dir !== "string") return;
@@ -644,9 +671,12 @@ function App() {
   async function scanDir(dir: string) {
     setScanning(true);
     setError(null);
-    setReport(null);
     try {
-      setReport(await scanLibrary(dir));
+      const report = await scanLibrary(dir);
+      const parts = [`Added ${report.added}, updated ${report.updated}`];
+      if (report.skipped_icloud.length > 0) parts.push(`${report.skipped_icloud.length} in iCloud`);
+      if (report.unreadable.length > 0) parts.push(`${report.unreadable.length} unreadable`);
+      setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text: parts.join(" · ") }));
       refresh();
     } catch (e) {
       setError(String(e));
@@ -658,24 +688,24 @@ function App() {
   // Drag a folder anywhere onto the window to scan it (audit P1).
   // Tauri delivers native file drops as events (webview drag data has
   // no paths); scanning is idempotent, so over-triggering is safe.
+  // enter/over light the drop-zone overlay (audit r5 P1: the feature
+  // was invisible without an affordance).
   useEffect(() => {
     const win = getCurrentWindow();
     const unlisten = win.onDragDropEvent((e) => {
-      if (e.payload.type === "drop" && e.payload.paths.length > 0) {
-        void scanDir(e.payload.paths[0]);
+      if (e.payload.type === "drop") {
+        setDragOver(false);
+        if (e.payload.paths.length > 0) void scanDir(e.payload.paths[0]);
+      } else if (e.payload.type === "leave") {
+        setDragOver(false);
+      } else {
+        setDragOver(true); // enter + over
       }
     });
     return () => {
       unlisten.then((off) => off());
     };
   }, []);
-
-  // The scan report is a toast, not a status line: linger, then leave.
-  useEffect(() => {
-    if (!report) return;
-    const t = window.setTimeout(() => setReport(null), 8000);
-    return () => window.clearTimeout(t);
-  }, [report]);
 
   const menuItems: MenuItem[] = useMemo(() => {
     if (!menu || menu.targets.length === 0) return [];
@@ -697,12 +727,14 @@ function App() {
         queueItem,
         {
           label: "Reveal in Finder",
+          separator: true,
           action: () => void revealItemInDir(first.path).catch((e) => setError(String(e))),
         },
         {
           // user-select:none is deliberate app chrome (P3): copying
           // metadata goes through the menu instead of text selection.
           label: "Copy title – artist",
+          separator: true,
           action: () =>
             void navigator.clipboard
               .writeText(`${displayTitle(first)} – ${first.artist ?? ""}`.trim())
@@ -720,6 +752,7 @@ function App() {
       queueItem,
       {
         label: `Copy ${menu.targets.length} paths`,
+        separator: true,
         action: () => void navigator.clipboard.writeText(paths).catch(() => {}),
       },
     ];
@@ -771,6 +804,12 @@ function App() {
           onToggleShuffle={toggleShuffle}
           onCycleRepeat={() => setRepeat(cycleRepeat)}
         />
+        <ToastStack
+          toasts={toasts}
+          error={error}
+          onDismiss={(id) => setToasts((ts) => dismissToast(ts, id))}
+          onDismissError={() => setError(null)}
+        />
       </div>
     );
   }
@@ -815,13 +854,6 @@ function App() {
         <span className="track-count">
           {query ? `${visible.length} / ${tracks.length} tracks` : `${tracks.length} tracks`}
         </span>
-        {report && !scanning && (
-          <span className="scan-report">
-            Added {report.added}, updated {report.updated}
-            {report.skipped_icloud.length > 0 && ` · ${report.skipped_icloud.length} in iCloud`}
-            {report.unreadable.length > 0 && ` · ${report.unreadable.length} unreadable`}
-          </span>
-        )}
         <span className="mode-hint">
           {current ? "S → Stage · Space → play/pause" : ""}
         </span>
@@ -853,15 +885,6 @@ function App() {
       </header>
 
       {scanning && <div className="scan-progress" role="progressbar" aria-label="Scanning" />}
-
-      {error && (
-        <div className="error-bar">
-          <span>{error}</span>
-          <button className="error-dismiss" onClick={() => setError(null)} aria-label="Dismiss">
-            ×
-          </button>
-        </div>
-      )}
 
       <main className={`library density-${density}`}>
         {tracks.length === 0 ? (
@@ -1020,29 +1043,70 @@ function App() {
           />
         </div>
 
-        <button
-          className={`crossfade-toggle ${crossfadeSec ? "on" : ""}`}
-          onClick={() => setCrossfadeSec((s) => (s ? 0 : 8))}
-          onWheel={(e) => {
-            // Wheel adjusts the fade length 2–16s while enabled.
-            setCrossfadeSec((s) =>
-              s ? Math.max(2, Math.min(16, s + (e.deltaY < 0 ? 1 : -1))) : s,
-            );
-          }}
-          title={
-            crossfadeSec
-              ? `DJ crossfade: ${crossfadeSec}s (scroll to adjust; beat-matched when tempos allow)`
-              : "DJ crossfade: off (gapless)"
-          }
-          aria-pressed={crossfadeSec > 0}
-        >
-          MIX{crossfadeSec ? ` ${crossfadeSec}s` : ""}
-        </button>
+        <div className="mix-cluster">
+          <button
+            className={`crossfade-toggle ${crossfadeSec ? "on" : ""}`}
+            onClick={() => setCrossfadeSec((s) => (s ? 0 : 8))}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMixPopover((v) => !v);
+            }}
+            onWheel={(e) => {
+              // Wheel adjusts the fade length 2–16s while enabled.
+              setCrossfadeSec((s) =>
+                s ? Math.max(2, Math.min(16, s + (e.deltaY < 0 ? 1 : -1))) : s,
+              );
+            }}
+            title={
+              crossfadeSec
+                ? `DJ crossfade: ${crossfadeSec}s (right-click or scroll to adjust; beat-matched when tempos allow)`
+                : "DJ crossfade: off (gapless) — right-click to configure"
+            }
+            aria-pressed={crossfadeSec > 0}
+          >
+            MIX{crossfadeSec ? ` ${crossfadeSec}s` : ""}
+          </button>
+          {mixPopover && (
+            <div className="mix-popover">
+              <label>
+                Crossfade {crossfadeSec ? `${crossfadeSec}s` : "off"}
+                <input
+                  type="range"
+                  min={0}
+                  max={16}
+                  step={1}
+                  value={crossfadeSec}
+                  style={{ "--fill": sliderFill(crossfadeSec, 16) } as React.CSSProperties}
+                  onChange={(e) => {
+                    // 0 disables; 1 rounds up to the 2s floor.
+                    const v = Number(e.target.value);
+                    setCrossfadeSec(v === 1 ? 2 : v);
+                  }}
+                  aria-label="Crossfade length"
+                />
+              </label>
+              <span className="mix-popover-hint">beat-matched when tempos allow</span>
+            </div>
+          )}
+        </div>
 
         <Spectrum analyser={engine.analyser} paused={paused} />
       </footer>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+
+      <ToastStack
+        toasts={toasts}
+        error={error}
+        onDismiss={(id) => setToasts((ts) => dismissToast(ts, id))}
+        onDismissError={() => setError(null)}
+      />
+
+      {dragOver && (
+        <div className="drop-zone" aria-hidden="true">
+          <div className="drop-zone-label">Drop a folder to scan it</div>
+        </div>
+      )}
     </div>
   );
 }
