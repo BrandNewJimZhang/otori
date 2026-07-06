@@ -8,8 +8,9 @@
 // with the kick, with zero React re-renders on the audio path.
 //
 // Gel lighting: the cover picks the rig's colors (--gel-floor/--gel-top),
-// extracted once per track. Colors are static; only intensity moves,
-// and it keeps moving on the --bass/--highs path above.
+// extracted once per track. Colors are static; position drifts on the
+// CSS clock (.stage-gels blobs), and intensity keeps moving on the
+// --bass/--highs path above.
 
 import { useEffect, useRef, useState } from "react";
 import type { LyricsDoc, TrackRow } from "./types";
@@ -137,6 +138,23 @@ export function Stage({
 
   return (
     <div className="stage" ref={stageRef}>
+      {/* Full-bleed gel wash: two floor + two top blobs drifting on
+          eased X/Y tracks (see .stage-gels in App.css). Order matters:
+          App.css anchors by :nth-child — floor low, top high. */}
+      <div className="stage-gels" aria-hidden="true">
+        <div className="gel-x">
+          <div className="gel-blob floor" />
+        </div>
+        <div className="gel-x">
+          <div className="gel-blob floor" />
+        </div>
+        <div className="gel-x">
+          <div className="gel-blob top" />
+        </div>
+        <div className="gel-x">
+          <div className="gel-blob top" />
+        </div>
+      </div>
       <div className="stage-main">
         <div className="stage-art-wrap">
           <div className="stage-art-pulse">
