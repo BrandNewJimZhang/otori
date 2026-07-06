@@ -191,3 +191,79 @@ fn cover_url_is_derived_from_album_id() {
         "https://vocadb.net/Album/CoverPicture/36044"
     );
 }
+
+// ---- jacket priority: self-titled single > (game jacket, external) >
+// ---- studio/compilation (founding-user decision 2026-07-07) ----
+
+#[test]
+fn self_titled_single_beats_earlier_studio_album() {
+    // VocaDB lists the studio album first; the self-titled single must
+    // still win (real shape: ボッカデラベリタ — ヘイトフル vs single).
+    let json = r#"{
+      "items": [
+        { "id": 279848, "name": "ボッカデラベリタ",
+          "artistString": "柊キライ feat. v4 flower",
+          "albums": [
+            { "id": 28598, "name": "ヘイトフル", "discType": "Album" },
+            { "id": 29053, "name": "ボッカデラベリタ", "discType": "Single" }
+          ] }
+      ]
+    }"#;
+    let hit = vocadb::pick_match(json, "ボッカデラベリタ", Some("柊キライ"))
+        .unwrap()
+        .expect("must match");
+    assert_eq!(hit.album_id, Some(29053));
+    assert!(hit.album_is_self_titled);
+}
+
+#[test]
+fn self_titled_non_single_still_counts_as_self_titled() {
+    let json = r#"{
+      "items": [
+        { "id": 1, "name": "T", "artistString": "A",
+          "albums": [
+            { "id": 10, "name": "Some Compilation", "discType": "Compilation" },
+            { "id": 11, "name": "T", "discType": "EP" }
+          ] }
+      ]
+    }"#;
+    let hit = vocadb::pick_match(json, "T", Some("A")).unwrap().unwrap();
+    assert_eq!(hit.album_id, Some(11));
+    assert!(hit.album_is_self_titled);
+}
+
+#[test]
+fn no_self_titled_album_is_flagged_as_fallback_tier() {
+    let json = r#"{
+      "items": [
+        { "id": 1, "name": "T", "artistString": "A",
+          "albums": [ { "id": 10, "name": "Greatest Hits", "discType": "Album" } ] }
+      ]
+    }"#;
+    let hit = vocadb::pick_match(json, "T", Some("A")).unwrap().unwrap();
+    assert_eq!(hit.album_id, Some(10));
+    assert!(!hit.album_is_self_titled, "caller must gate delivery on this");
+}
+
+#[test]
+fn primary_name_beats_alias_only_rerecord() {
+    // Real shape (アマツキツネ): the 10th-anniversary re-record carries
+    // the plain title as an alias and shares the artist. The original
+    // (primary display name == title) must win, not trip ambiguity.
+    let json = r#"{
+      "items": [
+        { "id": 15691, "name": "アマツキツネ",
+          "artistString": "まらしぃ feat. 鏡音リン Append (Power)",
+          "albums": [{ "id": 1722, "name": "V25 Desire", "discType": "Compilation" }] },
+        { "id": 480265, "name": "アマツキツネ (10th Anniversary Ver.)",
+          "artistString": "まらしぃ, kemu, びび feat. 鏡音リン V4X (Power)",
+          "albums": [{ "id": 36044, "name": "アマツキツネ 10th Anniversary", "discType": "Album" }],
+          "names": [{ "value": "アマツキツネ" }] }
+      ]
+    }"#;
+    let hit = vocadb::pick_match(json, "アマツキツネ", Some("まらしぃ feat. 鏡音リン"))
+        .unwrap()
+        .expect("original must win over alias-only re-record");
+    assert_eq!(hit.song_id, 15691);
+    assert!(!hit.album_is_self_titled, "compilation → fallback tier");
+}

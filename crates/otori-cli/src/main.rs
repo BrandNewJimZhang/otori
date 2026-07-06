@@ -75,6 +75,11 @@ enum Command {
         /// Resolution floor in px (shorter side)
         #[arg(long, default_value_t = 500)]
         min_size: u32,
+        /// Accept a studio/compilation album cover when no self-titled
+        /// single exists (jacket priority: self-titled single > rhythm
+        /// game jacket via wiki > this fallback)
+        #[arg(long)]
+        allow_album_cover: bool,
         #[arg(long)]
         json: bool,
     },
@@ -341,7 +346,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Command::Jacket { path, apply, min_size, json } => {
+        Command::Jacket { path, apply, min_size, allow_album_cover, json } => {
             if !path.is_file() {
                 return Err(CliError::bad_input(format!(
                     "not a file: {}",
@@ -386,6 +391,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                         serde_json::json!({
                             "matched": true, "song_id": m.song_id,
                             "album_id": null,
+                            "next": "rhythm-game wiki (maimai, then プロセカ), see AGENTS.md",
                         })
                     );
                 } else {
@@ -393,6 +399,37 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                         "matched song {} ({}) but it has no album with cover art",
                         m.song_id, m.song_name
                     );
+                    println!("next: rhythm-game wiki jacket (maimai, then プロセカ) — see AGENTS.md");
+                }
+                return Ok(ExitCode::from(EXIT_PARTIAL));
+            };
+
+            // Jacket priority (founding-user, 2026-07-07): self-titled
+            // single auto-delivers; a studio/compilation cover is the
+            // LAST resort — behind the rhythm-game wiki tier, which
+            // lives outside this provider. Require explicit opt-in.
+            if !m.album_is_self_titled && !allow_album_cover {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "matched": true, "song_id": m.song_id,
+                            "album_id": album_id, "album_name": m.album_name,
+                            "album_is_self_titled": false,
+                            "applied": false,
+                            "next": "try the rhythm-game wiki first (maimai, then プロセカ); \
+                                     re-run with --allow-album-cover to accept this album cover",
+                        })
+                    );
+                } else {
+                    println!(
+                        "no self-titled single; nearest album: {} (id {album_id})",
+                        m.album_name.as_deref().unwrap_or("?")
+                    );
+                    println!(
+                        "jacket priority: try the rhythm-game wiki first (maimai, then プロセカ);"
+                    );
+                    println!("re-run with --allow-album-cover to accept this album cover");
                 }
                 return Ok(ExitCode::from(EXIT_PARTIAL));
             };

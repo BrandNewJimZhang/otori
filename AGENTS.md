@@ -128,13 +128,20 @@ needed. Wrong image? Delete the sidecar; the chain falls back.
 | anything unlisted | search "<game> wiki <song title>"; wikiwiki.jp hosts many JP game wikis |
 
 Rules of engagement: match by exact song title AND artist (rhythm
-games love same-name covers); **the resolution floor is 500px on the
-shorter side** — after saving a sidecar, run
+games love same-name covers); **jacket priority** (founding-user,
+2026-07-07): ① self-titled single cover (album name == song title —
+`otori jacket` auto-delivers these) → ② the jacket of the rhythm game
+that includes it, in order **maimai, then プロセカ** → ③ studio/
+compilation album cover, only as last resort
+(`otori jacket --allow-album-cover`); **the resolution floor is 500px
+on the shorter side** — after saving a sidecar, run
 `otori artwork <file> --json` and treat `below_min_size: true`
 (exit 2) as failure: find a larger image or report the gap, never
-leave a low-res jacket in place; **do not trust wiki API size
-claims** — Fandom `pageimages&pithumbsize=1400` reports the requested
-thumb size, not the original's (field-verified: three "1400px" images
+leave a low-res jacket in place; **exception: SilentBlue.RED serves
+400px maximum and is specially authorized** — verify those with
+`--min-size 400` and accept; **do not trust wiki API size claims** —
+Fandom `pageimages&pithumbsize=1400` reports the requested thumb
+size, not the original's (field-verified: three "1400px" images
 delivered at 314–369px; the floor caught all three) — the local
 verify step is the only truth; when the wiki shows several versions
 (original vs game edit), pick the one matching the track's `[…]`
