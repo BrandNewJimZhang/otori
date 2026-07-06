@@ -83,6 +83,34 @@ otori journal --json                                     # what happened before 
 The index SQLite schema is readable directly (read-only!) at the
 `--db` path; writes go through the CLI only.
 
+## Canonical workflow: auditing existing artwork
+
+Existing covers (and even album tags) may be wrong — hand-placed
+years ago or shipped wrong with the file. The trust hierarchy for
+auditing: **title + artist are the identity anchor** (owner-verified
+per track); the album tag is a *claim* to verify against external
+DBs; the cover is verified against the *verified* album — never
+validate one unknown with another.
+
+```bash
+# Layer 1 — mechanical screen (local, no network):
+python3 scripts/audit_artwork.py
+# Flags: A same-image-across-albums, B album-with-multiple-images,
+# C non-square, D below-floor. Not every flag is an error — e.g. an
+# original vs its game-edit version legitimately differ; a same-titled
+# single vs game jacket legitimately differ. The report at
+# /tmp/artwork_audit.jsonl feeds layer 2.
+
+# Layer 2 — semantic review (agent): for each flagged group, resolve
+# the song by title+artist on VocaDB/TouhouDB/wiki, get its real album
+# list and official jackets, then judge: album tag right? cover right?
+# Report three-state per track: confirmed-ok / wrong (with correct
+# source) / unsure. NEVER auto-fix — layer 3 is the human.
+```
+
+Delivery of accepted fixes: replace the sidecar, `otori undo` the old
+embed if any, `otori embed-artwork --apply` — every step journaled.
+
 ## Canonical workflow: fetching jackets
 
 The library's text tags are complete; the recurring agent job is
