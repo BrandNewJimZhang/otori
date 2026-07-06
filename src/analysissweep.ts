@@ -9,11 +9,19 @@ import { analyzeTrack } from "./beatservice";
 import { listAnalysisPending, setBpm, setMixAnchors } from "./ipc";
 import type { MixAnchor } from "./beatgrid";
 
-/** Pause between tracks: keep the decode work invisible next to
-    playback and UI (one full-track decode ≈ hundreds of ms; spacing
-    matters more than speed — 1200 tracks still finish within a
-    session). */
+/** Floor between tracks: even instant work never runs back-to-back. */
 const PACE_MS = 3000;
+/** Duty-cycle cap: sweep work stays ≤10% of wall time. A full-track
+    decode costs 190-550ms of WebView CPU (measured on the real
+    library; the DSP itself is ~6ms) — a fixed pause lets a run of
+    heavy files stack into a felt load. */
+const DUTY_CYCLE = 0.1;
+
+/** Sleep after a track that took `workMs`: the base pace, stretched
+    so work/(work+sleep) ≤ DUTY_CYCLE for expensive decodes. */
+export function paceDelayMs(workMs: number): number {
+  return Math.max(PACE_MS, Math.round((workMs * (1 - DUTY_CYCLE)) / DUTY_CYCLE));
+}
 
 let running = false;
 
@@ -29,6 +37,7 @@ export function startAnalysisSweep(): void {
     try {
       const pending = await listAnalysisPending();
       for (const track of pending) {
+        const started = performance.now();
         const { tempo, anchors } = await analyzeTrack(track.path, track.hint_bpm);
         // Persist even nulls (beatless / unstable ends): "analyzed,
         // nothing usable" must not be re-attempted every launch. IPC
@@ -49,7 +58,7 @@ export function startAnalysisSweep(): void {
         }
         // Anchors keep full precision: beat phase feeds sample math.
         await setMixAnchors(track.id, anchorArg(anchors.head), anchorArg(anchors.tail));
-        await sleep(PACE_MS);
+        await sleep(paceDelayMs(performance.now() - started));
       }
     } catch {
       // Sweep is an enhancement; next launch (or next library-changed)
