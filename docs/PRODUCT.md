@@ -25,12 +25,15 @@ The founding user's library is the reference workload:
   No online database knows this scheme. Any "normalize against
   MusicBrainz" pass that steamrolls it would destroy years of work.
 - **ACG/doujin long tail**: BMS contest entries, Touhou arranges,
-  M3/Reitaisai releases. MusicBrainz coverage is weak here; VGMdb is
-  the right source. Agents must be humble: ask when unsure, never
+  M3/Reitaisai releases. MusicBrainz coverage is weak here; the
+  VocaDB-family databases are the right sources (see Metadata
+  providers). Agents must be humble: ask when unsure, never
   guess-and-write.
-- Library lives in **iCloud Drive**: files can be evicted to
-  placeholders. Scanning must never trigger a mass download; evicted
-  files are recognized and reported, not fetched.
+- Library lives in **iCloud Drive**. Defensive detail only, not a
+  feature: scan skips `.icloud` placeholder files and reports them
+  honestly (tags are unreadable without content; no "smart" handling,
+  and never a mass download). Currently 0 evicted files in the
+  reference library.
 - The user already writes shell scripts (`cover.sh`, `m4a_to_mp3.sh`)
   for library chores — exactly the repetitive labor Ōtori's CLI
   replaces with a supported surface.
@@ -105,6 +108,11 @@ Swinsian's aesthetic is a spreadsheet; listening deserves a stage.
   director's desk. Information density wins.
 - **Stage**: large art, live spectrum (lighting), synced lyrics
   (subtitles), minimal chrome — the performance. Immersion wins.
+  - The spectrum is a **real-time bouncing bar analyzer tuned for
+    electronic music** (the library is 400+ rhythm-game/hardcore
+    tracks): log-frequency binning so kick/bass gets visual weight,
+    dB scaling with a dynamic range that makes drops hit, peak-hold
+    caps for percussive afterglow, 60fps canvas.
 - One keystroke switches modes. Managing feels like Swinsian; pressing
   play starts a show.
 - Visual identity: four accent colors (orange/pink/green/purple) map
@@ -128,6 +136,22 @@ complete experience:
 Source priority: embedded tags → sidecar files → online providers
 (pluggable; provider choice is a later decision). Fetched lyrics are
 written as sidecars with provenance `agent`, never silently embedded.
+
+## Metadata providers
+
+Agent tag-fixing runs against a source matrix ordered by fit for this
+library, not by general popularity:
+
+1. **VocaDB** (Vocaloid: producer/vocalist/original-song relations,
+   public REST API)
+2. **TouhouDB** (Touhou arranges, including which ZUN original a track
+   arranges — same open-source platform as VocaDB)
+3. **VGMdb** (doujin albums, M3/Reitaisai/BMS releases)
+4. **MusicBrainz** (fallback for everything else)
+
+Provider answers are suggestions, never authority: they fill empty
+fields and propose corrections through the L2 dry-run diff, and they
+never touch curated fields.
 
 ## Competitive gap
 
