@@ -6,7 +6,9 @@ use otori_core::db;
 fn v10_reopens_detections_made_by_the_narrow_window_detector() {
     // A v9 library with a detected value (produced by the 70-180
     // detector, possibly octave-halved). Rolling user_version back to
-    // 9 and reopening runs the v10 migration.
+    // 9 and reopening runs the v10 migration. A real v9 library has no
+    // mix-anchor or lyrics_offset_ms columns yet — drop them so the
+    // replayed v11/v12 migrations see a physically v9-shaped schema.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("lib.db");
     {
@@ -16,13 +18,15 @@ fn v10_reopens_detections_made_by_the_narrow_window_detector() {
                  bpm, bpm_confidence, bpm_source, bpm_analyzed_at)
              VALUES ('/a.mp3', 'mp3', datetime('now'), datetime('now'),
                  87.0, 0.8, 'detected', datetime('now'));
-             -- A real v9 library predates the v11 mix-anchor columns;
-             -- drop them so the replayed migrations can re-add them.
+             -- A real v9 library predates the v11 mix-anchor and v12
+             -- lyrics-offset columns; drop them so the replayed
+             -- migrations can re-add them.
              ALTER TABLE tracks DROP COLUMN mix_head_bpm;
              ALTER TABLE tracks DROP COLUMN mix_head_beat_sec;
              ALTER TABLE tracks DROP COLUMN mix_tail_bpm;
              ALTER TABLE tracks DROP COLUMN mix_tail_beat_sec;
-             ALTER TABLE tracks DROP COLUMN mix_analyzed_at;",
+             ALTER TABLE tracks DROP COLUMN mix_analyzed_at;
+             ALTER TABLE tracks DROP COLUMN lyrics_offset_ms;",
         )
         .unwrap();
         conn.pragma_update(None, "user_version", 9).unwrap();
