@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <!-- Brand: phoenix cyan #24C8DB + phoenix gold #FFC131 -->
+    <radialGradient id="glowCyan" cx="18%" cy="82%" r="60%">
+      <stop offset="0%" stop-color="#24C8DB" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#24C8DB" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowGold" cx="88%" cy="14%" r="55%">
+      <stop offset="0%" stop-color="#FFC131" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FFC131" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rule" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#24C8DB"/>
+      <stop offset="100%" stop-color="#FFC131"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="#0b0c10"/>
+  <rect width="1280" height="640" fill="url(#glowCyan)"/>
+  <rect width="1280" height="640" fill="url(#glowGold)"/>
+
+  <!-- logo -->
+  <image xlink:href="logo.png" x="120" y="212" width="216" height="216"/>
+
+  <!-- wordmark + taglines -->
+  <text x="392" y="300" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="132" font-weight="700" fill="#f4f4f5" letter-spacing="-2">Ōtori</text>
+  <text x="396" y="366" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="34" font-weight="500" fill="#c8c9cf">The final stop for your local music files.</text>
+  <text x="396" y="420" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="26" font-weight="400" fill="#7f818b" letter-spacing="2">Organize &#183; Enjoy &#183; Delegate</text>
+
+  <!-- brand rule -->
+  <rect x="396" y="452" width="300" height="5" rx="2.5" fill="url(#rule)"/>
+</svg>
