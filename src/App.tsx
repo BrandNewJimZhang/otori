@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, getLyrics, listTracks, scanLibrary, updateTray } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary, setDisplayAwake, updateTray } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
@@ -279,6 +279,16 @@ function App() {
   useEffect(() => {
     transitionArmed.current = null;
   }, [current]);
+
+  // Stage is a performance surface: keep the display awake while it
+  // plays; release on pause, on leaving Stage, and on unmount.
+  useEffect(() => {
+    const awake = mode === "stage" && !paused;
+    setDisplayAwake(awake).catch(() => {}); // cosmetic failure, never fatal
+    return () => {
+      if (awake) setDisplayAwake(false).catch(() => {});
+    };
+  }, [mode, paused]);
 
   useEffect(() => {
     engine.onEnded((advancedTo) => {

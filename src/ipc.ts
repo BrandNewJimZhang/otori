@@ -29,3 +29,8 @@ export function getArtwork(path: string): Promise<string | null> {
 export function updateTray(title: string | null, paused: boolean): Promise<void> {
   return invoke<void>("update_tray", { title, paused });
 }
+
+/** Hold/release the display-sleep assertion (Stage mode playing). */
+export function setDisplayAwake(awake: boolean): Promise<void> {
+  return invoke<void>("set_display_awake", { awake });
+}

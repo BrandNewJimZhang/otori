@@ -24,6 +24,33 @@ struct Tray {
     next: MenuItem<tauri::Wry>,
 }
 
+/// Display-sleep blocker: a `caffeinate -d` child (macOS-native, no
+/// dependency) held while Stage mode plays. Dropping/killing the child
+/// releases the assertion; if Ōtori dies, the child dies with it.
+struct SleepBlocker(Mutex<Option<std::process::Child>>);
+
+/// Keep the display awake (Stage mode playing) or release it. Idempotent.
+#[tauri::command]
+fn set_display_awake(state: tauri::State<'_, SleepBlocker>, awake: bool) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    match (awake, guard.as_mut()) {
+        (true, None) => {
+            let child = std::process::Command::new("/usr/bin/caffeinate")
+                .arg("-d")
+                .spawn()
+                .map_err(|e| format!("caffeinate: {e}"))?;
+            *guard = Some(child);
+        }
+        (false, Some(child)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            *guard = None;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn scan_library(state: tauri::State<'_, Library>, dir: String) -> Result<scan::ScanReport, String> {
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
@@ -130,6 +157,7 @@ pub fn run() {
             let path = db::default_path()?;
             let conn = db::open(&path)?;
             app.manage(Library(Mutex::new(conn)));
+            app.manage(SleepBlocker(Mutex::new(None)));
             spawn_library_watcher(app.handle().clone(), path.clone());
             spawn_launch_rescan(app.handle().clone(), path);
             setup_tray(app)?;
@@ -140,7 +168,8 @@ pub fn run() {
             list_tracks,
             get_lyrics,
             get_artwork,
-            update_tray
+            update_tray,
+            set_display_awake
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
