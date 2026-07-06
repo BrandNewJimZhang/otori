@@ -188,3 +188,40 @@ fn unknown_track_fails_fast() {
     assert!(analysis::set_bpm(&conn, 9999, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.5 })).is_err());
     assert!(analysis::set_bpm_hint(&conn, 9999, 120.0, None, "tag").is_err());
 }
+
+#[test]
+fn hint_candidates_lists_tracks_worth_a_provider_lookup() {
+    let lib = tempfile::tempdir().unwrap();
+    write_minimal_mp3(&lib.path().join("blank.mp3"));
+    write_minimal_mp3(&lib.path().join("hinted.mp3"));
+    write_minimal_mp3(&lib.path().join("confident.mp3"));
+    write_minimal_mp3(&lib.path().join("shaky.mp3"));
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+    let id_of = |name: &str| -> i64 {
+        conn.query_row(
+            "SELECT id FROM tracks WHERE path LIKE ?1",
+            [format!("%{name}")],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+
+    // hinted: already has an anchor — not a candidate.
+    analysis::set_bpm_hint(&conn, id_of("hinted.mp3"), 174.0, None, "provider:vocadb").unwrap();
+    // confident: strong steady detection — not worth a lookup.
+    analysis::set_bpm(&conn, id_of("confident.mp3"), Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.9 })).unwrap();
+    // shaky: low confidence — candidate.
+    analysis::set_bpm(&conn, id_of("shaky.mp3"), Some(analysis::DetectedBpm { bpm: 87.0, bpm_max: None, confidence: 0.3 })).unwrap();
+    // blank: never analyzed (or beatless) — candidate.
+
+    let candidates = analysis::list_hint_candidates(&conn, 0.6).unwrap();
+    let paths: Vec<&str> = candidates
+        .iter()
+        .map(|c| c.path.rsplit('/').next().unwrap())
+        .collect();
+    assert!(paths.contains(&"blank.mp3"));
+    assert!(paths.contains(&"shaky.mp3"));
+    assert!(!paths.contains(&"hinted.mp3"));
+    assert!(!paths.contains(&"confident.mp3"));
+}
