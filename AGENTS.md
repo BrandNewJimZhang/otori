@@ -21,7 +21,10 @@ only agent surface; anything the GUI can do, you can do here.
    looks nonstandard but is intentional. Never "normalize" it.
 5. **Every `--apply` is undoable**: note the printed transaction id;
    `otori undo <txid>` rolls the whole batch back (file + index +
-   provenance).
+   provenance). Belt and suspenders: every `--apply` and `undo` also
+   snapshots the library db into `<db-dir>/backups/` first (newest
+   10 kept) — the trust layer is the one thing that cannot be rebuilt
+   from files, so it is backed up before anything touches it.
 
 ## Commands
 
@@ -31,7 +34,8 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori list [--json]` | List indexed tracks | ordered artist → title |
 | `otori tags <file>` | Read tags straight from a file | bypasses the index |
 | `otori lyrics <file> [--json]` | Lyrics: embedded tag, then sidecar `.lrc` | JSON includes sync kind (`word_synced`/`line_synced`/`static`) |
-| `otori artwork <file> [--out <img>] [--json]` | Locate cover art: embedded → sidecar image → folder cover | `--out` extracts the bytes |
+| `otori artwork <file> [--out <img>] [--min-size <px>] [--json]` | Locate cover art: embedded → sidecar image → folder cover | exit 2 if the shorter side is under `--min-size` (default 500px) or dimensions are unverifiable |
+| `otori backup [dest] [--json]` | Snapshot the library db | default: timestamped file in `<db-dir>/backups/`; never overwrites |
 | `otori set <file> --title/--artist/--album <v> [--agent <id>] [--apply] [--override-curated] [--json]` | Edit tags | dry-run without `--apply`; exit 2 when curated fields were skipped |
 | `otori curate <file>` / `otori curate --all` | Mark existing values as protected | the onboarding oath |
 | `otori undo <txid>` | Roll back an applied transaction | fails if already undone |
@@ -115,10 +119,14 @@ needed. Wrong image? Delete the sidecar; the chain falls back.
 | anything unlisted | search "<game> wiki <song title>"; wikiwiki.jp hosts many JP game wikis |
 
 Rules of engagement: match by exact song title AND artist (rhythm
-games love same-name covers); prefer the highest-resolution jacket
-the wiki offers; when the wiki shows several versions (original vs
-game edit), pick the one matching the track's `[…]` marker; **unsure
-= ask, never guess** — a wrong jacket on the Stage is worse than none.
+games love same-name covers); **the resolution floor is 500px on the
+shorter side** — after saving a sidecar, run
+`otori artwork <file> --json` and treat `below_min_size: true`
+(exit 2) as failure: find a larger image or report the gap, never
+leave a low-res jacket in place; when the wiki shows several versions
+(original vs game edit), pick the one matching the track's `[…]`
+marker; **unsure = ask, never guess** — a wrong jacket on the Stage
+is worse than none.
 
 ### Text-tag sources (structured APIs, for the non-game tiers)
 

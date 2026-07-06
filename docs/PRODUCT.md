@@ -93,6 +93,12 @@ being untouchable. Three mechanisms, each owning one phase:
    Ōtori's first-ever write to a file, its complete original tags are
    snapshotted: whatever happens later, "as first seen" is always
    recoverable.
+4. **Db auto-backup (beneath it all)** — the index db is the single
+   non-rebuildable asset (values can be rescanned; provenance,
+   curated flags, journal, and snapshots cannot). Every `--apply`
+   and `undo` snapshots it first (`VACUUM INTO`, timestamped,
+   newest 10 kept in `<db-dir>/backups/`); `otori backup` does it
+   on demand and never overwrites anything.
 
 ### L3 — Observability (verifiable)
 - The index is one SQLite file with a documented schema; agents may
@@ -169,6 +175,10 @@ artwork chain (embedded picture → sidecar image → folder cover) picks
 them up in GUI and CLI alike. No audio file is modified, no provenance
 ceremony needed, undo = delete the image. Embedding into the file tag
 is a separate, explicit, journaled `--apply` operation if ever wanted.
+**Quality floor**: jackets must be ≥500px on the shorter side
+(`otori artwork` verifies from image headers and exits 2 below the
+floor) — Stage mode renders art large, and a blurry jacket is worse
+than the placeholder.
 
 ### Two source tiers
 
