@@ -5,12 +5,24 @@
 use std::sync::Mutex;
 
 use otori_core::{db, query, scan};
-use tauri::Manager;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Emitter, Manager};
 
 /// One shared connection guarded by a mutex: single-writer by
 /// construction, matching the L5 coexistence model (per-operation
 /// pooling only if the UI ever blocks on long scans).
 struct Library(Mutex<otori_core::Connection>);
+
+/// Handles to the tray menu items whose label/enabled state mirrors
+/// playback (`update_tray` command). The tray itself lives for the
+/// app's lifetime; only these items ever change.
+struct Tray {
+    now_playing: MenuItem<tauri::Wry>,
+    playpause: MenuItem<tauri::Wry>,
+    prev: MenuItem<tauri::Wry>,
+    next: MenuItem<tauri::Wry>,
+}
 
 #[tauri::command]
 fn scan_library(state: tauri::State<'_, Library>, dir: String) -> Result<scan::ScanReport, String> {
@@ -43,6 +55,72 @@ fn get_artwork(path: String) -> Result<Option<String>, String> {
     }))
 }
 
+/// Status-bar menu, frontend contract: the UI mirrors playback state
+/// here on every track/pause change (`title: None` = nothing playing).
+#[tauri::command]
+fn update_tray(state: tauri::State<'_, Tray>, title: Option<String>, paused: bool) -> Result<(), String> {
+    let playing = title.is_some();
+    state
+        .now_playing
+        .set_text(title.unwrap_or_else(|| "Nothing playing".into()))
+        .map_err(|e| e.to_string())?;
+    state
+        .playpause
+        .set_text(if paused { "Play" } else { "Pause" })
+        .map_err(|e| e.to_string())?;
+    for item in [&state.playpause, &state.prev, &state.next] {
+        item.set_enabled(playing).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// macOS status-bar menu. Item clicks are forwarded to the frontend as
+/// a `tray-command` event ("playpause" / "next" / "prev") so tray and
+/// on-screen transport share one set of handlers.
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let handle = app.handle();
+    let now_playing = MenuItem::with_id(handle, "now_playing", "Nothing playing", false, None::<&str>)?;
+    let playpause = MenuItem::with_id(handle, "playpause", "Play", false, None::<&str>)?;
+    let prev = MenuItem::with_id(handle, "prev", "Previous", false, None::<&str>)?;
+    let next = MenuItem::with_id(handle, "next", "Next", false, None::<&str>)?;
+    let show = MenuItem::with_id(handle, "show", "Show Ōtori", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        handle,
+        &[
+            &now_playing,
+            &PredefinedMenuItem::separator(handle)?,
+            &playpause,
+            &prev,
+            &next,
+            &PredefinedMenuItem::separator(handle)?,
+            &show,
+            &PredefinedMenuItem::quit(handle, Some("Quit Ōtori"))?,
+        ],
+    )?;
+
+    TrayIconBuilder::with_id("main")
+        .icon(app.default_window_icon().expect("bundle has an icon").clone())
+        .icon_as_template(true)
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+            id @ ("playpause" | "next" | "prev") => {
+                let _ = app.emit("tray-command", id);
+            }
+            _ => {}
+        })
+        .build(app)?;
+
+    app.manage(Tray { now_playing, playpause, prev, next });
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -54,13 +132,15 @@ pub fn run() {
             app.manage(Library(Mutex::new(conn)));
             spawn_library_watcher(app.handle().clone(), path.clone());
             spawn_launch_rescan(app.handle().clone(), path);
+            setup_tray(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             scan_library,
             list_tracks,
             get_lyrics,
-            get_artwork
+            get_artwork,
+            update_tray
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -104,7 +184,6 @@ fn spawn_launch_rescan(app: tauri::AppHandle, db_path: std::path::PathBuf) {
 /// Contract for the frontend: listen for the `library-changed` Tauri
 /// event (no payload) and re-fetch whatever it displays.
 fn spawn_library_watcher(app: tauri::AppHandle, db_path: std::path::PathBuf) {
-    use tauri::Emitter;
     std::thread::spawn(move || {
         let Ok(conn) = db::open(&db_path) else {
             // Watcher is an enhancement; its absence must not kill the app.

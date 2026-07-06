@@ -20,3 +20,12 @@ export function getLyrics(path: string): Promise<LyricsDoc | null> {
 export function getArtwork(path: string): Promise<string | null> {
   return invoke<string | null>("get_artwork", { path });
 }
+
+/**
+ * Mirror playback state into the macOS status-bar (tray) menu:
+ * `title` names the current track (null = nothing playing, transport
+ * items disabled), `paused` picks the Play/Pause label.
+ */
+export function updateTray(title: string | null, paused: boolean): Promise<void> {
+  return invoke<void>("update_tray", { title, paused });
+}
