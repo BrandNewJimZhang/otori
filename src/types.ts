@@ -17,3 +17,23 @@ export interface ScanReport {
   skipped_icloud: string[];
   unreadable: string[];
 }
+
+// Mirrors otori_core::lyrics (LyricsDoc / Line / Word).
+export type LyricsKind = "word_synced" | "line_synced" | "static";
+
+export interface LyricsWord {
+  time_ms: number;
+  text: string;
+}
+
+export interface LyricsLine {
+  time_ms: number;
+  text: string;
+  words?: LyricsWord[];
+}
+
+export interface LyricsDoc {
+  kind: LyricsKind;
+  source: "embedded" | "sidecar";
+  lines: LyricsLine[];
+}

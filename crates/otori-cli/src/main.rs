@@ -39,6 +39,13 @@ enum Command {
     },
     /// Print tags of an audio file as JSON (reads the file, not the index)
     Tags { path: PathBuf },
+    /// Print lyrics for an audio file (embedded tag, then sidecar .lrc)
+    Lyrics {
+        path: PathBuf,
+        /// Emit the parsed lyrics document as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Edit tag fields (dry-run by default; --apply to write)
     Set {
         path: PathBuf,
@@ -174,6 +181,29 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let tags = otori_core::read_track_tags(&path)
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             println!("{}", serde_json::to_string_pretty(&tags).unwrap());
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Lyrics { path, json } => {
+            if !path.is_file() {
+                return Err(CliError::bad_input(format!(
+                    "not a file: {}",
+                    path.display()
+                )));
+            }
+            let doc = otori_core::lyrics::resolve(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            match doc {
+                Some(doc) if json => {
+                    println!("{}", serde_json::to_string_pretty(&doc).unwrap())
+                }
+                Some(doc) => {
+                    for line in &doc.lines {
+                        println!("{}", line.text);
+                    }
+                }
+                None if json => println!("null"),
+                None => println!("(no lyrics: not embedded, no sidecar .lrc)"),
+            }
             Ok(ExitCode::SUCCESS)
         }
         Command::Set { path, title, artist, album, apply, agent, override_curated, json } => {

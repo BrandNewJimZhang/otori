@@ -22,3 +22,5 @@ tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true
 tauri-plugin-dialog = "2.7.1"
+lofty = "0.24.0"
+base64 = "0.22.1"

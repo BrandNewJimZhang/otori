@@ -220,3 +220,143 @@ tbody tr.playing td:first-child {
   height: 48px;
   min-width: 0;
 }
+
+/* ---- Stage mode ---- */
+
+.stage-mode {
+  cursor: default;
+}
+
+.mode-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: radial-gradient(ellipse at 50% 120%, #1a1424 0%, var(--bg) 60%);
+}
+
+.stage-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 48px;
+  padding: 48px 64px 24px;
+  min-height: 0;
+}
+
+.stage-art-wrap {
+  flex-shrink: 0;
+  width: 38%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.stage-art {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+.stage-art.placeholder {
+  display: grid;
+  place-items: center;
+  background: var(--bg-hover);
+  color: var(--spectrum);
+  font-size: 96px;
+  font-weight: 700;
+}
+
+.stage-title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.stage-artist {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.stage-album {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.stage-lyrics {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 100%;
+  /* Center the active line's scroll target comfortably. */
+  padding: 40vh 8px;
+  scrollbar-width: none;
+}
+
+.stage-lyrics::-webkit-scrollbar {
+  display: none;
+}
+
+.lyric-line {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.5;
+  padding: 10px 0;
+  color: var(--text-dim);
+  transition: color 0.3s, opacity 0.3s;
+  opacity: 0.75;
+}
+
+.lyric-line.active {
+  color: var(--lyrics);
+  opacity: 1;
+}
+
+.lyric-line.past {
+  opacity: 0.35;
+}
+
+/* Word-level karaoke highlight inside the active line. */
+.lyric-line.active span {
+  color: var(--text-dim);
+  transition: color 0.15s;
+}
+
+.lyric-line.active span.sung {
+  color: var(--lyrics);
+}
+
+.stage-lyrics.static .lyric-line {
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.stage-lyrics.none {
+  display: grid;
+  place-items: center;
+}
+
+.no-lyrics {
+  font-size: 64px;
+  color: var(--spectrum);
+  opacity: 0.4;
+}
+
+.stage-lighting {
+  padding: 0 32px 24px;
+}
+
+.stage-lighting .spectrum {
+  width: 100%;
+  height: 80px;
+  display: block;
+}
