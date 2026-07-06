@@ -545,6 +545,22 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   color: var(--text);
 }
 
+/* Gel colors: the cover picks them (Stage.tsx writes inline overrides);
+   these defaults are the house rig, shown for grayscale covers and
+   missing artwork. Registered as <color> so the change-over on track
+   switch interpolates instead of snapping. */
+@property --gel-floor {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(167 139 250);
+}
+
+@property --gel-top {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(244 114 182);
+}
+
 .stage {
   --bass: 0;
   --highs: 0;
@@ -554,6 +570,10 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   position: relative;
   overflow: hidden;
   background: radial-gradient(ellipse at 50% 120%, #1a1424 0%, var(--bg) 60%);
+  /* Gel change-over: lights re-color over a second, like a scene change. */
+  transition:
+    --gel-floor 1s ease,
+    --gel-top 1s ease;
 }
 
 /* Room lighting: a floor glow that breathes with the kick and a high
@@ -565,7 +585,7 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   pointer-events: none;
   background: radial-gradient(
     ellipse 120% 60% at 50% 115%,
-    rgba(167, 139, 250, 0.5) 0%,
+    color-mix(in srgb, var(--gel-floor) 50%, transparent) 0%,
     transparent 60%
   );
   opacity: var(--bass);
@@ -579,7 +599,7 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   pointer-events: none;
   background: radial-gradient(
     ellipse 140% 40% at 50% -15%,
-    rgba(244, 114, 182, 0.28) 0%,
+    color-mix(in srgb, var(--gel-top) 28%, transparent) 0%,
     transparent 55%
   );
   opacity: var(--highs);
@@ -728,15 +748,22 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   width: 100%;
   height: 80px;
   display: block;
-  /* Stage floor lights: brighten with the kick. */
+  /* Stage floor lights: brighten with the kick, in the floor gel. */
   filter: brightness(calc(1 + var(--bass) * 0.6))
-    drop-shadow(0 0 calc(var(--bass) * 14px) rgba(167, 139, 250, 0.5));
+    drop-shadow(
+      0 0 calc(var(--bass) * 14px)
+      color-mix(in srgb, var(--gel-floor) 50%, transparent)
+    );
 }
 
 /* Active lyric line glows with the highs — vocals and hats live there. */
 .stage .lyric-line.active {
   text-shadow: 0 0 calc(8px + var(--highs) * 18px)
-    rgba(244, 114, 182, calc(0.2 + var(--highs) * 0.5));
+    color-mix(
+      in srgb,
+      var(--gel-top) calc((0.2 + var(--highs) * 0.5) * 100%),
+      transparent
+    );
 }
 
 /* Exit affordance: fades in on mouse movement, out after idle. */
