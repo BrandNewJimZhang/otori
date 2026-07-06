@@ -6,6 +6,8 @@ members = ["crates/otori-core", "crates/otori-cli", "src-tauri"]
 version = "0.1.0"
 edition = "2021"
 authors = ["Jim Zhang"]
+license = "AGPL-3.0-only"
+repository = "https://github.com/BrandNewJimZhang/otori"
 
 [workspace.dependencies]
 otori-core = { path = "crates/otori-core" }
