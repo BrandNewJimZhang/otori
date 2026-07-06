@@ -15,7 +15,14 @@ fn v10_reopens_detections_made_by_the_narrow_window_detector() {
             "INSERT INTO tracks (path, format, first_seen, last_scanned,
                  bpm, bpm_confidence, bpm_source, bpm_analyzed_at)
              VALUES ('/a.mp3', 'mp3', datetime('now'), datetime('now'),
-                 87.0, 0.8, 'detected', datetime('now'));",
+                 87.0, 0.8, 'detected', datetime('now'));
+             -- A real v9 library predates the v11 mix-anchor columns;
+             -- drop them so the replayed migrations can re-add them.
+             ALTER TABLE tracks DROP COLUMN mix_head_bpm;
+             ALTER TABLE tracks DROP COLUMN mix_head_beat_sec;
+             ALTER TABLE tracks DROP COLUMN mix_tail_bpm;
+             ALTER TABLE tracks DROP COLUMN mix_tail_beat_sec;
+             ALTER TABLE tracks DROP COLUMN mix_analyzed_at;",
         )
         .unwrap();
         conn.pragma_update(None, "user_version", 9).unwrap();
@@ -33,5 +40,5 @@ fn v10_reopens_detections_made_by_the_narrow_window_detector() {
         .unwrap();
     assert_eq!(bpm, Some(87.0), "stale value stays visible until re-swept");
     assert_eq!(analyzed_at, None, "analysis must be pending again");
-    assert_eq!(otori_core::analysis::list_bpm_pending(&conn).unwrap().len(), 1);
+    assert_eq!(otori_core::analysis::list_analysis_pending(&conn).unwrap().len(), 1);
 }

@@ -1,6 +1,6 @@
-//! BPM analysis bookkeeping. Detection runs in the GUI (Web Audio is
-//! the only decoder in the stack — ADR-0001); this module owns which
-//! tracks still need analysis and records outcomes.
+//! Track audio analysis bookkeeping. Detection runs in the GUI (Web
+//! Audio is the only decoder in the stack — ADR-0001); this module
+//! owns which tracks still need analysis and records outcomes.
 //!
 //! Trust model (founding-user decision 2026-07-07): external BPM data
 //! — TBPM tags, VocaDB/wiki/provider values — is a *hint*: a great
@@ -8,15 +8,22 @@
 //! (octave folding against the anchor) and owns the bpm column;
 //! `bpm_source` records whether a hint anchored the verification
 //! ('detected+hint') or not ('detected').
+//!
+//! Besides the BPM column verdict, each pass records mix anchors:
+//! per-end local beat grids (bpm + a measured beat) for crossfade
+//! planning. Always detected — no external source knows beat phase —
+//! so hint-satisfied tracks still pass through the sweeper once.
 
 use rusqlite::Connection;
 use serde::Serialize;
 
-/// A track awaiting BPM analysis, with its anchor if one exists.
+/// A track with analysis still missing. `needs_bpm` distinguishes
+/// "detect the column tempo too" from "mix anchors only".
 #[derive(Debug, Serialize)]
 pub struct PendingTrack {
     pub id: i64,
     pub path: String,
+    pub needs_bpm: bool,
     /// External anchor for octave folding (tag/provider), if any.
     pub hint_bpm: Option<f64>,
     pub hint_bpm_max: Option<f64>,
@@ -33,21 +40,32 @@ pub struct DetectedBpm {
     pub confidence: f64,
 }
 
-/// Tracks never analyzed (bpm_analyzed_at IS NULL), oldest first.
-pub fn list_bpm_pending(conn: &Connection) -> rusqlite::Result<Vec<PendingTrack>> {
+/// A local beat grid at one end of a track: tempo measured inside the
+/// mix window plus one beat inside it (absolute seconds from track
+/// start) — enough to reconstruct every beat of that window without
+/// extrapolating across the track.
+#[derive(Debug, Clone, Copy)]
+pub struct MixAnchor {
+    pub bpm: f64,
+    pub beat_sec: f64,
+}
+
+/// Tracks with any analysis missing (BPM verdict or mix anchors).
+pub fn list_analysis_pending(conn: &Connection) -> rusqlite::Result<Vec<PendingTrack>> {
     // Blank cells fill before stale re-verifications: a track with no
     // number at all hurts more than one showing a probably-right value.
     let mut stmt = conn.prepare(
-        "SELECT id, path, bpm_hint, bpm_hint_max FROM tracks
-         WHERE bpm_analyzed_at IS NULL
+        "SELECT id, path, bpm_analyzed_at IS NULL, bpm_hint, bpm_hint_max FROM tracks
+         WHERE bpm_analyzed_at IS NULL OR mix_analyzed_at IS NULL
          ORDER BY bpm IS NOT NULL, id",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(PendingTrack {
             id: row.get(0)?,
             path: row.get(1)?,
-            hint_bpm: row.get(2)?,
-            hint_bpm_max: row.get(3)?,
+            needs_bpm: row.get(2)?,
+            hint_bpm: row.get(3)?,
+            hint_bpm_max: row.get(4)?,
         })
     })?;
     rows.collect()
@@ -191,4 +209,35 @@ pub fn parse_tag_bpm(raw: &str) -> Option<f64> {
         return None;
     }
     Some(bpm)
+}
+
+/// Record mix anchors for both ends. `None` for an end = that end has
+/// no stable local grid (variable tempo inside the window, beatless,
+/// or the detector failed) — beat-matching must not be attempted
+/// there. Recorded as analyzed either way so the sweeper moves on.
+/// Fails fast on unknown ids.
+pub fn set_mix_anchors(
+    conn: &Connection,
+    track_id: i64,
+    head: Option<MixAnchor>,
+    tail: Option<MixAnchor>,
+) -> rusqlite::Result<()> {
+    let updated = conn.execute(
+        "UPDATE tracks
+         SET mix_head_bpm = ?1, mix_head_beat_sec = ?2,
+             mix_tail_bpm = ?3, mix_tail_beat_sec = ?4,
+             mix_analyzed_at = datetime('now')
+         WHERE id = ?5",
+        rusqlite::params![
+            head.map(|a| a.bpm),
+            head.map(|a| a.beat_sec),
+            tail.map(|a| a.bpm),
+            tail.map(|a| a.beat_sec),
+            track_id
+        ],
+    )?;
+    if updated == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
 }

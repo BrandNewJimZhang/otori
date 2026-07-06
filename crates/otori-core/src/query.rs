@@ -22,6 +22,15 @@ pub struct TrackRow {
     pub bpm_confidence: Option<f64>,
     /// External anchor awaiting/used in verification (tag/provider).
     pub bpm_hint: Option<f64>,
+    /// Mix-in anchor: local tempo + a measured beat at the track head.
+    /// NULL with mix_analyzed = that end is unstable — no beat-match.
+    pub mix_head_bpm: Option<f64>,
+    pub mix_head_beat_sec: Option<f64>,
+    /// Mix-out anchor: same, measured at the track tail.
+    pub mix_tail_bpm: Option<f64>,
+    pub mix_tail_beat_sec: Option<f64>,
+    /// Anchor analysis ran (NULL anchors are a verdict, not a gap).
+    pub mix_analyzed: bool,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -33,6 +42,8 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
     let mut stmt = conn.prepare(
         "SELECT t.id, t.path, t.format, t.duration_secs, t.replaygain_db,
                 t.bpm, t.bpm_max, t.bpm_confidence, t.bpm_hint,
+                t.mix_head_bpm, t.mix_head_beat_sec, t.mix_tail_bpm, t.mix_tail_beat_sec,
+                t.mix_analyzed_at IS NOT NULL,
                 MAX(CASE WHEN v.field = 'title' THEN v.value END) AS title,
                 MAX(CASE WHEN v.field = 'artist' THEN v.value END) AS artist,
                 MAX(CASE WHEN v.field = 'album' THEN v.value END) AS album
@@ -52,9 +63,14 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
             bpm_max: row.get(6)?,
             bpm_confidence: row.get(7)?,
             bpm_hint: row.get(8)?,
-            title: row.get(9)?,
-            artist: row.get(10)?,
-            album: row.get(11)?,
+            mix_head_bpm: row.get(9)?,
+            mix_head_beat_sec: row.get(10)?,
+            mix_tail_bpm: row.get(11)?,
+            mix_tail_beat_sec: row.get(12)?,
+            mix_analyzed: row.get(13)?,
+            title: row.get(14)?,
+            artist: row.get(15)?,
+            album: row.get(16)?,
         })
     })?;
     rows.collect()

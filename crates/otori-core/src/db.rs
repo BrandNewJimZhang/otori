@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -38,6 +38,11 @@ CREATE TABLE tracks (
                  CHECK (bpm_hint_source = 'tag'
                         OR bpm_hint_source LIKE 'provider:%'
                         OR bpm_hint_source IS NULL),
+    mix_head_bpm REAL,             -- local tempo of the mix-in window (track head)
+    mix_head_beat_sec REAL,        -- a measured beat inside that window
+    mix_tail_bpm REAL,             -- local tempo of the mix-out window (track tail)
+    mix_tail_beat_sec REAL,        -- a measured beat inside that window (absolute secs)
+    mix_analyzed_at TEXT,          -- set once anchor analysis ran (NULL anchor = unstable end)
     icloud_state TEXT NOT NULL DEFAULT 'local'
                  CHECK (icloud_state IN ('local', 'evicted')),
     first_seen   TEXT NOT NULL,
@@ -251,6 +256,24 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
              WHERE bpm_source IN ('detected', 'detected+hint');",
         )?;
         conn.pragma_update(None, "user_version", 10)?;
+    }
+    if (1..=10).contains(&version) {
+        // v11: mix anchors — per-end local beat grids (bpm + a measured
+        // beat) for crossfade planning. The head grid serves the track
+        // as mix-in, the tail grid as mix-out; a whole-track bpm can't
+        // do either job on variable-tempo (soflan) material, and
+        // extrapolating a head grid to the tail drifts half a beat over
+        // an album cut even when the tempo is steady. NULL anchor with
+        // mix_analyzed_at set = that end is unstable (no beat-match
+        // there, plain fade). Backfilled by the sweeper.
+        conn.execute_batch(
+            "ALTER TABLE tracks ADD COLUMN mix_head_bpm REAL;
+             ALTER TABLE tracks ADD COLUMN mix_head_beat_sec REAL;
+             ALTER TABLE tracks ADD COLUMN mix_tail_bpm REAL;
+             ALTER TABLE tracks ADD COLUMN mix_tail_beat_sec REAL;
+             ALTER TABLE tracks ADD COLUMN mix_analyzed_at TEXT;",
+        )?;
+        conn.pragma_update(None, "user_version", 11)?;
     }
     Ok(conn)
 }
