@@ -701,34 +701,122 @@ input[type="range"]:disabled::-webkit-slider-thumb {
     --gel-top 1s ease;
 }
 
-/* Room lighting: a floor glow that breathes with the kick and a high
-   shimmer near the ceiling. Opacity-only compositing — GPU cheap. */
-.stage::before {
-  content: "";
+/* Room lighting, full-bleed: four soft gel blobs wash the whole stage —
+   floor gels anchored low, top gels hanging high. Each blob drifts on
+   independently-eased X and Y tracks (cubic-bezier × alternate), so the
+   combined path is a smooth Lissajous-style curve that takes minutes to
+   visibly repeat. Position runs on the CSS clock; the audio path keeps
+   what it always owned — intensity — via --bass/--highs on opacity and
+   scale. Compositor-only: translate/scale/opacity, one blur layer. */
+.stage-gels {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   pointer-events: none;
-  background: radial-gradient(
-    ellipse 120% 60% at 50% 115%,
-    color-mix(in srgb, var(--gel-floor) 50%, transparent) 0%,
-    transparent 60%
-  );
-  opacity: var(--bass);
-  transition: opacity 60ms linear;
+  filter: blur(48px) saturate(1.2);
 }
 
-.stage::after {
-  content: "";
+.gel-x {
   position: absolute;
-  inset: 0;
-  pointer-events: none;
+  animation: gel-x var(--dur-x) cubic-bezier(0.37, 0, 0.63, 1) var(--del-x, 0s)
+    infinite alternate;
+}
+
+@keyframes gel-x {
+  from {
+    translate: -18vw 0;
+  }
+  to {
+    translate: 30vw 0;
+  }
+}
+
+/* translate is animated by the keyframes while scale stays reactive —
+   individual transform properties compose instead of clobbering. */
+.gel-blob {
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2);
+  border-radius: 50%;
+  mix-blend-mode: screen; /* overlapping gels add up like real light */
+  animation: gel-y var(--dur-y) cubic-bezier(0.37, 0, 0.63, 1) var(--del-y, 0s)
+    infinite alternate;
+}
+
+@keyframes gel-y {
+  from {
+    translate: 0 -12vh;
+  }
+  to {
+    translate: 0 22vh;
+  }
+}
+
+.gel-blob.floor {
+  --size: 65vmax;
   background: radial-gradient(
-    ellipse 140% 40% at 50% -15%,
-    color-mix(in srgb, var(--gel-top) 28%, transparent) 0%,
-    transparent 55%
+    circle closest-side,
+    color-mix(in srgb, var(--gel-floor) 55%, transparent) 0%,
+    transparent 100%
   );
-  opacity: var(--highs);
-  transition: opacity 80ms linear;
+  opacity: calc(0.28 + var(--bass) * 0.45);
+  scale: calc(0.85 + var(--bass) * 0.3);
+}
+
+.gel-blob.top {
+  --size: 52vmax;
+  background: radial-gradient(
+    circle closest-side,
+    color-mix(in srgb, var(--gel-top) 45%, transparent) 0%,
+    transparent 100%
+  );
+  opacity: calc(0.22 + var(--highs) * 0.5);
+  scale: calc(0.85 + var(--highs) * 0.3);
+}
+
+/* Anchors + desynced periods: coprime-ish durations and negative delays
+   so no two blobs ever move in lockstep. */
+.gel-x:nth-child(1) {
+  left: 8%;
+  top: 62%;
+  --dur-x: 26s;
+  --dur-y: 19s;
+}
+
+.gel-x:nth-child(2) {
+  left: 58%;
+  top: 78%;
+  --dur-x: 34s;
+  --dur-y: 23s;
+  --del-x: -15s;
+  --del-y: -8s;
+}
+
+.gel-x:nth-child(3) {
+  left: 12%;
+  top: 8%;
+  --dur-x: 30s;
+  --dur-y: 21s;
+  --del-x: -6s;
+  --del-y: -3s;
+}
+
+.gel-x:nth-child(4) {
+  left: 66%;
+  top: 18%;
+  --dur-x: 38s;
+  --dur-y: 27s;
+  --del-x: -21s;
+  --del-y: -13s;
+}
+
+/* Degradation rung: reduced motion parks the wash at its anchors; it
+   still breathes with the music (opacity/scale ride --bass/--highs). */
+@media (prefers-reduced-motion: reduce) {
+  .gel-x,
+  .gel-blob {
+    animation: none;
+  }
 }
 
 .stage-main {
