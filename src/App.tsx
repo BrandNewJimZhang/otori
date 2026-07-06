@@ -41,6 +41,7 @@ import {
   VolumeIcon,
 } from "./icons";
 import { beatGridFor } from "./beatservice";
+import { startBpmSweep } from "./bpmsweep";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
 import type { LyricsDoc, ScanReport, TrackRow } from "./types";
@@ -114,11 +115,18 @@ function App() {
 
   useEffect(refresh, [refresh]);
 
+  // Background BPM sweep: fill the index's pending list this session.
+  // Kicks on mount and again on library changes (new scans add rows).
+  useEffect(startBpmSweep, []);
+
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
   // shell emits `library-changed` when an external writer (CLI/agent)
   // commits; re-fetch so the table reflects it within ~1s.
   useEffect(() => {
-    const unlisten = listen("library-changed", refresh);
+    const unlisten = listen("library-changed", () => {
+      refresh();
+      startBpmSweep();
+    });
     return () => {
       unlisten.then((off) => off());
     };

@@ -4,7 +4,7 @@
 
 use std::sync::Mutex;
 
-use otori_core::{db, query, scan};
+use otori_core::{analysis, db, query, scan};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
@@ -61,6 +61,23 @@ fn scan_library(state: tauri::State<'_, Library>, dir: String) -> Result<scan::S
 fn list_tracks(state: tauri::State<'_, Library>) -> Result<Vec<query::TrackRow>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     query::list_tracks(&conn).map_err(|e| e.to_string())
+}
+
+/// BPM sweep, shell half: the GUI decodes and detects (Web Audio is
+/// the only decoder in the stack); these two commands let it pull the
+/// worklist and persist outcomes into the index.
+#[tauri::command]
+fn list_bpm_pending(
+    state: tauri::State<'_, Library>,
+) -> Result<Vec<analysis::PendingTrack>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    analysis::list_bpm_pending(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_bpm(state: tauri::State<'_, Library>, track_id: i64, bpm: Option<f64>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    analysis::set_bpm(&conn, track_id, bpm).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -169,7 +186,9 @@ pub fn run() {
             get_lyrics,
             get_artwork,
             update_tray,
-            set_display_awake
+            set_display_awake,
+            list_bpm_pending,
+            set_bpm
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

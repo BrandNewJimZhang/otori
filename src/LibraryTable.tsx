@@ -15,6 +15,7 @@ const COLUMNS: { key: SortKey; label: string; className?: string; resizable?: bo
   { key: "artist", label: "Artist", resizable: true },
   { key: "album", label: "Album", resizable: true },
   { key: "duration_secs", label: "Time", className: "col-duration" },
+  { key: "bpm", label: "BPM", className: "col-bpm" },
   { key: "format", label: "Format", className: "col-format" },
 ];
 
@@ -155,6 +156,7 @@ export function LibraryTable({
               <td>{t.artist ?? "—"}</td>
               <td>{t.album ?? "—"}</td>
               <td className="col-duration">{formatTime(t.duration_secs)}</td>
+              <td className="col-bpm">{t.bpm != null ? t.bpm.toFixed(1) : "—"}</td>
               <td className="col-format">{t.format}</td>
             </tr>
           );

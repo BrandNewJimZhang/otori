@@ -30,6 +30,21 @@ export function updateTray(title: string | null, paused: boolean): Promise<void>
   return invoke<void>("update_tray", { title, paused });
 }
 
+export interface PendingTrack {
+  id: number;
+  path: string;
+}
+
+/** Tracks never BPM-analyzed (index-side worklist for the sweeper). */
+export function listBpmPending(): Promise<PendingTrack[]> {
+  return invoke<PendingTrack[]>("list_bpm_pending");
+}
+
+/** Persist a detection outcome; null = analyzed, beatless. */
+export function setBpm(trackId: number, bpm: number | null): Promise<void> {
+  return invoke<void>("set_bpm", { trackId, bpm });
+}
+
 /** Hold/release the display-sleep assertion (Stage mode playing). */
 export function setDisplayAwake(awake: boolean): Promise<void> {
   return invoke<void>("set_display_awake", { awake });
