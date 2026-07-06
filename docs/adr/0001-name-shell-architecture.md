@@ -55,7 +55,22 @@ otori-core (Rust) ← otori-cli (agents/scripts)
   default for destructive ops, semantic exit codes, structured errors
   on stderr. MCP, if ever needed, wraps the CLI.
 
-### 4. Playback: `<audio>` element first, engine behind an interface
+### 4. Frontend stack: Vite + React (Next.js considered and rejected)
+
+- Next.js inside Tauri must run as `output: 'export'` (static export):
+  no server exists in the shipped app, so SSR, Server Components, API
+  routes, and server-dependent image/font optimization are all dead
+  weight. What survives (file routing, Fast Refresh) Vite covers with
+  a lighter toolchain that matches Tauri's mainstream documented path.
+- A single-window player with global long-lived objects (playback
+  state, AudioContext, spectrum canvas) barely uses page routing,
+  further shrinking Next's residual value.
+- Decision challenged and reconfirmed 2026-07-06: author familiarity
+  with Next.js was weighed as a real architectural property, but the
+  parts actually written day-to-day (React components, hooks, TSX) are
+  identical in both stacks — only the invisible build layer differs.
+
+### 5. Playback: `<audio>` element first, engine behind an interface
 
 - MVP plays via the WebView `<audio>` element + Web Audio
   `AnalyserNode` for the live spectrum. Cheap, one day of work.
