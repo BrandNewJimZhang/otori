@@ -191,26 +191,82 @@ button {
   }
 }
 
-.error-bar {
+/* ---- toast stack (audit r5 P1: one notification surface) ---- */
+
+.toast-stack {
+  position: fixed;
+  top: 44px;
+  right: 16px;
+  z-index: 20;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 16px;
-  background: #3b1b1f;
-  color: #fda4af;
-  font-size: 13px;
-  border-bottom: 1px solid #52252c;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
 }
 
-.error-dismiss {
+.toast {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
+  font-size: 13px;
+  animation: toast-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.toast.error {
+  background: color-mix(in srgb, var(--lyrics) 14%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--lyrics) 40%, var(--border));
+}
+
+.toast-dismiss {
   background: none;
   border: none;
   color: inherit;
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+
+.toast-dismiss:hover {
+  opacity: 1;
+}
+
+/* ---- drop zone (audit r5 P1: drag-to-scan affordance) ---- */
+
+.drop-zone {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  border: 2px dashed var(--library);
+  pointer-events: none; /* native drop events bypass the DOM anyway */
+}
+
+.drop-zone-label {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--library);
+  background: var(--bg-raised);
+  padding: 14px 26px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
 }
 
 /* ---- library table ---- */
@@ -634,6 +690,45 @@ tbody tr:hover .row-play {
   border-color: var(--playback);
 }
 
+/* MIX popover (audit r5 P1): explicit crossfade-length control; the
+   wheel gesture stays as the expert path. */
+.mix-cluster {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.mix-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  z-index: 15;
+  width: 220px;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  animation: menu-in 120ms ease-out;
+  transform-origin: bottom right;
+}
+
+.mix-popover label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.mix-popover-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 input[type="range"] {
   appearance: none;
   -webkit-appearance: none;
@@ -681,17 +776,35 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 .context-menu {
   position: fixed;
   z-index: 10;
-  min-width: 160px;
+  min-width: 180px;
   padding: 4px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
   display: flex;
   flex-direction: column;
+  /* Native-feel entrance (audit r5 P1): macOS menus fade-scale in. */
+  animation: menu-in 120ms ease-out;
+  transform-origin: top left;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* Group separator: a hairline above the first item of a new group. */
+.context-menu .menu-group {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
 }
 
 .context-menu button {
+  width: 100%;
   background: none;
   border: none;
   color: var(--text);
@@ -702,8 +815,10 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   cursor: pointer;
 }
 
-.context-menu button:hover {
+.context-menu button:hover,
+.context-menu button:focus-visible {
   background: var(--bg-hover);
+  outline: none;
 }
 
 /* ---- Stage mode ---- */
@@ -879,7 +994,10 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   .app,
   .gel-x,
   .gel-blob,
-  .np-bars i {
+  .np-bars i,
+  .toast,
+  .context-menu,
+  .mix-popover {
     animation: none;
   }
 
