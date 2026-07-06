@@ -200,6 +200,18 @@ is real). The verified value in `bpm` is always detector-produced;
 `bpm_source` says whether a hint anchored it (`detected+hint`). A hint
 that disagrees non-harmonically with the measurement is ignored.
 
+Hints are pull-based by design: the GUI never talks to third parties
+in the background — batch enrichment is agent work. The worklist:
+
+```bash
+otori hint-candidates --json          # no hint + blank/shaky detection
+otori hint-candidates --limit 20      # human-readable, capped
+```
+
+Sweep it with `fetch-bpm` (VocaDB, below) per track; rhythm-game
+tracks resolve via the wiki workflow or local tooling into
+`import-bpm`. Re-runs converge: hinted tracks drop out of the list.
+
 Fetch an editor-curated hint when detection is dimmed (low confidence)
 or shows the wrong octave:
 

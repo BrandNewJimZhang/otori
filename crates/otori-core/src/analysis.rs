@@ -140,6 +140,49 @@ pub fn set_bpm_hint(
     Ok(())
 }
 
+/// A track whose tempo would benefit from an external hint lookup.
+#[derive(Debug, Serialize)]
+pub struct HintCandidate {
+    pub id: i64,
+    pub path: String,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    /// Current detection, if any (None = blank/beatless).
+    pub bpm: Option<f64>,
+    pub bpm_confidence: Option<f64>,
+}
+
+/// Tracks worth a provider BPM lookup: no hint yet, and either never
+/// produced a value or detected below `min_confidence`. Ordered
+/// blank-first (a missing number hurts more than a shaky one).
+pub fn list_hint_candidates(
+    conn: &Connection,
+    min_confidence: f64,
+) -> rusqlite::Result<Vec<HintCandidate>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.path, t.bpm, t.bpm_confidence,
+                MAX(CASE WHEN v.field = 'title' THEN v.value END) AS title,
+                MAX(CASE WHEN v.field = 'artist' THEN v.value END) AS artist
+         FROM tracks t
+         LEFT JOIN tag_values v ON v.track_id = t.id
+         WHERE t.bpm_hint IS NULL
+           AND (t.bpm IS NULL OR t.bpm_confidence < ?1)
+         GROUP BY t.id
+         ORDER BY t.bpm IS NOT NULL, t.id",
+    )?;
+    let rows = stmt.query_map([min_confidence], |row| {
+        Ok(HintCandidate {
+            id: row.get(0)?,
+            path: row.get(1)?,
+            bpm: row.get(2)?,
+            bpm_confidence: row.get(3)?,
+            title: row.get(4)?,
+            artist: row.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
 /// A TBPM-style tag value, sanity-checked. Rejects zero/negative and
 /// absurd values (a 10 or 3000 BPM tag is data error, not tempo).
 pub fn parse_tag_bpm(raw: &str) -> Option<f64> {

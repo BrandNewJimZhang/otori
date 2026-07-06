@@ -119,6 +119,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List tracks whose tempo would benefit from an external hint
+    /// (no hint yet; blank or low-confidence detection)
+    HintCandidates {
+        /// Confidence below which a detection counts as shaky
+        #[arg(long, default_value_t = 0.6)]
+        min_confidence: f64,
+        /// Cap the list (0 = everything)
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Embed the resolved sidecar/folder artwork into the audio file
     EmbedArtwork {
         path: PathBuf,
@@ -516,6 +528,33 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                     "BPM hint saved: {bpm}{} (provider:{provider}); detector verifies on next sweep",
                     bpm_max.map(|m| format!("\u{2013}{m}")).unwrap_or_default()
                 );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::HintCandidates { min_confidence, limit, json } => {
+            let conn = open_library(cli.db.clone())?;
+            let mut candidates =
+                otori_core::analysis::list_hint_candidates(&conn, min_confidence)
+                    .map_err(|e| CliError::library(e.to_string()))?;
+            if limit > 0 {
+                candidates.truncate(limit);
+            }
+            if json {
+                println!("{}", serde_json::to_string(&candidates).map_err(|e| CliError::library(e.to_string()))?);
+            } else {
+                println!("{} tracks would benefit from a BPM hint:", candidates.len());
+                for c in &candidates {
+                    let state = match (c.bpm, c.bpm_confidence) {
+                        (Some(bpm), Some(conf)) => format!("{bpm:.1} @ {:.0}%", conf * 100.0),
+                        _ => "blank".to_string(),
+                    };
+                    println!(
+                        "  [{state}] {} — {}",
+                        c.title.as_deref().unwrap_or("(untitled)"),
+                        c.artist.as_deref().unwrap_or("?"),
+                    );
+                }
+                println!("fetch-bpm each (VocaDB), or import-bpm from wiki/local tooling");
             }
             Ok(ExitCode::SUCCESS)
         }
