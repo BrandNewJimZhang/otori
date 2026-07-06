@@ -37,6 +37,7 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori artwork <file> [--out <img>] [--min-size <px>] [--json]` | Locate cover art: embedded → sidecar image → folder cover | exit 2 if the shorter side is under `--min-size` (default 500px) or dimensions are unverifiable |
 | `otori backup [dest] [--json]` | Snapshot the library db | default: timestamped file in `<db-dir>/backups/`; never overwrites |
 | `otori jacket <file> [--apply] [--min-size <px>] [--json]` | Fetch a jacket from VocaDB → sidecar | dry-run by default; refuses when art exists; exit 2 on no-match (then fall back to the wiki workflow) |
+| `otori embed-artwork <file> [--apply] [--agent <id>] [--json]` | Embed the resolved sidecar/folder image into the audio file | full L2: snapshot + journal + undo (undo strips the picture; the sidecar stays as fallback); refuses when already embedded |
 | `otori set <file> --title/--artist/--album <v> [--agent <id>] [--apply] [--override-curated] [--json]` | Edit tags | dry-run without `--apply`; exit 2 when curated fields were skipped |
 | `otori curate <file>` / `otori curate --all` | Mark existing values as protected | the onboarding oath |
 | `otori undo <txid>` | Roll back an applied transaction | fails if already undone |

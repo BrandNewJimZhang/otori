@@ -83,6 +83,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Embed the resolved sidecar/folder artwork into the audio file
+    EmbedArtwork {
+        path: PathBuf,
+        /// Actually write (file + journal); default reports what would embed
+        #[arg(long)]
+        apply: bool,
+        /// Identify as an agent (journaled actor)
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Edit tag fields (dry-run by default; --apply to write)
     Set {
         path: PathBuf,
@@ -495,6 +507,74 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             } else {
                 let (w, h) = dims.unwrap();
                 println!("jacket saved: {} ({w}x{h})", sidecar.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::EmbedArtwork { path, apply, agent, json } => {
+            use otori_core::write::Actor;
+            if !path.is_file() {
+                return Err(CliError::bad_input(format!(
+                    "not a file: {}",
+                    path.display()
+                )));
+            }
+            let art = otori_core::artwork::resolve(&path)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            let plan = match &art {
+                Some(a) if a.source == "embedded" => {
+                    return Err(CliError::bad_input(
+                        "a picture is already embedded; nothing to do",
+                    ))
+                }
+                Some(a) => a,
+                None => {
+                    return Err(CliError::bad_input(
+                        "no artwork to embed (no sidecar image, no folder cover)",
+                    ))
+                }
+            };
+            let dims = otori_core::artwork::probe_dimensions(&plan.data);
+            if !apply {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "would_embed": plan.source, "mime": plan.mime,
+                            "bytes": plan.data.len(),
+                            "width": dims.map(|d| d.0), "height": dims.map(|d| d.1),
+                            "applied": false,
+                        })
+                    );
+                } else {
+                    println!(
+                        "would embed {} image ({}, {} bytes) — pass --apply to write",
+                        plan.source,
+                        plan.mime,
+                        plan.data.len()
+                    );
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            let actor = match agent.as_deref() {
+                Some(id) => Actor::Agent { id },
+                None => Actor::Human { via: "cli" },
+            };
+            let mut conn = open_library(cli.db.clone())?;
+            // Real file write → same safety net as set --apply.
+            auto_backup(&cli.db)?;
+            let tx_id = otori_core::write::embed_artwork(&mut conn, &path, actor)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "applied": true, "tx_id": tx_id,
+                        "embedded": plan.source,
+                        "width": dims.map(|d| d.0), "height": dims.map(|d| d.1),
+                    })
+                );
+            } else {
+                println!("embedded as transaction {tx_id} (otori undo {tx_id})");
             }
             Ok(ExitCode::SUCCESS)
         }
