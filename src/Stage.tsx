@@ -23,6 +23,7 @@ import type { RepeatMode } from "./playorder";
 import { bandEnergy, Smoother } from "./energy";
 import { extractGels } from "./gel";
 import { displayTitle } from "./library";
+import { FOLLOW_GRACE_MS, shouldFollow } from "./lyricfollow";
 import { formatTime } from "./format";
 import { seekMax, seekShown } from "./seekbar";
 import { NextIcon, PauseIcon, PlayIcon, PrevIcon, RepeatIcon, ShuffleIcon } from "./icons";
@@ -55,8 +56,6 @@ interface StageProps {
 /** Last word of the last line has no successor to bound its wipe; a
     sung phrase tail rarely outlives this. */
 const LAST_WORD_SPAN_MS = 5000;
-/** Manual-scroll grace: auto-follow resumes after this idle time. */
-const FOLLOW_RESUME_MS = 3000;
 /** Offset HUD lingers this long after a nudge. */
 const OFFSET_HUD_MS = 1500;
 
@@ -87,14 +86,19 @@ export function Stage({
   const chromeTimer = useRef<number>(0);
   // Scrub preview (audit P0): seek once on release, not per drag pixel.
   const [scrub, setScrub] = useState<number | null>(null);
-  // Auto-follow pauses while the user browses the lyrics by wheel;
-  // resumes on idle or on a line click (which is an explicit "go here").
-  const [following, setFollowing] = useState(true);
-  const followTimer = useRef<number>(0);
   // Transient sync badge: shows on [ / ] nudges, not on mount.
   const [offsetHud, setOffsetHud] = useState(false);
   const offsetHudTimer = useRef<number>(0);
   const offsetSeen = useRef(lyricsOffsetMs);
+
+  // Commit a scrub: pointer release, keyboard nudge release (audit R4:
+  // arrows moved the preview but never sought until blur), or blur.
+  const commitScrub = () => {
+    if (scrub != null) {
+      onSeek(scrub);
+      setScrub(null);
+    }
+  };
 
   // Beat drive: bass (kick) pulses the art, highs shimmer the lighting.
   // Fast attack / slow release so hits punch and glow decays musically.
@@ -175,6 +179,24 @@ export function Stage({
   const clockMs = lyricClock(positionMs, outputLatencyMs, lyricsOffsetMs);
   const lineIdx = synced ? currentLineIndex(lyrics, clockMs) : -1;
 
+  // Manual lyric browsing (audit R4): a wheel/touch scroll pauses the
+  // auto-follow so reading ahead isn't yanked back on the next line;
+  // it resumes after the grace period, re-centering immediately.
+  const lastManualScroll = useRef<number | null>(null);
+  const followResume = useRef<number>(0);
+  const lineIdxRef = useRef(-1);
+  lineIdxRef.current = lineIdx;
+  const markManualScroll = () => {
+    lastManualScroll.current = performance.now();
+    // Re-center when the grace expires, even without a line change.
+    window.clearTimeout(followResume.current);
+    followResume.current = window.setTimeout(() => {
+      lastManualScroll.current = null;
+      lineRefs.current[lineIdxRef.current]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, FOLLOW_GRACE_MS);
+  };
+  useEffect(() => () => window.clearTimeout(followResume.current), []);
+
   // Scroll only on line change, not every frame.
   useEffect(() => {
     if (lineIdx !== activeLine) setActiveLine(lineIdx);
@@ -183,18 +205,10 @@ export function Stage({
   // scrollIntoView keeps layout simple; a transform-driven list is the
   // upgrade path if smooth-scroll cadence ever bothers on WKWebView.
   useEffect(() => {
-    if (activeLine < 0 || !following) return;
+    if (activeLine < 0) return;
+    if (!shouldFollow(performance.now(), lastManualScroll.current)) return;
     lineRefs.current[activeLine]?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeLine, following]);
-
-  /** Wheel over the lyrics = the user is browsing; stop following. */
-  function pauseFollow() {
-    setFollowing(false);
-    window.clearTimeout(followTimer.current);
-    followTimer.current = window.setTimeout(() => setFollowing(true), FOLLOW_RESUME_MS);
-  }
-
-  useEffect(() => () => window.clearTimeout(followTimer.current), []);
+  }, [activeLine]);
 
   /** Where the active line's word wipe ends: the next line's start. */
   function lineEndMs(i: number): number {
@@ -257,18 +271,9 @@ export function Stage({
                 value={seekShown(scrub, positionMs / 1000, seekMax(duration))}
                 disabled={!Number.isFinite(duration)}
                 onChange={(e) => setScrub(Number(e.target.value))}
-                onPointerUp={() => {
-                  if (scrub != null) {
-                    onSeek(scrub);
-                    setScrub(null);
-                  }
-                }}
-                onBlur={() => {
-                  if (scrub != null) {
-                    onSeek(scrub);
-                    setScrub(null);
-                  }
-                }}
+                onPointerUp={commitScrub}
+                onKeyUp={commitScrub}
+                onBlur={commitScrub}
                 aria-label="Seek"
               />
               <span className="time">
@@ -314,7 +319,9 @@ export function Stage({
         {lyrics ? (
           <div
             className={`stage-lyrics ${synced ? "synced" : "static"}`}
-            onWheel={pauseFollow}
+            // Wheel = the user is reading; pause the follow. Clicking a
+            // line to seek is intent to jump — resume immediately below.
+            onWheel={synced ? markManualScroll : undefined}
           >
             {lyrics.lines.map((line, i) => {
               const active = i === activeLine;
@@ -334,10 +341,13 @@ export function Stage({
                   onClick={
                     synced
                       ? () => {
+                          // A seek is a jump back into the song: cancel the
+                          // browsing pause so the follow re-engages at once.
+                          window.clearTimeout(followResume.current);
+                          lastManualScroll.current = null;
                           // Undo the render-time offset so the sung audio
                           // lands where the user pointed.
                           onSeek(Math.max(0, line.time_ms + lyricsOffsetMs) / 1000);
-                          setFollowing(true);
                         }
                       : undefined
                   }
