@@ -155,6 +155,13 @@ Vocaloid → VocaDB · Touhou arranges → TouhouDB · doujin albums →
 VGMdb · fallback → MusicBrainz. Corrections flow through the normal
 `set --agent` dry-run diff; curated fields stay untouchable.
 
+TouhouDB is the same platform as VocaDB — identical API shapes
+(`/api/songs?query=…&fields=Albums`, `/Album/CoverPicture/<id>`),
+base `https://touhoudb.com`. Field-verified 2026-07-07: it resolves
+Touhou arrange jackets (600px+) that VocaDB doesn't carry; for
+maimai-collected arranges the SilentBlue jacket may still rank higher
+per the priority ladder.
+
 ## This file cannot rot
 
 Every workflow above is exercised by `scripts/acceptance.sh` (run it
