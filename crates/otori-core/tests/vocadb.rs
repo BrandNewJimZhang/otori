@@ -131,6 +131,26 @@ fn different_artist_ties_without_exact_match_refuse() {
 }
 
 #[test]
+fn voicebank_suffixes_narrow_via_component_prefix() {
+    // Tag says "すりぃ feat. 鏡音レン"; VocaDB suffixes the voicebank
+    // ("鏡音レン V4X (Power)"). Every tagged component prefix-matching
+    // an entry component beats the compilation that merely shares the
+    // producer (seen in the wild: テレキャスタービーボーイ).
+    let json = r#"{
+      "items": [
+        { "id": 233017, "name": "T", "artistString": "すりぃ feat. 鏡音レン V4X (Power)",
+          "albums": [{ "id": 1, "name": "EGOIST" }] },
+        { "id": 356187, "name": "T", "artistString": "すりぃ, OTOIRO feat. various",
+          "albums": [{ "id": 2, "name": "compilation" }] }
+      ]
+    }"#;
+    let hit = vocadb::pick_match(json, "T", Some("すりぃ feat. 鏡音レン"))
+        .unwrap()
+        .expect("prefix rule must disambiguate");
+    assert_eq!(hit.song_id, 233017);
+}
+
+#[test]
 fn nfd_tag_matches_nfc_database() {
     // macOS-written tags are NFD (バ = ハ + U+3099); VocaDB serves NFC.
     // Found in the wild: 裏表ラバーズ never matched until normalized.

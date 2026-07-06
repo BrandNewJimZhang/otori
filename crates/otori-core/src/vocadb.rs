@@ -91,8 +91,11 @@ pub fn pick_match(
             wanted.iter().any(|w| have.contains(w))
         });
         // Vocalist overlap alone keeps every Miku cover of the song.
-        // When the full artist string matches exactly, that's the
-        // entry the file is tagged from — narrow to it.
+        // Narrow in two steps: (1) exact full-string match — that's
+        // the entry the file was tagged from; (2) all-components
+        // prefix match — VocaDB suffixes vocalists with voicebank
+        // versions ("鏡音レン" vs "鏡音レン V4X (Power)"), so require
+        // every tagged component to prefix-match some entry component.
         let wanted_full = nfc(artist).to_lowercase();
         let exact: Vec<&SongItem> = candidates
             .iter()
@@ -101,6 +104,20 @@ pub fn pick_match(
             .collect();
         if !exact.is_empty() {
             candidates = exact;
+        } else {
+            let all_prefix: Vec<&SongItem> = candidates
+                .iter()
+                .filter(|c| {
+                    let have = artist_components(&c.artist_string);
+                    wanted
+                        .iter()
+                        .all(|w| have.iter().any(|h| h.starts_with(w.as_str())))
+                })
+                .copied()
+                .collect();
+            if !all_prefix.is_empty() {
+                candidates = all_prefix;
+            }
         }
     }
 
