@@ -30,6 +30,45 @@ fn write_tagged_mp3(path: &Path, title: &str, artist: &str) {
 }
 
 #[test]
+fn scan_records_replaygain_track_gain() {
+    use lofty::prelude::*;
+    use lofty::tag::{ItemKey, Tag, TagType};
+    let lib = tempfile::tempdir().unwrap();
+    let p = lib.path().join("rg.mp3");
+    write_minimal_mp3(&p);
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.insert_text(ItemKey::ReplayGainTrackGain, "-7.25 dB".to_string());
+    tag.save_to_path(&p, lofty::config::WriteOptions::default()).unwrap();
+
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+
+    let rg: f64 = conn
+        .query_row("SELECT replaygain_db FROM tracks WHERE path LIKE '%rg.mp3'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!((rg - -7.25).abs() < 1e-6);
+}
+
+#[test]
+fn tracks_without_replaygain_stay_null() {
+    let lib = tempfile::tempdir().unwrap();
+    write_tagged_mp3(&lib.path().join("plain.mp3"), "A", "B");
+
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+
+    // No RG tag → NULL, not 0.0: "no data" and "0 dB adjustment" differ.
+    let rg: Option<f64> = conn
+        .query_row("SELECT replaygain_db FROM tracks WHERE path LIKE '%plain.mp3'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(rg, None);
+}
+
+#[test]
 fn indexes_audio_files_with_import_provenance() {
     let lib = tempfile::tempdir().unwrap();
     write_tagged_mp3(&lib.path().join("song.mp3"), "Iris", "Camellia");

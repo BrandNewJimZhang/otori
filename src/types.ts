@@ -7,6 +7,7 @@ export interface TrackRow {
   path: string;
   format: string;
   duration_secs: number | null;
+  replaygain_db: number | null;
   title: string | null;
   artist: string | null;
   album: string | null;

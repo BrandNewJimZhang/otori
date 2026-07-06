@@ -21,6 +21,7 @@ function track(id: number, over: Partial<TrackRow> = {}): TrackRow {
     path: `/music/${id}.flac`,
     format: "flac",
     duration_secs: id * 10,
+    replaygain_db: null,
     title: `Track ${id}`,
     artist: null,
     album: null,
