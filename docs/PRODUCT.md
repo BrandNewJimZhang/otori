@@ -18,8 +18,12 @@ playback), **delegate** (agent-operable end to end).
 The founding user's library is the reference workload:
 
 - ~1,200 tracks: 779 mp3 (working library) + 451 flac (masters), the
-  mp3 tier partially transcoded from the flac tier — **same-track
-  dual-format linking is a real need**.
+  mp3 tier partially transcoded from the flac tier, with ALAC on the
+  horizon — **same-track multi-format linking is a real need**, and it
+  is N-to-N (link groups, not pairs). Content hashes cannot do this
+  (transcodes share no bytes); linking uses duration + normalized
+  title/artist heuristics first, acoustic fingerprinting if that
+  proves insufficient.
 - Heavily **hand-curated**: a personal classification scheme lives in
   filenames and title tags (`[Rhythm ...]`, `[Contest, BOF2013, 1st] …`).
   No online database knows this scheme. Any "normalize against
@@ -58,10 +62,23 @@ being untouchable. Three mechanisms, each owning one phase:
 
 1. **Provenance (before)** — every tag field stores value + source +
    timestamp. Sources: `human` > `agent` > `import` > `inferred`.
-   - Human-written fields are **curated: agents cannot overwrite them
-     by default**. Skips are reported (`skipped: 37 fields (curated)`).
-     Override requires `--override-curated`, and the dry-run diff
-     renders those fields as loudly as possible.
+   - **Files are the SSOT for tag values; the index is the SSOT for
+     trust.** Tag values can always be rebuilt by rescanning; the
+     provenance/curated/journal layer lives only in the index db and
+     is the one non-rebuildable asset (founding-user decision
+     2026-07-07). External edits (e.g. Mp3tag) re-enter as `import` —
+     the db cannot know a human made them; editing inside Ōtori is
+     what earns `human`.
+   - `human`-sourced values are **born curated** (enforced by a db
+     trigger, not convention): editing a tag in the GUI or CLI is
+     itself the oath. Human-written fields are **curated: agents
+     cannot overwrite them by default**. Skips are reported
+     (`skipped: 37 fields (curated)`). Override requires
+     `--override-curated`, and the dry-run diff renders those fields
+     as loudly as possible.
+   - Agents may still *propose* corrections to curated fields (humans
+     typo too): a separate advisory section of the dry-run diff,
+     never applied without per-field human approval.
    - Operations ranked by invasiveness: *fill empty* (default-allowed,
      the agent's main job) < *correct import/inferred values*
      (allowed, always in diff) < *overwrite curated* (default-denied).

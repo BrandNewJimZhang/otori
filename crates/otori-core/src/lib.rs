@@ -7,6 +7,9 @@
 
 use serde::Serialize;
 
+pub mod db;
+pub mod scan;
+
 /// Track metadata as exposed to both CLI (`--json`) and GUI (IPC).
 /// Field set intentionally minimal; grows only when a consumer needs it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
