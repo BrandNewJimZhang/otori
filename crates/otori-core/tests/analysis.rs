@@ -98,7 +98,7 @@ fn provider_hint_reopens_analysis_for_verification() {
 
     // …then a wiki/provider hint arrives: analysis re-opens so the
     // detector can re-fold against the anchor.
-    analysis::set_bpm_hint(&conn, id, 174.0, None, "provider:tunebat").unwrap();
+    analysis::set_bpm_hint(&conn, id, 174.0, None, "provider:wiki").unwrap();
     let pending = analysis::list_bpm_pending(&conn).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].hint_bpm, Some(174.0));
@@ -107,9 +107,9 @@ fn provider_hint_reopens_analysis_for_verification() {
 #[test]
 fn hint_validation_rejects_junk() {
     let (conn, id) = seeded_library();
-    assert!(analysis::set_bpm_hint(&conn, id, 0.0, None, "provider:tunebat").is_err());
-    assert!(analysis::set_bpm_hint(&conn, id, 3000.0, None, "provider:tunebat").is_err());
-    assert!(analysis::set_bpm_hint(&conn, id, 180.0, Some(140.0), "provider:tunebat").is_err());
+    assert!(analysis::set_bpm_hint(&conn, id, 0.0, None, "provider:wiki").is_err());
+    assert!(analysis::set_bpm_hint(&conn, id, 3000.0, None, "provider:wiki").is_err());
+    assert!(analysis::set_bpm_hint(&conn, id, 180.0, Some(140.0), "provider:wiki").is_err());
     assert!(analysis::set_bpm_hint(&conn, id, 150.0, None, "Provider:X").is_err());
     assert!(analysis::set_bpm_hint(&conn, id, 150.0, None, "tag").is_ok());
     assert!(analysis::set_bpm_hint(&conn, id, 150.0, None, "provider:vocadb").is_ok());
@@ -126,7 +126,7 @@ fn scan_does_not_clobber_a_provider_hint_with_a_tag() {
         .unwrap();
 
     // Deliberate provider import wins over the rescanned tag.
-    analysis::set_bpm_hint(&conn, id, 180.0, None, "provider:tunebat").unwrap();
+    analysis::set_bpm_hint(&conn, id, 180.0, None, "provider:wiki").unwrap();
     scan::scan(&mut conn, lib.path()).unwrap();
     let (hint, source): (f64, String) = conn
         .query_row("SELECT bpm_hint, bpm_hint_source FROM tracks WHERE id = ?1", [id], |r| {
@@ -134,7 +134,7 @@ fn scan_does_not_clobber_a_provider_hint_with_a_tag() {
         })
         .unwrap();
     assert_eq!(hint, 180.0);
-    assert_eq!(source, "provider:tunebat");
+    assert_eq!(source, "provider:wiki");
 }
 
 #[test]

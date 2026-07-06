@@ -245,8 +245,8 @@ outside VocaDB's scope), `import-bpm` is the generic write surface —
 external tooling resolves the value however it does, then records it:
 
 ```bash
-otori import-bpm "track.mp3" --bpm 175 --provider tunebat
-otori import-bpm "track.mp3" --bpm 140 --bpm-max 180 --provider tunebat
+otori import-bpm "track.mp3" --bpm 175 --provider wiki
+otori import-bpm "track.mp3" --bpm 140 --bpm-max 180 --provider wiki
 ```
 
 Same sanity window (20-400, ceiling >= floor), provider name
