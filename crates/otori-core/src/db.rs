@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -238,6 +238,19 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
         // the new semantics live in code (set_bpm writes only
         // 'detected'/'detected+hint'), so no column rebuild needed.
         conn.pragma_update(None, "user_version", 9)?;
+    }
+    if version == 9 {
+        // v10: the detector's search window widened (180 → 230 BPM) —
+        // every pre-v10 detection may carry the octave-halving error
+        // the narrow window forced on 170-230 BPM material. Reopen
+        // analysis for all detected rows; keep the stale value visible
+        // until the sweep replaces it (a probably-right number beats
+        // a blank column mid-resweep). Hints are untouched.
+        conn.execute_batch(
+            "UPDATE tracks SET bpm_analyzed_at = NULL
+             WHERE bpm_source IN ('detected', 'detected+hint');",
+        )?;
+        conn.pragma_update(None, "user_version", 10)?;
     }
     Ok(conn)
 }
