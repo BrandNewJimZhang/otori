@@ -88,14 +88,19 @@ pub fn pick_match(
         let wanted = artist_components(artist);
         candidates.retain(|item| {
             let have = artist_components(&item.artist_string);
-            wanted.iter().any(|w| have.contains(w))
+            // Containment, not equality: tags say "flower", VocaDB says
+            // "v4 flower"; tags say "鏡音レン", VocaDB "鏡音レン V4X".
+            wanted
+                .iter()
+                .any(|w| have.iter().any(|h| h.contains(w.as_str()) || w.contains(h.as_str())))
         });
         // Vocalist overlap alone keeps every Miku cover of the song.
         // Narrow in two steps: (1) exact full-string match — that's
         // the entry the file was tagged from; (2) all-components
-        // prefix match — VocaDB suffixes vocalists with voicebank
-        // versions ("鏡音レン" vs "鏡音レン V4X (Power)"), so require
-        // every tagged component to prefix-match some entry component.
+        // containment — VocaDB decorates vocalists with voicebank
+        // versions both as suffix ("鏡音レン V4X (Power)") and prefix
+        // ("v4 flower"), so require every tagged component to appear
+        // within some entry component.
         let wanted_full = nfc(artist).to_lowercase();
         let exact: Vec<&SongItem> = candidates
             .iter()
@@ -105,18 +110,18 @@ pub fn pick_match(
         if !exact.is_empty() {
             candidates = exact;
         } else {
-            let all_prefix: Vec<&SongItem> = candidates
+            let all_contained: Vec<&SongItem> = candidates
                 .iter()
                 .filter(|c| {
                     let have = artist_components(&c.artist_string);
                     wanted
                         .iter()
-                        .all(|w| have.iter().any(|h| h.starts_with(w.as_str())))
+                        .all(|w| have.iter().any(|h| h.contains(w.as_str())))
                 })
                 .copied()
                 .collect();
-            if !all_prefix.is_empty() {
-                candidates = all_prefix;
+            if !all_contained.is_empty() {
+                candidates = all_contained;
             }
         }
     }
