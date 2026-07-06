@@ -2,9 +2,14 @@
 // synced lyrics as subtitles, spectrum as lighting. The degradation
 // ladder is handled here: word highlight → line scroll → static text →
 // spectrum-only. Every rung is a complete experience.
+//
+// Beat reactivity: a rAF loop reads band energies and writes CSS custom
+// properties on the root — the art pulses and the room lighting breathes
+// with the kick, with zero React re-renders on the audio path.
 
 import { useEffect, useRef, useState } from "react";
 import type { LyricsDoc, TrackRow } from "./types";
+import { bandEnergy, Smoother } from "./energy";
 import { displayTitle } from "./library";
 import { Spectrum } from "./Spectrum";
 
@@ -29,10 +34,33 @@ function currentLineIndex(doc: LyricsDoc, positionMs: number): number {
 
 export function Stage({ track, artwork, lyrics, analyser, positionMs }: StageProps) {
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const stageRef = useRef<HTMLDivElement>(null);
   const [activeLine, setActiveLine] = useState(-1);
   // Exit affordance: visible on mouse movement, fades after 2s idle.
   const [hintVisible, setHintVisible] = useState(true);
   const hintTimer = useRef<number>(0);
+
+  // Beat drive: bass (kick) pulses the art, highs shimmer the lighting.
+  // Fast attack / slow release so hits punch and glow decays musically.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !analyser) return;
+    const data = new Float32Array(analyser.frequencyBinCount);
+    const binHz = analyser.context.sampleRate / analyser.fftSize;
+    const bass = new Smoother(0.88);
+    const highs = new Smoother(0.82);
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      analyser.getFloatFrequencyData(data);
+      const b = bass.push(bandEnergy(data, binHz, 30, 150));
+      const h = highs.push(bandEnergy(data, binHz, 4000, 16000));
+      stage.style.setProperty("--bass", b.toFixed(3));
+      stage.style.setProperty("--highs", h.toFixed(3));
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [analyser]);
 
   useEffect(() => {
     const wake = () => {
@@ -62,16 +90,18 @@ export function Stage({ track, artwork, lyrics, analyser, positionMs }: StagePro
   }, [activeLine]);
 
   return (
-    <div className="stage">
+    <div className="stage" ref={stageRef}>
       <div className="stage-main">
         <div className="stage-art-wrap">
-          {artwork ? (
-            <img className="stage-art" src={artwork} alt="" />
-          ) : (
-            <div className="stage-art placeholder">
-              <span>{displayTitle(track).slice(0, 1)}</span>
-            </div>
-          )}
+          <div className="stage-art-pulse">
+            {artwork ? (
+              <img className="stage-art" src={artwork} alt="" />
+            ) : (
+              <div className="stage-art placeholder">
+                <span>{displayTitle(track).slice(0, 1)}</span>
+              </div>
+            )}
+          </div>
           <div className="stage-track">
             <div className="stage-title">{displayTitle(track)}</div>
             <div className="stage-artist">{track.artist ?? "—"}</div>
@@ -115,7 +145,7 @@ export function Stage({ track, artwork, lyrics, analyser, positionMs }: StagePro
       </div>
 
       <div className="stage-lighting">
-        <Spectrum analyser={analyser} />
+        <Spectrum analyser={analyser} mirror />
       </div>
 
       <div className={`stage-hint ${hintVisible ? "" : "hidden"}`}>
