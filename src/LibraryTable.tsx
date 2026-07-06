@@ -3,7 +3,7 @@
 // playing" indicator. Pure presentation — sort/filter/selection state
 // lives in App, logic in library.ts, column prefs in prefs.ts.
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
 import { displayTitle } from "./library";
 import { formatTime } from "./format";
@@ -74,6 +74,15 @@ export function LibraryTable({
   onPlay,
 }: Props) {
   const dragRef = useRef<{ key: SortKey; startX: number; startW: number } | null>(null);
+  const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
+
+  // Keyboard selection must stay visible (audit P0): when the anchor
+  // moves, bring its row into view. block:"nearest" is a no-op for
+  // rows already on screen, so click selection never causes a jump.
+  useEffect(() => {
+    if (selection.anchor == null) return;
+    rowRefs.current.get(selection.anchor)?.scrollIntoView({ block: "nearest" });
+  }, [selection.anchor]);
 
   function beginResize(key: SortKey, e: React.PointerEvent<HTMLSpanElement>) {
     e.preventDefault();
@@ -140,6 +149,10 @@ export function LibraryTable({
           return (
             <tr
               key={t.id}
+              ref={(el) => {
+                if (el) rowRefs.current.set(t.id, el);
+                else rowRefs.current.delete(t.id);
+              }}
               className={[playing ? "playing" : "", selected ? "selected" : ""].join(" ")}
               tabIndex={-1}
               aria-selected={selected}
