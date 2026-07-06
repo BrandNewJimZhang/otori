@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
 import { displayTitle } from "./library";
 import { formatTime } from "./format";
-import { PlayIcon } from "./icons";
+import { PlayIcon, SortArrowIcon } from "./icons";
 import type { TrackRow } from "./types";
 
 const COLUMNS: { key: SortKey; label: string; className?: string; resizable?: boolean }[] = [
@@ -133,9 +133,10 @@ export function LibraryTable({
             >
               {c.label}
               {/* Always-rendered slot: the arrow appearing must not
-                  shift the label (audit P2 layout jitter). */}
+                  shift the label (audit P2 layout jitter). SVG, not
+                  ▲▼ text glyphs (audit r5 P3: font-fallback drift). */}
               <span className="sort-arrow">
-                {sort?.key === c.key ? (sort.dir === 1 ? "▲" : "▼") : ""}
+                {sort?.key === c.key && <SortArrowIcon dir={sort.dir} />}
               </span>
               {c.resizable && (
                 <span

@@ -339,7 +339,7 @@ export function Stage({
                 onClick={onToggleShuffle}
                 aria-label="Shuffle"
                 aria-pressed={shuffle}
-                title={shuffle ? "Shuffle on" : "Shuffle off"}
+                data-tip={shuffle ? "Shuffle on" : "Shuffle off"}
               >
                 <ShuffleIcon />
               </button>
@@ -360,7 +360,7 @@ export function Stage({
                 className={`mode-btn ${repeat !== "off" ? "on" : ""}`}
                 onClick={onCycleRepeat}
                 aria-label={`Repeat: ${repeat}`}
-                title={`Repeat: ${repeat}`}
+                data-tip={`Repeat: ${repeat}`}
               >
                 <RepeatIcon one={repeat === "one"} />
               </button>

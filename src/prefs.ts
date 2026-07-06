@@ -6,7 +6,8 @@ import type { SortSpec } from "./library";
 import type { ColumnWidths } from "./LibraryTable";
 import type { RepeatMode } from "./playorder";
 
-export type Theme = "dark" | "light";
+/** "auto" follows the macOS system appearance (audit r5 P2). */
+export type Theme = "dark" | "light" | "auto";
 export type Density = "comfortable" | "compact";
 
 export interface Prefs {
@@ -36,7 +37,7 @@ const DEFAULTS: Prefs = {
 };
 const SORT_KEYS = new Set(["title", "artist", "album", "duration_secs", "bpm", "format"]);
 const REPEAT_MODES = new Set<RepeatMode>(["off", "all", "one"]);
-const THEMES = new Set<Theme>(["dark", "light"]);
+const THEMES = new Set<Theme>(["dark", "light", "auto"]);
 const CROSSFADE_MAX_SEC = 30;
 const DENSITIES = new Set<Density>(["comfortable", "compact"]);
 

@@ -140,3 +140,31 @@ export function StageIcon() {
     </svg>
   );
 }
+
+/** Sort direction chevron (audit r5 P3: ▲▼ text glyphs drift per
+    font fallback — the exact failure icons.tsx exists to prevent). */
+export function SortArrowIcon({ dir }: { dir: 1 | -1 }) {
+  return (
+    <svg {...P} width={10} height={10}>
+      <path
+        d={dir === 1 ? "M12 6 4 16h16L12 6z" : "M12 18 4 8h16l-8 10z"}
+      />
+    </svg>
+  );
+}
+
+/** Auto (follow-system) theme: half sun, half moon. */
+export function AutoThemeIcon() {
+  return (
+    <svg {...P}>
+      <path d="M12 3a9 9 0 0 0 0 18V3z" />
+      <path
+        d="M12 3a9 9 0 0 1 0 18"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        fill="none"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
