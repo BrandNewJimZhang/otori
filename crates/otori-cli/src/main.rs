@@ -85,11 +85,23 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Library vital signs: counts, completeness, protection, history
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the CLI JSON schema version
+    SchemaVersion,
 }
 
 const EXIT_PARTIAL: u8 = 2;
 const EXIT_BAD_INPUT: u8 = 3;
 const EXIT_LIBRARY: u8 = 4;
+
+/// Version of every `--json` output schema in this binary. Bump on any
+/// breaking change to a JSON shape; additive fields do not bump it
+/// (consumers must tolerate unknown fields). Documented in AGENTS.md.
+const CLI_SCHEMA_VERSION: &str = "1";
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -331,6 +343,39 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                     );
                 }
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Status { json } => {
+            let conn = open_library(cli.db)?;
+            let s = otori_core::status::status(&conn).map_err(CliError::library)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&s).unwrap());
+            } else {
+                println!("tracks: {}", s.tracks);
+                for (format, count) in &s.formats {
+                    println!("  {format}: {count}");
+                }
+                println!("tag completeness (missing):");
+                for (field, count) in &s.missing {
+                    println!("  {field}: {count} missing");
+                }
+                println!(
+                    "curated: {}/{} values protected",
+                    s.curated_values, s.tag_values
+                );
+                for (source, count) in &s.sources {
+                    println!("  {source}: {count}");
+                }
+                println!(
+                    "journal: {} transaction(s), {} undone",
+                    s.transactions, s.undone_transactions
+                );
+                println!("schema: v{}", s.schema_version);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::SchemaVersion => {
+            println!("{CLI_SCHEMA_VERSION}");
             Ok(ExitCode::SUCCESS)
         }
     }

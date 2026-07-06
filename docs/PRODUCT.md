@@ -206,4 +206,19 @@ dual-mode UI — are what competitors can't bolt on.
    dry-run diff + journal/undo + first-touch snapshot. CLI reaches
    parity with GUI editing.
 3. **Cut 3 — it performs**: Stage mode, LRC parsing + scroll,
-   word-level where data exists. Smart playlists / watch folders.
+   word-level where data exists. Search/filter over the library —
+   the owner's classification scheme already lives in title tags;
+   what's missing is retrieval, not categorization.
+
+### Descoped (2026-07-07, founding-user decision)
+
+- **Smart playlists**: rule engines exist because agents didn't.
+  The library is already hand-classified via title-tag schemes; a
+  search box retrieves it, and an agent *is* a semantic rule engine
+  (`otori list --json | jq ...` works today). If saved searches show
+  repeated identical queries in real usage, add a thin "save this
+  search" layer then — decide by behavior, not upfront.
+- **Watch folders**: rescan-on-launch + manual refresh covers the
+  fixed-location iCloud library. FSEvents watching only earns its
+  complexity after external-edit conflict detection exists (scan
+  currently fills empty fields only).
