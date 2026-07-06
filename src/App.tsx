@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, getLyrics, listTracks, scanLibrary, setDisplayAwake, updateTray } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary, setDisplayAwake, setLyricsOffset, updateTray } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
@@ -72,6 +72,8 @@ function App() {
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [current, setCurrent] = useState<TrackRow | null>(null);
   const [lyrics, setLyrics] = useState<LyricsDoc | null>(null);
+  // Per-track sync nudge, mirrored from the index row; [ / ] update it.
+  const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   const [artwork, setArtwork] = useState<string | null>(null);
   const [positionMs, setPositionMs] = useState(0);
   const [paused, setPaused] = useState(true);
@@ -190,6 +192,27 @@ function App() {
     return () => {
       unlisten.then((off) => off());
     };
+  }, []);
+
+  // The playing track's sync nudge follows the current row (external
+  // writers may change it too — rows refresh on library-changed).
+  useEffect(() => {
+    setLyricsOffsetMs(current?.lyrics_offset_ms ?? 0);
+  }, [current]);
+  const lyricsOffsetRef = useRef(lyricsOffsetMs);
+  lyricsOffsetRef.current = lyricsOffsetMs;
+
+  /** Nudge lyric sync ±ms for the playing track; persists to the index. */
+  const nudgeLyrics = useCallback((deltaMs: number) => {
+    const cur = currentRef.current;
+    if (!cur) return;
+    const next = lyricsOffsetRef.current + deltaMs;
+    setLyricsOffsetMs(next);
+    setLyricsOffset(cur.id, next).catch((e) => setError(String(e)));
+    // Keep the library rows coherent without a refetch round-trip.
+    setTracks((ts) =>
+      ts.map((t) => (t.id === cur.id ? { ...t, lyrics_offset_ms: next } : t)),
+    );
   }, []);
 
   const play = useCallback(
@@ -527,6 +550,14 @@ function App() {
           : t instanceof HTMLButtonElement
             ? "button"
             : "global";
+      // Lyric sync nudge (Stage): [ = lyrics earlier, ] = later. Handled
+      // before the routing table: Stage renders no table, so this cannot
+      // collide with type-ahead; Backstage keeps [ ] as printable input.
+      if (mode === "stage" && zone === "global" && (e.key === "[" || e.key === "]")) {
+        e.preventDefault();
+        nudgeLyrics(e.key === "[" ? -100 : 100);
+        return;
+      }
       const action = routeKey({ key: e.key, meta: e.metaKey || e.ctrlKey, shift: e.shiftKey }, zone);
       if (action.kind === "native") return;
       e.preventDefault();
@@ -598,7 +629,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePause, play, step, engine]);
+  }, [togglePause, play, step, engine, mode, nudgeLyrics]);
 
   async function pickAndScan() {
     const dir = await openDialog({ directory: true });
@@ -721,6 +752,8 @@ function App() {
           lyrics={lyrics}
           analyser={engine.analyser}
           positionMs={positionMs}
+          outputLatencyMs={engine.outputLatencyMs}
+          lyricsOffsetMs={lyricsOffsetMs}
           duration={duration}
           paused={paused}
           shuffle={shuffle}

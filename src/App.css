@@ -945,6 +945,21 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   /* Center the active line's scroll target comfortably. */
   padding: 40vh 8px;
   scrollbar-width: none;
+  /* Lines melt away toward the edges instead of hard-clipping. */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 18%,
+    black 82%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 18%,
+    black 82%,
+    transparent 100%
+  );
 }
 
 .stage-lyrics::-webkit-scrollbar {
@@ -957,13 +972,36 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   line-height: 1.5;
   padding: 10px 0;
   color: var(--text-dim);
-  transition: color 0.3s, opacity 0.3s;
+  transition: color 0.3s, opacity 0.3s, transform 0.3s, filter 0.3s;
   opacity: 0.75;
+  transform-origin: left center;
+}
+
+.stage-lyrics.synced .lyric-line {
+  cursor: pointer;
+}
+
+.stage-lyrics.synced .lyric-line:hover {
+  opacity: 1;
+}
+
+/* Depth of field: distance from the active line fades and blurs. */
+.lyric-line[data-dist="2"] {
+  opacity: 0.55;
+}
+.lyric-line[data-dist="3"] {
+  opacity: 0.45;
+  filter: blur(0.5px);
+}
+.lyric-line[data-dist="4"] {
+  opacity: 0.35;
+  filter: blur(1px);
 }
 
 .lyric-line.active {
   color: var(--lyrics);
   opacity: 1;
+  transform: scale(1.06);
 }
 
 .lyric-line.past {
@@ -980,14 +1018,18 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   opacity: 1;
 }
 
-/* Word-level karaoke highlight inside the active line. */
-.lyric-line.active span {
-  color: var(--text-dim);
-  transition: color 0.15s;
-}
-
-.lyric-line.active span.sung {
-  color: var(--lyrics);
+/* Word-level karaoke wipe: each word is a gradient clipped to its
+   text; --fill (0..100%) slides the sung/unsung boundary continuously
+   with the lyric clock instead of snapping word by word. */
+.lyric-line.active span.w {
+  background-image: linear-gradient(
+    to right,
+    var(--lyrics) var(--fill, 0%),
+    var(--text-dim) var(--fill, 0%)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .stage-lyrics.static .lyric-line {
@@ -1140,5 +1182,25 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 }
 
 .stage-hint.hidden {
+  opacity: 0;
+}
+
+/* Sync nudge badge: flashes the current per-track offset on [ / ]. */
+.stage-offset-hud {
+  position: fixed;
+  bottom: 130px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--lyrics);
+  background: rgba(16, 16, 20, 0.7);
+  padding: 6px 14px;
+  border-radius: 6px;
+  transition: opacity 300ms;
+  pointer-events: none;
+}
+
+.stage-offset-hud.hidden {
   opacity: 0;
 }
