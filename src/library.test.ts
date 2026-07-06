@@ -34,6 +34,7 @@ function track(id: number, over: Partial<TrackRow> = {}): TrackRow {
     mix_tail_bpm: null,
     mix_tail_beat_sec: null,
     mix_analyzed: false,
+    lyrics_offset_ms: 0,
     title: `Track ${id}`,
     artist: null,
     album: null,

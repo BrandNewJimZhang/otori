@@ -16,6 +16,11 @@ export function getLyrics(path: string): Promise<LyricsDoc | null> {
   return invoke<LyricsDoc | null>("get_lyrics", { path });
 }
 
+/** Persist the per-track lyrics sync nudge (Stage `[`/`]` keys). */
+export function setLyricsOffset(trackId: number, offsetMs: number): Promise<void> {
+  return invoke<void>("set_lyrics_offset", { trackId, offsetMs });
+}
+
 /** Embedded cover art as a data URL, or null. */
 export function getArtwork(path: string): Promise<string | null> {
   return invoke<string | null>("get_artwork", { path });

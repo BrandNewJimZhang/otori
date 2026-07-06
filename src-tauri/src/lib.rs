@@ -128,6 +128,18 @@ fn get_lyrics(path: String) -> Result<Option<otori_core::lyrics::LyricsDoc>, Str
     otori_core::lyrics::resolve(std::path::Path::new(&path)).map_err(|e| e.to_string())
 }
 
+/// Persist the user's per-track lyrics sync nudge (render-time state
+/// in the index; the LRC source is never rewritten).
+#[tauri::command]
+fn set_lyrics_offset(
+    state: tauri::State<'_, Library>,
+    track_id: i64,
+    offset_ms: i64,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    otori_core::lyrics::set_offset(&conn, track_id, offset_ms).map_err(|e| e.to_string())
+}
+
 /// Cover art as a data URL, or None. Resolution chain lives in
 /// otori-core (embedded → sidecar image → folder cover) so CLI and
 /// GUI agree on what art a track has.
@@ -298,6 +310,7 @@ pub fn run() {
             scan_library,
             list_tracks,
             get_lyrics,
+            set_lyrics_offset,
             get_artwork,
             update_tray,
             set_display_awake,

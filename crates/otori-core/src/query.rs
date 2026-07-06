@@ -31,6 +31,8 @@ pub struct TrackRow {
     pub mix_tail_beat_sec: Option<f64>,
     /// Anchor analysis ran (NULL anchors are a verdict, not a gap).
     pub mix_analyzed: bool,
+    /// User's per-track lyrics sync nudge in ms; positive = lyrics later.
+    pub lyrics_offset_ms: i64,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -43,7 +45,7 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
         "SELECT t.id, t.path, t.format, t.duration_secs, t.replaygain_db,
                 t.bpm, t.bpm_max, t.bpm_confidence, t.bpm_hint,
                 t.mix_head_bpm, t.mix_head_beat_sec, t.mix_tail_bpm, t.mix_tail_beat_sec,
-                t.mix_analyzed_at IS NOT NULL,
+                t.mix_analyzed_at IS NOT NULL, t.lyrics_offset_ms,
                 MAX(CASE WHEN v.field = 'title' THEN v.value END) AS title,
                 MAX(CASE WHEN v.field = 'artist' THEN v.value END) AS artist,
                 MAX(CASE WHEN v.field = 'album' THEN v.value END) AS album
@@ -68,9 +70,10 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
             mix_tail_bpm: row.get(11)?,
             mix_tail_beat_sec: row.get(12)?,
             mix_analyzed: row.get(13)?,
-            title: row.get(14)?,
-            artist: row.get(15)?,
-            album: row.get(16)?,
+            lyrics_offset_ms: row.get(14)?,
+            title: row.get(15)?,
+            artist: row.get(16)?,
+            album: row.get(17)?,
         })
     })?;
     rows.collect()

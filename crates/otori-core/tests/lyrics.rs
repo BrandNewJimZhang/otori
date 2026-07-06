@@ -5,6 +5,7 @@
 use std::fs;
 
 use otori_core::lyrics::{self, LyricsKind};
+use otori_core::{db, query};
 
 // ---- LRC parsing ----
 
@@ -162,6 +163,36 @@ fn write_sidecar_records_provenance_and_resolves() {
     assert_eq!(doc.source, "sidecar");
     assert_eq!(doc.lines.len(), 1);
     assert_eq!(doc.lines[0].text, "Fetched line");
+}
+
+// ---- per-track sync offset (user-adjusted, lives in the index) ----
+
+#[test]
+fn lyrics_offset_defaults_to_zero_and_roundtrips() {
+    let conn = db::open_in_memory().unwrap();
+    conn.execute(
+        "INSERT INTO tracks (path, format, first_seen, last_scanned)
+         VALUES ('/x/a.mp3', 'mp3', datetime('now'), datetime('now'))",
+        [],
+    )
+    .unwrap();
+
+    let tracks = query::list_tracks(&conn).unwrap();
+    assert_eq!(tracks[0].lyrics_offset_ms, 0, "unset offset must read as 0");
+
+    lyrics::set_offset(&conn, tracks[0].id, 300).unwrap();
+    assert_eq!(query::list_tracks(&conn).unwrap()[0].lyrics_offset_ms, 300);
+
+    // Negative offsets (lyrics ahead of the music) are legal.
+    lyrics::set_offset(&conn, tracks[0].id, -250).unwrap();
+    assert_eq!(query::list_tracks(&conn).unwrap()[0].lyrics_offset_ms, -250);
+}
+
+#[test]
+fn set_offset_fails_fast_on_unknown_track() {
+    let conn = db::open_in_memory().unwrap();
+    let err = lyrics::set_offset(&conn, 42, 100).expect_err("unknown id must fail");
+    assert!(matches!(err, rusqlite::Error::QueryReturnedNoRows));
 }
 
 #[test]
