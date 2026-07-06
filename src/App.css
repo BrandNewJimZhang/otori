@@ -39,6 +39,16 @@
   color-scheme: light;
 }
 
+/* Under the light theme, Stage still needs the root-level bg + color-scheme
+   dark: body background and overscroll rubber-banding sit behind the
+   full-bleed .app, so they'd flash light otherwise. The .app subtree tokens
+   are already forced dark by .stage-mode above — only the root leak is left. */
+:root:has(.stage-mode) {
+  --bg: #101014;
+  --text: #e8e6e3;
+  color-scheme: dark;
+}
+
 * {
   margin: 0;
   padding: 0;
