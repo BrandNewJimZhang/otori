@@ -142,6 +142,27 @@ fn apply_offset(time_ms: u64, offset_ms: i64) -> u64 {
     (time_ms as i64 + offset_ms).max(0) as u64
 }
 
+/// Deliver fetched lyrics as a sidecar `.lrc` (PRODUCT.md: fetched
+/// lyrics are written as sidecars with provenance, never silently
+/// embedded). Provenance rides in the standard `[by:]` creator tag, so
+/// any LRC-aware player reads it and `parse_lrc` skips it as metadata.
+/// Refuses to overwrite — replacing lyrics is a human decision (delete
+/// the old sidecar first), same rule as jacket delivery.
+pub fn write_sidecar(
+    audio: &Path,
+    lrc_text: &str,
+    provenance: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    let sidecar = audio.with_extension("lrc");
+    let content = format!("[by:{provenance}]\n{lrc_text}");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true) // AlreadyExists if a sidecar is present
+        .open(&sidecar)?;
+    std::io::Write::write_all(&mut file, content.as_bytes())?;
+    Ok(sidecar)
+}
+
 /// Parse `mm:ss`, `mm:ss.x`, `mm:ss.xx`, or `mm:ss.xxx` into ms.
 fn parse_timestamp(s: &str) -> Option<u64> {
     let (minutes, rest) = s.split_once(':')?;
