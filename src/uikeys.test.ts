@@ -67,6 +67,12 @@ describe("routeKey — global zone", () => {
     expect(routeKey(combo("ArrowLeft"), "global")).toEqual({ kind: "seek-nudge", secs: -5 });
   });
 
+  it("? opens the shortcuts overlay (audit r5 P2), not type-ahead", () => {
+    expect(routeKey(combo("?", { shift: true }), "global")).toEqual({ kind: "show-shortcuts" });
+    expect(routeKey(combo("?"), "global")).toEqual({ kind: "show-shortcuts" });
+    expect(routeKey(combo("?"), "input")).toEqual({ kind: "native" });
+  });
+
   it("passes non-printable keys and unmapped ⌘-chords through", () => {
     expect(routeKey(combo("F5"), "global")).toEqual({ kind: "native" });
     expect(routeKey(combo("c", { meta: true }), "global")).toEqual({ kind: "native" });

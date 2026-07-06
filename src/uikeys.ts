@@ -27,6 +27,7 @@ export type KeyAction =
   | { kind: "play-selected" }
   | { kind: "seek-nudge"; secs: number }
   | { kind: "step-track"; offset: 1 | -1 }
+  | { kind: "show-shortcuts" }
   | { kind: "escape" };
 
 const SEEK_NUDGE_SEC = 5;
@@ -128,6 +129,10 @@ function routeKeyBackstage(combo: KeyCombo, zone: KeyZone): KeyAction {
       return { kind: "play-selected" };
     case "Escape":
       return { kind: "escape" };
+    case "?":
+      // Shortcuts overlay (audit r5 P2): the deep keyboard model needs
+      // a discoverable index; "?" beats a track-title type-ahead edge.
+      return { kind: "show-shortcuts" };
     default:
       // Printable characters feed table type-ahead (Finder-style).
       if (combo.key.length === 1 && /\S/.test(combo.key)) {

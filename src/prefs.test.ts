@@ -82,4 +82,10 @@ describe("prefs", () => {
     s.setItem("otori.prefs", JSON.stringify({ volume: 0.7, sort: null, crossfadeSec: 999 }));
     expect(loadPrefs(s)).toEqual({ ...DEFAULTS, volume: 0.7 });
   });
+
+  it("accepts the auto (follow-system) theme (audit r5 P2)", () => {
+    const s = fakeStorage();
+    savePrefs(s, { ...DEFAULTS, sort: null, columnWidths: {}, theme: "auto" });
+    expect(loadPrefs(s).theme).toBe("auto");
+  });
 });

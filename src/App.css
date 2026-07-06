@@ -16,6 +16,14 @@
   --playback: #4ade80;
   --lyrics: #f472b6;
   --spectrum: #a78bfa;
+  /* Material tokens (audit r5 P2): one radius/shadow/scrim scale so
+     chrome reads as one system instead of per-widget guesses. */
+  --radius-s: 6px;
+  --radius-m: 8px;
+  --radius-l: 12px;
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --scrim: rgba(16, 16, 20, 0.7);
+  --scrim-weak: rgba(16, 16, 20, 0.55);
 }
 
 :root {
@@ -36,6 +44,7 @@
   --playback: #16a34a;
   --lyrics: #db2777;
   --spectrum: #7c3aed;
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.16);
   color-scheme: light;
 }
 
@@ -71,6 +80,52 @@ button {
   outline-offset: 1px;
 }
 
+/* Playback-area focus follows the four-accent semantics (audit r5 P3). */
+.transport :focus-visible,
+.stage-transport :focus-visible,
+.seek :focus-visible,
+.volume :focus-visible,
+.crossfade-toggle:focus-visible {
+  outline-color: var(--playback);
+}
+
+/* Instant self-drawn tooltips (audit r5 P2): native title waits ~1.5s
+   and ignores the theme. Elements opt in via data-tip; player-bar and
+   Stage tips flip above the control. */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 7px);
+  transform: translateX(-50%);
+  z-index: 25;
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  background: var(--scrim);
+  color: #e8e6e3;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms 250ms;
+}
+
+[data-tip]:hover::after {
+  opacity: 1;
+}
+
+.player-bar [data-tip]::after,
+.stage [data-tip]::after {
+  top: auto;
+  bottom: calc(100% + 7px);
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -96,8 +151,15 @@ button {
   gap: 14px;
   /* Left padding clears the macOS traffic lights (title bar overlay). */
   padding: 10px 16px 10px 84px;
-  background: var(--bg-raised);
+  /* Translucent material (audit r5 P2): content scrolled behind the
+     bar ghosts through, macOS-style. Solid raised bg as the base so
+     it still reads without backdrop-filter support. */
+  background: color-mix(in srgb, var(--bg-raised) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
   border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 2;
 }
 
 /* Fullscreen hides the traffic lights — reclaim their reserved space. */
@@ -118,7 +180,7 @@ button {
   background: var(--bg-hover);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   padding: 6px 14px;
   font-size: 13px;
   cursor: pointer;
@@ -152,7 +214,7 @@ button {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   padding: 5px 10px;
   font-size: 13px;
   font-family: inherit;
@@ -212,8 +274,8 @@ button {
   padding: 9px 12px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-overlay);
   font-size: 13px;
   animation: toast-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -264,9 +326,9 @@ button {
   color: var(--library);
   background: var(--bg-raised);
   padding: 14px 26px;
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
+  box-shadow: var(--shadow-overlay);
 }
 
 /* ---- library table ---- */
@@ -286,6 +348,19 @@ button {
   font-size: 14px;
 }
 
+/* Empty-state illustration (audit r5 P3): the stage icon at hero
+   size, plus the drag path the drop-zone otherwise only reveals. */
+.empty svg {
+  width: 72px;
+  height: 72px;
+  color: var(--library);
+  opacity: 0.5;
+}
+
+.empty-hint {
+  font-size: 12px;
+}
+
 table {
   width: 100%;
   table-layout: fixed;
@@ -298,6 +373,39 @@ thead {
   top: 0;
   background: var(--bg-raised);
   z-index: 1;
+}
+
+/* Scroll shadow (audit r5 P2): the sticky header casts a soft edge
+   once rows pass beneath it. scroll-driven where supported; harmless
+   static hairline elsewhere. */
+thead::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 6px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.22), transparent);
+  opacity: 0;
+}
+
+@supports (animation-timeline: scroll()) {
+  .library {
+    scroll-timeline: --library-scroll y;
+  }
+
+  thead::after {
+    animation: header-shadow linear both;
+    animation-timeline: --library-scroll;
+    animation-range: 0 24px;
+  }
+
+  @keyframes header-shadow {
+    to {
+      opacity: 1;
+    }
+  }
 }
 
 th {
@@ -336,8 +444,11 @@ th:hover {
   display: inline-block;
   width: 14px;
   margin-left: 3px;
-  font-size: 9px;
   text-align: center;
+}
+
+.sort-arrow svg {
+  vertical-align: -1px;
 }
 
 td {
@@ -410,7 +521,7 @@ td {
   margin-left: 8px;
   min-width: 16px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: color-mix(in srgb, var(--playback) 25%, var(--bg));
   color: var(--playback);
   font-size: 10px;
@@ -549,7 +660,7 @@ tbody tr:hover .row-play {
 .transport .mode-btn {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   border-color: transparent;
   background: none;
   color: var(--text-dim);
@@ -577,7 +688,7 @@ tbody tr:hover .row-play {
 .np-art {
   width: 40px;
   height: 40px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -673,7 +784,7 @@ tbody tr:hover .row-play {
   font-weight: 700;
   letter-spacing: 0.08em;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   border: 1px solid var(--border);
   background: none;
   color: var(--text-dim);
@@ -706,8 +817,8 @@ tbody tr:hover .row-play {
   padding: 12px 14px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-overlay);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -771,6 +882,88 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   min-width: 0;
 }
 
+/* Narrow-window ladder (audit r5 P2): the player bar's fixed items
+   already brush the 720px min width. The spectrum is ambience — it
+   yields first; the volume slider folds next (mute stays). */
+@media (max-width: 900px) {
+  .player-bar .spectrum {
+    display: none;
+  }
+}
+
+@media (max-width: 800px) {
+  .volume input[type="range"] {
+    display: none;
+  }
+
+  .now-playing {
+    min-width: 120px;
+  }
+}
+
+/* ---- shortcuts overlay (audit r5 P2: "?" reveals the key model) ---- */
+
+.shortcuts-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: var(--scrim-weak);
+}
+
+.shortcuts-card {
+  width: min(560px, calc(100vw - 64px));
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  padding: 20px 24px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-overlay);
+  animation: menu-in 120ms ease-out;
+}
+
+.shortcuts-card h2 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.shortcuts-card h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 14px 0 6px;
+}
+
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 16px;
+  font-size: 13px;
+}
+
+.shortcuts-grid kbd {
+  font-family: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-s);
+  background: var(--bg-hover);
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.shortcuts-grid span {
+  color: var(--text-dim);
+  align-self: center;
+}
+
 /* ---- context menu ---- */
 
 .context-menu {
@@ -780,8 +973,8 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   padding: 4px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.5));
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-overlay);
   display: flex;
   flex-direction: column;
   /* Native-feel entrance (audit r5 P1): macOS menus fade-scale in. */
@@ -811,7 +1004,7 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   text-align: left;
   font-size: 13px;
   padding: 6px 10px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   cursor: pointer;
 }
 
@@ -1043,7 +1236,7 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: var(--radius-l);
   /* Glow rides the floor gel (audit P2): the cover picks the rig's
      colors, so its own halo must follow — not stay house-purple. */
   box-shadow:
@@ -1244,7 +1437,7 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   display: grid;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(16, 16, 20, 0.55);
+  background: var(--scrim-weak);
   color: var(--text);
   cursor: pointer;
   transition: border-color 120ms;
@@ -1278,7 +1471,7 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   height: 30px;
   border-color: transparent;
   background: none;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   color: var(--text-dim);
 }
 
@@ -1331,9 +1524,9 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   right: 18px;
   font-size: 11px;
   color: var(--text-dim);
-  background: rgba(16, 16, 20, 0.7);
+  background: var(--scrim);
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   transition: opacity 400ms;
 }
 
@@ -1350,9 +1543,9 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: var(--lyrics);
-  background: rgba(16, 16, 20, 0.7);
+  background: var(--scrim);
   padding: 6px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   transition: opacity 300ms;
   pointer-events: none;
 }

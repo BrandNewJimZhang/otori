@@ -15,6 +15,7 @@ import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { LibraryTable, type ColumnWidths } from "./LibraryTable";
 import { ToastStack } from "./ToastStack";
 import { dismissToast, pushToast, type Toast } from "./toasts";
+import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { formatTime } from "./format";
 import {
   clickSelect,
@@ -37,6 +38,7 @@ import { dequeue, enqueueNext } from "./queue";
 import { escapeIntent, routeKey, type KeyZone } from "./uikeys";
 import { seekMax, seekShown, sliderFill } from "./seekbar";
 import {
+  AutoThemeIcon,
   DensityIcon,
   MoonIcon,
   NextIcon,
@@ -104,6 +106,8 @@ function App() {
   const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Shortcuts overlay (audit r5 P2): "?" reveals the keyboard model.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // Scrub preview (audit P0): thumb position while dragging the seek
   // slider; the decoder seek fires once on release, not per pixel.
   const [scrub, setScrub] = useState<number | null>(null);
@@ -186,9 +190,18 @@ function App() {
   }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths]);
 
   // Theme rides a root attribute so CSS owns the palettes; Stage stays
-  // dark regardless (a lit stage is not a stage).
+  // dark regardless (a lit stage is not a stage). "auto" follows the
+  // system appearance live (audit r5 P2).
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      document.documentElement.dataset.theme =
+        theme === "auto" ? (mq.matches ? "light" : "dark") : theme;
+    };
+    apply();
+    if (theme !== "auto") return;
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
   }, [theme]);
 
   // Fullscreen hides the traffic lights, so the toolbar's left padding
@@ -629,6 +642,9 @@ function App() {
         case "step-track":
           if (currentRef.current) step(action.offset);
           break;
+        case "show-shortcuts":
+          setShortcutsOpen(true);
+          break;
         case "escape":
           switch (escapeIntent(modeRef.current, selectionRef.current.ids.size > 0)) {
             case "exit-stage":
@@ -862,7 +878,7 @@ function App() {
           onClick={() => setMode("stage")}
           disabled={!current}
           aria-label="Enter Stage mode"
-          title={current ? "Stage (S)" : "Play a track to enter Stage"}
+          data-tip={current ? "Stage (S)" : "Play a track to enter Stage"}
         >
           <StageIcon />
         </button>
@@ -870,17 +886,19 @@ function App() {
           className="icon-btn density-toggle"
           onClick={() => setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"))}
           aria-label={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
-          title={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
+          data-tip={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
         >
           <DensityIcon compact={density === "compact"} />
         </button>
         <button
           className="icon-btn theme-toggle"
-          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          title={theme === "dark" ? "Light theme" : "Dark theme"}
+          onClick={() => setTheme((t) => (t === "dark" ? "light" : t === "light" ? "auto" : "dark"))}
+          aria-label={`Theme: ${theme}`}
+          data-tip={
+            theme === "dark" ? "Theme: dark" : theme === "light" ? "Theme: light" : "Theme: auto"
+          }
         >
-          {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+          {theme === "dark" ? <MoonIcon /> : theme === "light" ? <SunIcon /> : <AutoThemeIcon />}
         </button>
       </header>
 
@@ -889,10 +907,12 @@ function App() {
       <main className={`library density-${density}`}>
         {tracks.length === 0 ? (
           <div className="empty">
+            <StageIcon />
             <p>Your library is empty.</p>
             <button onClick={pickAndScan} disabled={scanning}>
               {scanning ? "Scanning…" : "Scan a folder"}
             </button>
+            <p className="empty-hint">…or drop a folder anywhere in this window.</p>
           </div>
         ) : visible.length === 0 ? (
           <div className="empty">
@@ -930,7 +950,7 @@ function App() {
             onClick={toggleShuffle}
             aria-label="Shuffle"
             aria-pressed={shuffle}
-            title={shuffle ? "Shuffle on" : "Shuffle off"}
+            data-tip={shuffle ? "Shuffle on" : "Shuffle off"}
           >
             <ShuffleIcon />
           </button>
@@ -962,7 +982,7 @@ function App() {
             className={`mode-btn ${repeat !== "off" ? "on" : ""}`}
             onClick={() => setRepeat(cycleRepeat)}
             aria-label={`Repeat: ${repeat}`}
-            title={`Repeat: ${repeat}`}
+            data-tip={`Repeat: ${repeat}`}
           >
             <RepeatIcon one={repeat === "one"} />
           </button>
@@ -976,7 +996,7 @@ function App() {
               : undefined
           }
           onDoubleClick={current ? () => setMode("stage") : undefined}
-          title={current ? "Click to locate · double-click for Stage" : undefined}
+          data-tip={current ? "Click to locate · double-click for Stage" : undefined}
         >
           {current && artwork && <img className="np-art" src={artwork} alt="" />}
           {current ? (
@@ -1013,7 +1033,7 @@ function App() {
             className="time time-toggle"
             onClick={() => setShowRemaining((r) => !r)}
             aria-label={showRemaining ? "Show total duration" : "Show time remaining"}
-            title={showRemaining ? "Show total duration" : "Show time remaining"}
+            data-tip={showRemaining ? "Show total duration" : "Show time remaining"}
           >
             {current && showRemaining && Number.isFinite(duration)
               ? `-${formatTime(Math.max(0, duration - position))}`
@@ -1027,7 +1047,7 @@ function App() {
             onClick={toggleMute}
             aria-label={muted ? "Unmute" : "Mute"}
             aria-pressed={muted}
-            title={muted ? "Unmute" : "Mute"}
+            data-tip={muted ? "Unmute" : "Mute"}
           >
             <VolumeIcon />
           </button>
@@ -1057,10 +1077,10 @@ function App() {
                 s ? Math.max(2, Math.min(16, s + (e.deltaY < 0 ? 1 : -1))) : s,
               );
             }}
-            title={
+            data-tip={
               crossfadeSec
-                ? `DJ crossfade: ${crossfadeSec}s (right-click or scroll to adjust; beat-matched when tempos allow)`
-                : "DJ crossfade: off (gapless) — right-click to configure"
+                ? `DJ crossfade: ${crossfadeSec}s · right-click / scroll to adjust`
+                : "DJ crossfade: off (gapless) · right-click to configure"
             }
             aria-pressed={crossfadeSec > 0}
           >
@@ -1107,6 +1127,8 @@ function App() {
           <div className="drop-zone-label">Drop a folder to scan it</div>
         </div>
       )}
+
+      {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
     </div>
   );
 }
