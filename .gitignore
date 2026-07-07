@@ -25,3 +25,7 @@ dist-ssr
 
 # Rust
 target
+
+# Ad-hoc build log redirects
+src-tauri/std*.txt
+src-tauri/stderr*.txt
