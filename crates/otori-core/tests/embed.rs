@@ -115,3 +115,79 @@ fn unindexed_file_fails_fast() {
     // Never scanned: embedding must refuse (scan first), not silently index.
     assert!(write::embed_artwork(&mut conn, &audio, Actor::Human { via: "cli" }).is_err());
 }
+
+// ---- removal (design: tag-inspector.md r2) ----
+
+#[test]
+fn remove_artwork_strips_picture_and_falls_back_to_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut conn, audio) = library_with_sidecar(dir.path());
+    write::embed_artwork(&mut conn, &audio, Actor::Human { via: "cli" }).unwrap();
+
+    let tx_id = write::remove_artwork(&mut conn, &audio, Actor::Human { via: "gui" }).unwrap();
+
+    // File is picture-free; the resolve chain falls back to the sidecar.
+    let art = artwork::resolve(&audio).unwrap().unwrap();
+    assert_eq!(art.source, "sidecar");
+
+    // Journaled: picture went embedded → gone.
+    let (field, old_value, new_value): (String, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT field, old_value, new_value FROM tx_changes WHERE tx_id = ?1",
+            [tx_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(field, "picture");
+    assert_eq!(old_value.as_deref(), Some("embedded"));
+    assert_eq!(new_value, None);
+}
+
+#[test]
+fn remove_artwork_refuses_when_nothing_embedded() {
+    let dir = tempfile::tempdir().unwrap();
+    // Sidecar art only — removal targets the embedded picture, not files.
+    let (mut conn, audio) = library_with_sidecar(dir.path());
+    assert!(write::remove_artwork(&mut conn, &audio, Actor::Human { via: "gui" }).is_err());
+}
+
+#[test]
+fn remove_artwork_takes_first_touch_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut conn, audio) = library_with_sidecar(dir.path());
+    write::embed_artwork(&mut conn, &audio, Actor::Human { via: "cli" }).unwrap();
+    write::remove_artwork(&mut conn, &audio, Actor::Human { via: "gui" }).unwrap();
+
+    // Snapshot exists (from the embed — first touch stays immutable).
+    let snaps: i64 = conn
+        .query_row("SELECT count(*) FROM first_touch_snapshots", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(snaps, 1);
+}
+
+#[test]
+fn undo_of_a_removal_fails_loudly_not_silently() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut conn, audio) = library_with_sidecar(dir.path());
+    write::embed_artwork(&mut conn, &audio, Actor::Human { via: "cli" }).unwrap();
+    let tx_id = write::remove_artwork(&mut conn, &audio, Actor::Human { via: "gui" }).unwrap();
+
+    // The journal stores provenance, not bytes: bringing a picture back
+    // is impossible from here. Undo must refuse with a clear error, and
+    // the transaction must stay not-undone.
+    let err = write::undo(&mut conn, tx_id);
+    assert!(err.is_err(), "undo of a removal must fail, not fake success");
+    let undone: i64 = conn
+        .query_row("SELECT undone FROM transactions WHERE id = ?1", [tx_id], |r| r.get(0))
+        .unwrap();
+    assert_eq!(undone, 0);
+}
+
+#[test]
+fn remove_artwork_unindexed_file_fails_fast() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("ghost.mp3");
+    write_mp3(&audio);
+    let mut conn = db::open_in_memory().unwrap();
+    assert!(write::remove_artwork(&mut conn, &audio, Actor::Human { via: "gui" }).is_err());
+}

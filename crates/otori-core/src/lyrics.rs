@@ -146,8 +146,8 @@ fn apply_offset(time_ms: u64, offset_ms: i64) -> u64 {
 /// lyrics are written as sidecars with provenance, never silently
 /// embedded). Provenance rides in the standard `[by:]` creator tag, so
 /// any LRC-aware player reads it and `parse_lrc` skips it as metadata.
-/// Refuses to overwrite — replacing lyrics is a human decision (delete
-/// the old sidecar first), same rule as jacket delivery.
+/// Refuses to overwrite — replacing lyrics is a human decision (see
+/// [`overwrite_sidecar`]), same rule as jacket delivery.
 pub fn write_sidecar(
     audio: &Path,
     lrc_text: &str,
@@ -161,6 +161,45 @@ pub fn write_sidecar(
         .open(&sidecar)?;
     std::io::Write::write_all(&mut file, content.as_bytes())?;
     Ok(sidecar)
+}
+
+/// The human decision [`write_sidecar`] refuses to make: replace the
+/// sidecar's text wholesale (inspector lyrics editor). Verbatim — no
+/// `[by:]` injection; the human owns the full text. Empty text is a
+/// mistake, not a delete: refuse rather than blank someone's lyrics.
+/// Not journaled: sidecars are the same class as agent-delivered
+/// `.lrc` files (undo = edit again), not audio-file tag writes.
+pub fn overwrite_sidecar(audio: &Path, lrc_text: &str) -> std::io::Result<std::path::PathBuf> {
+    if lrc_text.trim().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty lyrics: delete the sidecar file instead of blanking it",
+        ));
+    }
+    let sidecar = audio.with_extension("lrc");
+    std::fs::write(&sidecar, lrc_text)?;
+    Ok(sidecar)
+}
+
+/// Raw lyrics text for the editor — same source priority as
+/// [`resolve`] (embedded tag wins over sidecar), but unparsed: the
+/// editor round-trips the human's exact text, not the parsed doc.
+pub fn read_raw(audio: &Path) -> Result<Option<(&'static str, String)>, lofty::error::LoftyError> {
+    let tagged = lofty::read_from_path(audio)?;
+    if let Some(text) = tagged
+        .primary_tag()
+        .or_else(|| tagged.first_tag())
+        .and_then(|t| {
+            t.get_string(ItemKey::UnsyncLyrics)
+                .or_else(|| t.get_string(ItemKey::Lyrics))
+        })
+    {
+        return Ok(Some(("embedded", text.to_string())));
+    }
+    if let Ok(text) = std::fs::read_to_string(audio.with_extension("lrc")) {
+        return Ok(Some(("sidecar", text)));
+    }
+    Ok(None)
 }
 
 /// Persist the user's per-track sync nudge (ms; positive = lyric

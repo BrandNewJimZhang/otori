@@ -209,3 +209,83 @@ fn write_sidecar_refuses_to_overwrite() {
     let content = fs::read_to_string(dir.path().join("song.lrc")).unwrap();
     assert_eq!(content, "[00:01.00]Hand-made");
 }
+
+// ---- human lyric editing (design: tag-inspector.md r2) ----
+
+#[test]
+fn overwrite_sidecar_replaces_existing_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+    fs::write(dir.path().join("song.lrc"), "[00:01.00]Old text").unwrap();
+
+    let sidecar = lyrics::overwrite_sidecar(&audio, "[00:01.00]Fixed text").unwrap();
+    assert_eq!(sidecar, dir.path().join("song.lrc"));
+    // Verbatim: no [by:] header injection — the human owns the text.
+    assert_eq!(fs::read_to_string(&sidecar).unwrap(), "[00:01.00]Fixed text");
+}
+
+#[test]
+fn overwrite_sidecar_creates_when_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+
+    lyrics::overwrite_sidecar(&audio, "[00:01.00]Pasted in").unwrap();
+    let doc = lyrics::resolve(&audio).unwrap().expect("sidecar must resolve");
+    assert_eq!(doc.lines[0].text, "Pasted in");
+}
+
+#[test]
+fn overwrite_sidecar_refuses_empty_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+    fs::write(dir.path().join("song.lrc"), "[00:01.00]Keep me").unwrap();
+
+    let err = lyrics::overwrite_sidecar(&audio, "  \n ").expect_err("empty must refuse");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    // Refusal means the old text survives (removal is not this API).
+    let content = fs::read_to_string(dir.path().join("song.lrc")).unwrap();
+    assert_eq!(content, "[00:01.00]Keep me");
+}
+
+// ---- raw read (the editor needs source text, not the parsed doc) ----
+
+#[test]
+fn read_raw_returns_sidecar_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+    fs::write(dir.path().join("song.lrc"), "[00:01.00]Raw line").unwrap();
+
+    let (source, text) = lyrics::read_raw(&audio).unwrap().expect("sidecar must be read");
+    assert_eq!(source, "sidecar");
+    assert_eq!(text, "[00:01.00]Raw line");
+}
+
+#[test]
+fn read_raw_prefers_embedded_like_resolve() {
+    use lofty::prelude::*;
+    use lofty::tag::{ItemKey, Tag, TagType};
+
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.insert_text(ItemKey::UnsyncLyrics, "[00:02.00]From the tag".to_string());
+    tag.save_to_path(&audio, lofty::config::WriteOptions::default()).unwrap();
+    fs::write(dir.path().join("song.lrc"), "[00:01.00]From sidecar").unwrap();
+
+    let (source, text) = lyrics::read_raw(&audio).unwrap().expect("embedded must win");
+    assert_eq!(source, "embedded");
+    assert_eq!(text, "[00:02.00]From the tag");
+}
+
+#[test]
+fn read_raw_none_when_no_lyrics() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("song.mp3");
+    write_mp3(&audio);
+    assert!(lyrics::read_raw(&audio).unwrap().is_none());
+}
