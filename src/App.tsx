@@ -51,6 +51,7 @@ import {
   QueueIcon,
   RepeatIcon,
   ShuffleIcon,
+  BrandMark,
   StageIcon,
   SunIcon,
   VolumeIcon,
@@ -905,7 +906,10 @@ function App() {
   return (
     <div key="backstage" className="app">
       <header className={`toolbar ${fullscreen ? "fullscreen" : ""}`} data-tauri-drag-region>
-        <h1 className="brand">Ōtori</h1>
+        <h1 className="brand">
+          <BrandMark />
+          Ōtori
+        </h1>
         <button onClick={pickAndScan} disabled={scanning}>
           {scanning ? "Scanning…" : "Scan folder…"}
         </button>
