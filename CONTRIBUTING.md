@@ -75,6 +75,34 @@ declined — `otori import-bpm` exists precisely so such data can enter
 the library as an explicit, provenance-tracked *import* instead of a
 built-in.
 
+## Reaching 1.0
+
+Ōtori is pre-alpha (v0.1.0). `1.0.0` is a *promise* — it tells human
+users and agent consumers that the public contract is frozen and that
+breaking changes go through a major bump. The bar (all must hold):
+
+- **Schema freeze.** The library schema (`SCHEMA_VERSION` in
+  `crates/otori-core/src/db.rs`) is stable; no engine swap reopens the
+  whole library's analysis. The CLI JSON contract enters
+  additive-only (`otori --schema-version`; new fields allowed, breaking
+  changes require a bump).
+- **Roadmap #3 lands.** "It performs" reaches ✅, or its remaining
+  pieces (smart playlists, watch folders) are explicitly scoped out of
+  1.0 and recorded here.
+- **Signed + notarized macOS build.** Developer ID signing and
+  notarization so a downloaded `.dmg` opens without Gatekeeper
+  intervention (~$99/yr Apple Developer Program, deferred from 0.1.0).
+- **CI gate on PRs.** The full test suite — `cargo test --workspace`,
+  `scripts/acceptance.sh` (the AGENTS.md contract), `tsc --noEmit`,
+  `vitest run` — runs on every PR, not just the local ship gate.
+- **AGENTS.md contract stable for a release cycle** with no edits.
+
+Until then, breaking changes between `0.x` releases are expected and do
+not require a deprecation cycle. The current ship gate
+(`autoskill.yml`) covers `otori-core` + `tsc` + `vitest`; the release
+gate additionally runs `cargo test --workspace` and
+`scripts/acceptance.sh`.
+
 ## License of contributions
 
 Ōtori is licensed under [AGPL-3.0-only](LICENSE). By submitting a
