@@ -13,6 +13,7 @@ import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { LibraryTable, type ColumnWidths } from "./LibraryTable";
+import { createArtworkCache } from "./artworkcache";
 import { ToastStack } from "./ToastStack";
 import { dismissToast, pushToast, type Toast } from "./toasts";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
@@ -81,6 +82,9 @@ function App() {
   // Per-track sync nudge, mirrored from the index row; [ / ] update it.
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   const [artwork, setArtwork] = useState<string | null>(null);
+  // Shared lazy cover cache for the table (dedup + IPC concurrency cap +
+  // negative caching). Created once; the table drives it from view.
+  const artworkCache = useRef(createArtworkCache(getArtwork)).current;
   const [paused, setPaused] = useState(true);
   const [scanning, setScanning] = useState(false);
   // Toast stack (audit r5 P1): scan reports and transient info; the
@@ -900,9 +904,6 @@ function App() {
         <span className="track-count">
           {query ? `${visible.length} / ${tracks.length} tracks` : `${tracks.length} tracks`}
         </span>
-        <span className="mode-hint">
-          {current ? "S → Stage · Space → play/pause" : ""}
-        </span>
         <button
           className="icon-btn stage-toggle"
           onClick={() => setMode("stage")}
@@ -957,6 +958,7 @@ function App() {
             selection={selection}
             sort={sort}
             columnWidths={columnWidths}
+            artwork={artworkCache}
             onColumnWidths={setColumnWidths}
             onSort={onSort}
             onRowClick={(id, mods) => setSelection((s) => clickSelect(s, visible, id, mods))}

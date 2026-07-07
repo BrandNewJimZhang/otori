@@ -228,6 +228,12 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* Last of the left cluster: pushes the icon buttons to the far edge
+   (the role the removed mode-hint used to fill). */
+.track-count {
+  margin-right: auto;
+}
+
 .search {
   background: var(--bg);
   color: var(--text);
@@ -573,28 +579,100 @@ tbody tr.selected:hover {
   background: color-mix(in srgb, var(--library) 22%, var(--bg));
 }
 
-tbody tr.playing td {
+tbody tr.playing td:not(.col-art) {
   color: var(--playback);
 }
 
-tbody tr.playing td:first-child {
+tbody tr.playing td.col-art {
   border-left: 2px solid var(--playback);
-  padding-left: 10px;
 }
 
-/* Hover affordance: a play glyph slides in before the title. */
-.row-play {
-  display: inline-flex;
-  vertical-align: -3px;
-  width: 0;
-  overflow: hidden;
-  color: var(--playback);
+/* ---- cover thumbnail (audit r6 P0) ---- */
+
+/* Narrow leading column sized to the thumbnail; the artwork carries the
+   play / now-playing affordance the title cell used to. */
+.col-art {
+  width: 44px;
+  padding: 3px 0 3px 12px;
+}
+
+.density-compact .col-art {
+  width: 36px;
+}
+
+.art-observe {
+  display: block;
+}
+
+.art-cell {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 30px;
+}
+
+.density-compact .art-cell {
+  width: 24px;
+  height: 24px;
+}
+
+.art-thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-s);
+  object-fit: cover;
+  background: var(--bg-hover);
+  display: block;
+}
+
+/* Empty tile: reserves the same box so a late-loading cover never shifts
+   the row; a dim note glyph marks "no embedded art". */
+.art-thumb-empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.art-thumb-empty svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Overlays sit on the thumbnail; the play wedge fades in on row hover,
+   the dancing bars mark the current track. Both scrim the cover so the
+   glyph reads over any album colour. */
+.art-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-s);
+  padding: 0;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.art-overlay svg {
+  width: 15px;
+  height: 15px;
+}
+
+.art-overlay-play {
   cursor: pointer;
-  transition: width 100ms;
+  opacity: 0;
+  transition: opacity 100ms;
 }
 
-tbody tr:hover .row-play {
-  width: 22px;
+tbody tr:hover .art-overlay-play {
+  opacity: 1;
+}
+
+/* Now-playing bars ride the artwork in green; scrim keeps them legible. */
+.art-overlay-playing .np-bars {
+  width: 16px;
+  height: 12px;
 }
 
 .col-duration {
@@ -620,6 +698,12 @@ tbody tr:hover .row-play {
 .col-format {
   width: 68px;
   color: var(--text-dim);
+}
+
+/* Body cells only: MP3/FLAC are initialisms, so uppercase + smaller.
+   The header keeps the shared Title-case th style (audit r6 P2 — the
+   header used to render "FORMAT" at 11px, out of step with the rest). */
+td.col-format {
   text-transform: uppercase;
   font-size: 11px;
 }
@@ -1247,12 +1331,6 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 
 .stage-mode {
   cursor: default;
-}
-
-.mode-hint {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-dim);
 }
 
 /* Square icon button (toolbar theme toggle). */

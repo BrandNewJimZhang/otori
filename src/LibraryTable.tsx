@@ -3,11 +3,12 @@
 // playing" indicator. Pure presentation — sort/filter/selection state
 // lives in App, logic in library.ts, column prefs in prefs.ts.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
 import { displayTitle } from "./library";
 import { formatTime } from "./format";
-import { PlayIcon, SortArrowIcon } from "./icons";
+import { NoteIcon, PlayIcon, SortArrowIcon } from "./icons";
+import type { ArtworkCache } from "./artworkcache";
 import type { TrackRow } from "./types";
 import { revealOffset, rowWindow } from "./virtualwindow";
 
@@ -34,6 +35,8 @@ interface Props {
   selection: Selection;
   sort: SortSpec | null;
   columnWidths: ColumnWidths;
+  /** Lazy cover-art source; the table fetches only rows scrolled into view. */
+  artwork: ArtworkCache;
   onColumnWidths(widths: ColumnWidths): void;
   onSort(key: SortKey): void;
   onRowClick(id: number, mods: { shift: boolean; meta: boolean }): void;
@@ -63,6 +66,56 @@ function NowPlayingBars({ paused }: { paused: boolean }) {
   );
 }
 
+/**
+ * Row-leading cover thumbnail: the cover once loaded, a note glyph when
+ * the file has none, and — while nothing has resolved — a plain tile so
+ * the row height never shifts when the image lands. It doubles as the
+ * hover/now-playing affordance surface (an overlaid play wedge, or the
+ * dancing bars for the current track), matching how Apple Music / Spotify
+ * put those states on the artwork rather than beside the title.
+ */
+function ArtCell({
+  art,
+  playing,
+  paused,
+  onPlay,
+}: {
+  art: string | null | undefined;
+  playing: boolean;
+  paused: boolean;
+  onPlay(): void;
+}) {
+  return (
+    <span className="art-cell">
+      {art ? (
+        <img className="art-thumb" src={art} alt="" loading="lazy" draggable={false} />
+      ) : (
+        <span className="art-thumb art-thumb-empty" aria-hidden>
+          {art === null && <NoteIcon />}
+        </span>
+      )}
+      {playing ? (
+        <span className="art-overlay art-overlay-playing" aria-hidden>
+          <NowPlayingBars paused={paused} />
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="art-overlay art-overlay-play"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlay();
+          }}
+          tabIndex={-1}
+          aria-label="Play"
+        >
+          <PlayIcon />
+        </button>
+      )}
+    </span>
+  );
+}
+
 export function LibraryTable({
   tracks,
   playingId,
@@ -71,6 +124,7 @@ export function LibraryTable({
   selection,
   sort,
   columnWidths,
+  artwork,
   onColumnWidths,
   onSort,
   onRowClick,
@@ -128,6 +182,30 @@ export function LibraryTable({
     };
   }, []);
 
+  // A cover landing must repaint its row; the cache lives outside React,
+  // so a settle callback bumps this tick to pull the resolved data URL.
+  const [, bumpArt] = useReducer((n: number) => n + 1, 0);
+
+  // Cover thumbnails load only for rows scrolled into view. One shared
+  // observer watches each row's art tile (rootMargin pre-warms a screen
+  // ahead); on intersection we ask the cache — which dedups, caps IPC
+  // concurrency, and caches negatives — then repaint on settle.
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  if (observerRef.current == null && typeof IntersectionObserver !== "undefined") {
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const path = (entry.target as HTMLElement).dataset.artPath;
+          if (path) artwork.request(path, bumpArt);
+          observerRef.current?.unobserve(entry.target); // one-shot per row
+        }
+      },
+      { rootMargin: "600px 0px" },
+    );
+  }
+  useEffect(() => () => observerRef.current?.disconnect(), []);
+
   // Keyboard selection must stay visible (audit P0): when the anchor
   // moves, scroll it into view. With virtualization the anchor row may
   // not be rendered, so we compute the offset from its index instead
@@ -176,6 +254,9 @@ export function LibraryTable({
     <table ref={tableRef} role="grid" aria-multiselectable="true">
       <thead>
         <tr>
+          {/* Art column: no label, no sort — a spacer aligning the
+              header grid with the thumbnail cells below. */}
+          <th className="col-art" aria-hidden />
           {COLUMNS.map((c) => (
             <th
               key={c.key}
@@ -236,21 +317,23 @@ export function LibraryTable({
               onDoubleClick={() => onPlay(t)}
               onContextMenu={(e) => onRowContextMenu(t, e)}
             >
+              <td className="col-art">
+                <span
+                  className="art-observe"
+                  data-art-path={t.path}
+                  ref={(el) => {
+                    if (el) observerRef.current?.observe(el);
+                  }}
+                >
+                  <ArtCell
+                    art={artwork.get(t.path)}
+                    playing={playing}
+                    paused={paused}
+                    onPlay={() => onPlay(t)}
+                  />
+                </span>
+              </td>
               <td>
-                {playing ? (
-                  <NowPlayingBars paused={paused} />
-                ) : (
-                  <span
-                    className="row-play"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onPlay(t);
-                    }}
-                    aria-label="Play"
-                  >
-                    <PlayIcon />
-                  </span>
-                )}
                 {displayTitle(t)}
                 {queuePositions.has(t.id) && (
                   <span className="queue-badge" title={`Playing next (#${queuePositions.get(t.id)})`}>
