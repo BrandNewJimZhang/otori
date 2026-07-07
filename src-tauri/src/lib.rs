@@ -24,6 +24,37 @@ struct Tray {
     next: MenuItem<tauri::Wry>,
 }
 
+/// Default thread cap for rten (the Beat This! inference backend). rten
+/// defaults to every performance core, so a single BPM inference spike
+/// monopolizes the CPU and can stutter audio decode + the UI — exactly
+/// the player-hogging this app must avoid. Background analysis is
+/// throughput-insensitive (duty-cycle ≤10%), so capping it to a small
+/// fixed count leaves headroom for the realtime path.
+///
+/// Fixed 2: on the minimum supported machine (4 P-cores) this leaves
+/// ≥2 P-cores for audio decode + the WebView. Scale with P-core count
+/// if sweep wall-clock ever matters; rten's own `optimal_core_count`
+/// (P-aware via `hw.perflevel0.physicalcpu`) is the reference for a
+/// dynamic ceiling.
+const RTEN_DEFAULT_THREADS: &str = "2";
+
+/// Decide the rten thread cap given any explicit `RTEN_NUM_THREADS` in
+/// the environment. Returns `Some` only when the user hasn't already
+/// set one — an explicit export wins over our default. Pure so the
+/// rule is testable without mutating the process environment.
+fn rten_thread_cap(existing: Option<&std::ffi::OsStr>) -> Option<&'static str> {
+    (existing.is_none()).then_some(RTEN_DEFAULT_THREADS)
+}
+
+/// Cap rten's inference thread pool before any analysis runs. rten's
+/// pool is a process-global `OnceLock` initialized on first inference,
+/// so this must run before `analyze_track` — i.e. at the top of `run`.
+fn cap_analysis_threads() {
+    if let Some(cap) = rten_thread_cap(std::env::var_os("RTEN_NUM_THREADS").as_deref()) {
+        std::env::set_var("RTEN_NUM_THREADS", cap);
+    }
+}
+
 /// Display-sleep blocker: a `caffeinate -d` child (macOS-native, no
 /// dependency) held while Stage mode plays. Dropping/killing the child
 /// releases the assertion; if Ōtori dies, the child dies with it.
@@ -413,6 +444,7 @@ fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    cap_analysis_threads();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -511,4 +543,22 @@ fn spawn_library_watcher(app: tauri::AppHandle, db_path: std::path::PathBuf) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rten_thread_cap;
+
+    #[test]
+    fn caps_when_user_has_not_set_rten_threads() {
+        // No existing RTEN_NUM_THREADS → we supply our player-safe default.
+        assert_eq!(rten_thread_cap(None), Some("2"));
+    }
+
+    #[test]
+    fn yields_to_an_explicit_rten_threads_override() {
+        // A power user who exported RTEN_NUM_THREADS wins over our default;
+        // we must not silently clobber their explicit choice.
+        assert_eq!(rten_thread_cap(Some("4".as_ref())), None);
+    }
 }
