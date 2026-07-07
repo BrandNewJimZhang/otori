@@ -304,7 +304,10 @@ fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
         handle,
         "File",
         true,
-        &[&MenuItem::with_id(handle, "menu_scan", "Scan Folder…", true, Some("CmdOrCtrl+O"))?],
+        &[
+            &MenuItem::with_id(handle, "menu_scan", "Scan Folder…", true, Some("CmdOrCtrl+O"))?,
+            &MenuItem::with_id(handle, "menu_reanalyze", "Reanalyze Library", true, None::<&str>)?,
+        ],
     )?;
     let edit = Submenu::with_items(
         handle,

@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, getLyrics, listTracks, scanLibrary, setDisplayAwake, setLyricsOffset, updateTray } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary, setDisplayAwake, setLyricsOffset, updateTray, reopenAnalysis } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
@@ -57,7 +57,9 @@ import {
   VolumeIcon,
 } from "./icons";
 import { headMixPoint, tailMixPoint } from "./mixpoints";
-import { startAnalysisSweep } from "./analysissweep";
+import { StatusBar } from "./StatusBar";
+import { statusLine } from "./statusline";
+import { onSweepProgress, startAnalysisSweep } from "./analysissweep";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
 import type { LyricsDoc, TrackRow } from "./types";
@@ -202,6 +204,9 @@ function App() {
   // mix anchors) this session. Kicks on mount and again on library
   // changes (new scans add rows).
   useEffect(startAnalysisSweep, []);
+  // Sweep progress for the status bar (null = idle).
+  const [sweepRemaining, setSweepRemaining] = useState<number | null>(null);
+  useEffect(() => onSweepProgress(setSweepRemaining), []);
 
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
   // shell emits `library-changed` when an external writer (CLI/agent)
@@ -592,6 +597,13 @@ function App() {
         case "scan":
           void pickAndScan();
           break;
+        case "reanalyze":
+          // Whole-library reopen; the sweep chews through it at idle
+          // priority and the status bar shows the queue.
+          void reopenAnalysis()
+            .then(() => startAnalysisSweep())
+            .catch((err) => setError(String(err)));
+          break;
       }
     });
     return () => {
@@ -811,6 +823,14 @@ function App() {
           label: "Copy path",
           action: () => void navigator.clipboard.writeText(first.path).catch(() => {}),
         },
+        {
+          label: "Reanalyze BPM",
+          separator: true,
+          action: () =>
+            void reopenAnalysis({ trackIds: ids })
+              .then(() => startAnalysisSweep())
+              .catch((e) => setError(String(e))),
+        },
       ];
     }
     // Multi-selection: batch actions only (play is inherently single).
@@ -821,6 +841,14 @@ function App() {
         label: `Copy ${menu.targets.length} paths`,
         separator: true,
         action: () => void navigator.clipboard.writeText(paths).catch(() => {}),
+      },
+      {
+        label: `Reanalyze BPM (${menu.targets.length})`,
+        separator: true,
+        action: () =>
+          void reopenAnalysis({ trackIds: ids })
+            .then(() => startAnalysisSweep())
+            .catch((e) => setError(String(e))),
       },
     ];
   }, [menu, play, queue]);
@@ -952,8 +980,6 @@ function App() {
           {theme === "dark" ? <MoonIcon /> : theme === "light" ? <SunIcon /> : <AutoThemeIcon />}
         </button>
       </header>
-
-      {scanning && <div className="scan-progress" role="progressbar" aria-label="Scanning" />}
 
       <main className={`library density-${density} ${inspectorOpen ? "with-inspector" : ""}`}>
         {tracks.length === 0 ? (
@@ -1199,6 +1225,16 @@ function App() {
 
         <Spectrum analyser={engine.analyser} paused={paused} />
       </footer>
+
+      <StatusBar
+        line={statusLine({
+          tracks: tracks.length,
+          analyzed: tracks.filter((t) => t.bpm != null || t.mix_analyzed).length,
+          scanning,
+          sweepRemaining,
+        })}
+        scanning={scanning}
+      />
 
       {queueOpen && (
         <QueuePanel
