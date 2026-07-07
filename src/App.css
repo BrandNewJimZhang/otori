@@ -64,6 +64,24 @@
   box-sizing: border-box;
 }
 
+/* Height chain anchored to the native window client area, not the
+   viewport: on external / HiDPI displays at fractional scale, the webview
+   rounds `100vh` down a pixel or two, so a viewport-sized surface leaves a
+   thin strip of the native window bg (#101014) exposed on the right/bottom.
+   Percentage height off html/#root tracks the real client box exactly, and
+   overflow:hidden here kills overscroll rubber-banding leaking the same bg. */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -129,7 +147,7 @@ button {
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   /* Mode transition (audit r5 P0): Backstage↔Stage remount fades the
      incoming surface in instead of hard-cutting. Keyed remount in App
      retriggers this per switch; it also softens app launch. */
@@ -1264,7 +1282,7 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   --highs: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   position: relative;
   overflow: hidden;
   background: radial-gradient(ellipse at 50% 120%, #1a1424 0%, var(--bg) 60%);
