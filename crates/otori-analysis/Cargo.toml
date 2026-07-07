@@ -9,3 +9,5 @@ repository.workspace = true
 [dependencies]
 beat-this = "1.0"
 anyhow = "1"
+otori-core.workspace = true
+serde.workspace = true

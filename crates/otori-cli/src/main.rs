@@ -1122,22 +1122,30 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let mut results = Vec::new();
             let mut failures = 0usize;
             for item in &worklist {
-                match analyze_one(&conn, &mut engine, item) {
-                    Ok(v) => results.push(v),
+                match otori_analysis::analyze_and_persist(&conn, &mut engine, item) {
+                    Ok(v) => results.push((item.path.clone(), v)),
                     Err(e) => {
                         failures += 1;
                         eprintln!(
                             "{}",
-                            serde_json::json!({ "error": e, "kind": "analysis", "path": item.path })
+                            serde_json::json!({ "error": e.to_string(), "kind": "analysis", "path": item.path })
                         );
                     }
                 }
             }
             if json {
-                println!("{}", serde_json::json!({ "analyzed": results, "failures": failures }));
+                let analyzed: Vec<_> = results
+                    .iter()
+                    .map(|(path, v)| serde_json::json!({ "path": path, "verdict": v }))
+                    .collect();
+                println!("{}", serde_json::json!({ "analyzed": analyzed, "failures": failures }));
             } else {
-                for r in &results {
-                    println!("{r}");
+                for (path, v) in &results {
+                    match (v.bpm, v.bpm_max) {
+                        (Some(bpm), Some(max)) => println!("{path}: {bpm:.1}\u{2013}{max:.1} BPM"),
+                        (Some(bpm), None) => println!("{path}: {bpm:.1} BPM"),
+                        (None, _) => println!("{path}: beatless / anchors only"),
+                    }
                 }
                 println!("{} analyzed, {failures} failed", results.len());
             }
@@ -1148,50 +1156,6 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
     }
-}
-
-/// Analyze one pending track and persist verdict + anchors through the
-/// same core writers the GUI uses. Returns a human line for stdout.
-fn analyze_one(
-    conn: &otori_core::Connection,
-    engine: &mut otori_analysis::AnalysisEngine,
-    item: &otori_core::analysis::PendingTrack,
-) -> Result<String, String> {
-    use otori_core::analysis::{set_bpm, set_bpm_verified, set_mix_anchors, DetectedBpm, MixAnchor};
-
-    let result = engine
-        .analyze(std::path::Path::new(&item.path), item.hint_bpm)
-        .map_err(|e| e.to_string())?;
-    let line = if item.needs_bpm {
-        match result.verdict {
-            Some(v) => {
-                let detected = DetectedBpm {
-                    bpm: (v.bpm * 10.0).round() / 10.0,
-                    bpm_max: v.bpm_max.map(|m| (m * 10.0).round() / 10.0),
-                    confidence: (v.confidence * 100.0).round() / 100.0,
-                };
-                if v.hint_applied {
-                    set_bpm_verified(conn, item.id, detected).map_err(|e| e.to_string())?;
-                } else {
-                    set_bpm(conn, item.id, Some(detected)).map_err(|e| e.to_string())?;
-                }
-                match v.bpm_max {
-                    Some(max) => format!("{}: {:.1}\u{2013}{max:.1} BPM", item.path, v.bpm),
-                    None => format!("{}: {:.1} BPM", item.path, v.bpm),
-                }
-            }
-            None => {
-                set_bpm(conn, item.id, None).map_err(|e| e.to_string())?;
-                format!("{}: beatless", item.path)
-            }
-        }
-    } else {
-        format!("{}: anchors only", item.path)
-    };
-    let to_anchor = |a: otori_analysis::MixAnchor| MixAnchor { bpm: a.bpm, beat_sec: a.beat_sec };
-    set_mix_anchors(conn, item.id, result.head.map(to_anchor), result.tail.map(to_anchor))
-        .map_err(|e| e.to_string())?;
-    Ok(line)
 }
 
 fn open_library(db: Option<PathBuf>) -> Result<otori_core::Connection, CliError> {

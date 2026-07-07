@@ -81,34 +81,35 @@ export function listAnalysisPending(): Promise<PendingTrack[]> {
   return invoke<PendingTrack[]>("list_analysis_pending");
 }
 
-export interface DetectedBpm {
-  bpm: number;
+/** What one Rust analysis pass wrote to the index (mirrors
+    otori_analysis::PersistedVerdict). */
+export interface PersistedVerdict {
+  bpm: number | null;
   bpm_max: number | null;
-  confidence: number;
+  confidence: number | null;
+  hint_applied: boolean;
+  head: { bpm: number; beat_sec: number } | null;
+  tail: { bpm: number; beat_sec: number } | null;
 }
 
-/** Persist a detection outcome; null = analyzed, beatless.
-    `usedHint` records that an external anchor folded/confirmed it. */
-export function setBpm(
-  trackId: number,
-  detected: DetectedBpm | null,
-  usedHint = false,
-): Promise<void> {
-  return invoke<void>("set_bpm", { trackId, detected, usedHint });
+/** Analyze one pending track in Rust (decode + Beat This! + persist).
+    Slow (~1s per minute of audio); rejects when the track is not
+    pending. */
+export function analyzeTrack(trackId: number): Promise<PersistedVerdict> {
+  return invoke<PersistedVerdict>("analyze_track", { trackId });
 }
 
-export interface MixAnchorArg {
-  bpm: number;
-  beat_sec: number;
-}
-
-/** Persist per-end mix anchors; null end = unstable, plain fade there. */
-export function setMixAnchors(
-  trackId: number,
-  head: MixAnchorArg | null,
-  tail: MixAnchorArg | null,
-): Promise<void> {
-  return invoke<void>("set_mix_anchors", { trackId, head, tail });
+/** Reopen analysis so the sweep re-verdicts. No args = whole library;
+    `trackIds` = exactly those; `lowConfidence` = shaky + beatless.
+    Returns the number of tracks reopened. */
+export function reopenAnalysis(opts: {
+  trackIds?: number[];
+  lowConfidence?: number;
+} = {}): Promise<number> {
+  return invoke<number>("reopen_analysis", {
+    trackIds: opts.trackIds ?? null,
+    lowConfidence: opts.lowConfidence ?? null,
+  });
 }
 
 /** Hold/release the display-sleep assertion (Stage mode playing). */

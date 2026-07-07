@@ -2663,6 +2663,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "beat-this",
+ "otori-core",
+ "serde",
 ]
 
 [[package]]
@@ -2670,6 +2672,7 @@ name = "otori-app"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "otori-analysis",
  "otori-core",
  "serde",
  "serde_json",

@@ -1,29 +1,42 @@
 // Background analysis sweeper: drains the index's pending list through
-// the full-track analyzer, one track at a time, idle-priority. Persists
-// the BPM column verdict (hint-anchored octave folding — see beatgrid
-// applyHint) and both mix anchors, so a restart resumes where it left
-// off and crossfade planning reads anchors from the index instead of
-// re-decoding every session.
+// the Rust analyzer (analyze_track IPC), one track at a time,
+// idle-priority. Rust persists each verdict, so a restart resumes
+// where it left off; the frontend only paces the loop and reports
+// progress for the status bar.
 
-import { analyzeTrack } from "./beatservice";
-import { listAnalysisPending, setBpm, setMixAnchors } from "./ipc";
-import type { MixAnchor } from "./beatgrid";
+import { analyzeTrack, listAnalysisPending } from "./ipc";
 
 /** Floor between tracks: even instant work never runs back-to-back. */
 const PACE_MS = 3000;
-/** Duty-cycle cap: sweep work stays ≤10% of wall time. A full-track
-    decode costs 190-550ms of WebView CPU (measured on the real
-    library; the DSP itself is ~6ms) — a fixed pause lets a run of
-    heavy files stack into a felt load. */
+/** Duty-cycle cap: sweep work stays ≤10% of wall time. Beat This!
+    inference costs ~1s per minute of audio — a fixed pause would let
+    a run of album cuts stack into a felt load. */
 const DUTY_CYCLE = 0.1;
 
 /** Sleep after a track that took `workMs`: the base pace, stretched
-    so work/(work+sleep) ≤ DUTY_CYCLE for expensive decodes. */
+    so work/(work+sleep) ≤ DUTY_CYCLE for expensive tracks. */
 export function paceDelayMs(workMs: number): number {
   return Math.max(PACE_MS, Math.round((workMs * (1 - DUTY_CYCLE)) / DUTY_CYCLE));
 }
 
+/** Sweep progress for ambient UI (status bar): tracks left in this
+    run, or null when idle. */
+export type SweepListener = (remaining: number | null) => void;
+
 let running = false;
+let listener: SweepListener | null = null;
+
+/** Register the (single) progress consumer. Returns an unsubscribe. */
+export function onSweepProgress(fn: SweepListener): () => void {
+  listener = fn;
+  return () => {
+    if (listener === fn) listener = null;
+  };
+}
+
+function report(remaining: number | null): void {
+  listener?.(remaining);
+}
 
 /**
  * Start the sweep loop for this session. Idempotent; safe to call on
@@ -36,45 +49,23 @@ export function startAnalysisSweep(): void {
   void (async () => {
     try {
       const pending = await listAnalysisPending();
-      for (const track of pending) {
+      for (let i = 0; i < pending.length; i++) {
+        report(pending.length - i);
         const started = performance.now();
-        const { tempo, anchors } = await analyzeTrack(track.path, track.hint_bpm);
-        // Persist even nulls (beatless / unstable ends): "analyzed,
-        // nothing usable" must not be re-attempted every launch. IPC
-        // failure aborts the sweep (index unavailable) rather than
-        // spinning.
-        if (track.needs_bpm) {
-          await setBpm(
-            track.id,
-            tempo
-              ? {
-                  bpm: round1(tempo.bpm),
-                  bpm_max: tempo.bpmMax != null ? round1(tempo.bpmMax) : null,
-                  confidence: Math.round(tempo.confidence * 100) / 100,
-                }
-              : null,
-            tempo?.hintApplied ?? false,
-          );
-        }
-        // Anchors keep full precision: beat phase feeds sample math.
-        await setMixAnchors(track.id, anchorArg(anchors.head), anchorArg(anchors.tail));
+        // Rust analyzes AND persists; a rejection (file vanished,
+        // decode error) skips that track — it stays pending and the
+        // next launch retries it once the underlying cause is gone.
+        await analyzeTrack(pending[i].id).catch(() => undefined);
         await sleep(paceDelayMs(performance.now() - started));
       }
     } catch {
-      // Sweep is an enhancement; next launch (or next library-changed)
-      // retries whatever is still pending.
+      // Worklist unavailable (index closed?) — sweep is an
+      // enhancement; next launch or library-changed retries.
     } finally {
+      report(null);
       running = false;
     }
   })();
-}
-
-function anchorArg(a: MixAnchor | null): { bpm: number; beat_sec: number } | null {
-  return a ? { bpm: a.bpm, beat_sec: a.beatSec } : null;
-}
-
-function round1(n: number): number {
-  return Math.round(n * 10) / 10;
 }
 
 function sleep(ms: number): Promise<void> {
