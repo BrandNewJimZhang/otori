@@ -1,7 +1,7 @@
 # Design: Backstage tag inspector
 
 Date: 2026-07-07
-Status: approved design, not yet implemented
+Status: v1 shipped (817c4c1); r2 amendment below approved 2026-07-07
 Authorized by: ADR-0001 amendment A5
 
 The human-facing counterpart of the agent-facing `otori set`: a
@@ -24,9 +24,10 @@ value becomes `human`-sourced and born curated.
 
 ## Layout & interaction
 
-- Docked right column in Backstage (~300px), toggled by `i` (free in
-  `uikeys.ts`) and View menu. The up-next queue panel is an overlay
-  popover, so no rail conflict.
+- Docked right column in Backstage (~300px), toggled by `⌘I` (mac
+  "Get Info" convention; plain `i` stays type-ahead — amended from the
+  original `i` during implementation) and View menu. The up-next queue
+  panel is an overlay popover, so no rail conflict.
 - Selection drives content: 0 selected = empty-state hint; 1 = full
   panel; N = batch mode (below).
 - Sections, top to bottom:
@@ -141,3 +142,104 @@ without changing the letter.
 - Single-writer lock: GUI holds a long-lived connection; verify a
   concurrent CLI `--apply` surfaces the promised "clear error" rather
   than SQLITE_BUSY jank (busy_timeout + one retry is acceptable).
+
+---
+
+# r2 amendment: entry points, cover removal, lyrics editing
+
+Date: 2026-07-07. Three gaps found in v1 use: the panel is
+undiscoverable, the cover is display-only, and lyrics text is
+invisible in Backstage. All three stay inside the v1 doctrine — one
+core write path, files as SSOT for values.
+
+## 1. Entry points
+
+v1 reality: `⌘I` and an accelerator-less View-menu item are the only
+ways in; the row context menu — the natural "act on this track"
+surface — has no inspector entry, and the toolbar shows nothing.
+
+- **Context menu**: add "Get Info" (single) / "Get Info on N tracks"
+  (batch) as the first item after Play. Action = select the clicked
+  target(s) (already contextTargets semantics) + `setInspectorOpen(true)`.
+  Not a toggle: a menu that says "Get Info" must never close the panel.
+- **Toolbar**: an `icon-btn` inspector toggle next to the Stage toggle,
+  `aria-pressed` + tip "Inspector (⌘I)" — the shortcut teaches itself,
+  same pattern as "Stage (S)".
+- No change to `⌘I` or the View menu.
+
+## 2. Cover removal (single-track)
+
+The inspector thumbnail is the only place a wrong/ugly embedded cover
+is visible up close — it is where removal belongs.
+
+- **Scope**: removes the *embedded* picture only. Sidecar/folder art is
+  files-on-disk (deleting user files is Finder's job, not a tag
+  operation); after removal the resolve chain simply falls back to
+  them, which the refreshed thumbnail shows immediately.
+- **UI**: hovering the thumbnail reveals a small "Remove cover" action;
+  shown only when the resolved art source is `embedded` (needs
+  `get_artwork` to also return the source — extend the IPC payload to
+  `{ dataUrl, source }`).
+- **Core**: `write::remove_artwork(conn, path, actor)` — mirror of
+  `embed_artwork`: refuses when nothing is embedded, full L2 (db
+  auto-backup, first-touch snapshot, one-transaction journal row
+  `field='picture', old_value=<source>, new_value=NULL`).
+- **Undo asymmetry is explicit**: the journal stores provenance, not
+  bytes, so `otori undo` of a removal CANNOT restore the picture
+  (same reason `("picture", Some(_))` errors today). `undo` on such a
+  tx must fail with a clear message pointing at the first-touch
+  snapshot/backups. The GUI toast therefore says "Cover removed" with
+  NO undo handle — silence about undo is the honest UI here.
+- **IPC**: `remove_artwork(path) -> txId`, emits `library-changed`.
+  CLI twin `otori remove-artwork <path> --apply` can follow later; the
+  core function is the shared seam (not blocking this cut).
+
+## 3. Lyrics editing (single-track)
+
+Editing lyrics text is a Backstage/inspector concern (fixing a typo,
+pasting lyrics in); Stage stays a pure renderer.
+
+- **Scope**: the **sidecar `.lrc` is the only editable surface.**
+  Embedded lyrics tags stay read-only in r2 (no USLT writer exists in
+  core, and the sidecar-first delivery rule is PRODUCT.md doctrine).
+  Since embedded wins in `resolve()`, a track with an embedded tag
+  shows its lyrics as read-only with a note; sidecar-or-none tracks
+  get the editor.
+- **UI**: a "Lyrics" section between Tags and Analysis, single-track
+  only. Collapsed by default to a one-line summary (kind · source ·
+  line count, or "No lyrics"); expands to a monospace textarea holding
+  the raw LRC text. Save button per section (lyrics are not tag
+  fields; they do not ride the tag Save/journal path). Escape reverts,
+  same dirty-state affordance as tag fields.
+- **Core**: `lyrics::write_sidecar` keeps `create_new` for the agent
+  path. New `lyrics::overwrite_sidecar(audio, lrc_text) -> PathBuf`
+  is the human path — the "replacing lyrics is a human decision"
+  comment already reserves exactly this seam. No `[by:]` header
+  injection: the human owns the full text verbatim. Empty text is a
+  bad call, not a delete — refuse (removal is r3 scope if wanted).
+- **Raw read**: the editor needs the raw sidecar text, not the parsed
+  `LyricsDoc`. New `lyrics::read_raw(audio) -> Option<(source, text)>`
+  (embedded tag string or sidecar file contents), IPC
+  `get_lyrics_raw(path)`.
+- **Not journaled**: sidecars are not audio-file tag writes; they are
+  the same class as agent-delivered `.lrc` files today (undo = edit
+  again). No first-touch snapshot, no tx row. If lyrics ever move
+  into tags, they enter the journal then.
+- After save: emit nothing — lyrics are read per-track on play; the
+  inspector re-reads its own section. (`library-changed` would refetch
+  the whole table for a text file no column displays.)
+
+## r2 test plan (TDD order)
+
+1. `lyrics.rs` tests: `overwrite_sidecar` replaces existing content /
+   creates when absent / refuses empty text; `read_raw` returns
+   sidecar text, embedded text, or None.
+2. `embed.rs` tests: `remove_artwork` strips the picture (resolve
+   falls back to sidecar), journals `picture: <source> → NULL`,
+   refuses when nothing embedded, undo of a removal fails with the
+   snapshot-pointing message.
+3. `inspector.test.ts`: lyrics-section state machine (readonly vs
+   editable vs empty by source) and cover-action visibility (embedded
+   only) as pure functions.
+4. Acceptance: remove a cover in the GUI → thumbnail falls back to
+   sidecar art; edit lyrics → Stage shows the new text on next play.
