@@ -28,6 +28,7 @@ export type KeyAction =
   | { kind: "seek-nudge"; secs: number }
   | { kind: "step-track"; offset: 1 | -1 }
   | { kind: "show-shortcuts" }
+  | { kind: "toggle-inspector" }
   | { kind: "escape" };
 
 const SEEK_NUDGE_SEC = 5;
@@ -57,6 +58,7 @@ const TABLE_ACTIONS = new Set<KeyAction["kind"]>([
   "select-page",
   "type-ahead",
   "play-selected",
+  "toggle-inspector", // the inspector is a Backstage surface
 ]);
 
 export function routeKey(combo: KeyCombo, zone: KeyZone, surface: Surface = "backstage"): KeyAction {
@@ -78,6 +80,12 @@ function routeKeyBackstage(combo: KeyCombo, zone: KeyZone): KeyAction {
   }
   if (combo.meta && zone !== "input" && combo.key === "ArrowLeft") {
     return { kind: "step-track", offset: -1 };
+  }
+  // ⌘I = inspector (mac Get Info convention; plain `i` stays
+  // type-ahead). Inside an input the chord is the system's — either
+  // way not a toggle mid-typing.
+  if (combo.meta && zone !== "input" && combo.key.toLowerCase() === "i") {
+    return { kind: "toggle-inspector" };
   }
   // ⌘A selects all visible rows outside text fields.
   if (combo.meta && zone !== "input" && combo.key.toLowerCase() === "a") {

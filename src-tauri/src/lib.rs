@@ -4,7 +4,7 @@
 
 use std::sync::Mutex;
 
-use otori_core::{analysis, db, query, scan};
+use otori_core::{analysis, db, query, scan, write};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
@@ -61,6 +61,53 @@ fn scan_library(state: tauri::State<'_, Library>, dir: String) -> Result<scan::S
 fn list_tracks(state: tauri::State<'_, Library>) -> Result<Vec<query::TrackRow>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     query::list_tracks(&conn).map_err(|e| e.to_string())
+}
+
+/// Per-field trust state for the inspector's provenance badges.
+#[tauri::command]
+fn get_tag_provenance(
+    state: tauri::State<'_, Library>,
+    track_id: i64,
+) -> Result<Vec<query::TagProvenance>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    query::tag_provenance(&conn, track_id).map_err(|e| e.to_string())
+}
+
+/// Mirror of write::FieldChange for IPC deserialization.
+#[derive(serde::Deserialize)]
+struct FieldChangeArg {
+    field: String,
+    value: String,
+}
+
+/// GUI tag save: the human-facing counterpart of `otori set --apply`.
+/// One call = one journal transaction across all paths (batch undo).
+/// Editing here is the oath — values land `human`-sourced, born
+/// curated. Backup/snapshot/journal all happen inside the core.
+#[tauri::command]
+fn set_tags(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Library>,
+    paths: Vec<String>,
+    changes: Vec<FieldChangeArg>,
+) -> Result<Option<i64>, String> {
+    let changes: Vec<write::FieldChange> = changes
+        .into_iter()
+        .map(|c| write::FieldChange { field: c.field, value: c.value })
+        .collect();
+    let edits: Vec<write::TrackChanges> = paths
+        .into_iter()
+        .map(|p| write::TrackChanges { path: p.into(), changes: changes.clone() })
+        .collect();
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    let tx_id = write::apply_set_many(&mut conn, &edits, write::Actor::Human { via: "gui" }, false)
+        .map_err(|e| e.to_string())?;
+    // The data_version watcher would catch this within ~1s; emit now so
+    // the table refresh feels attached to the save, not to a poll.
+    if tx_id.is_some() {
+        let _ = app.emit("library-changed", ());
+    }
+    Ok(tx_id)
 }
 
 /// Analysis sweep, shell half: the GUI decodes and detects (Web Audio
@@ -276,6 +323,8 @@ fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
         true,
         &[
             &MenuItem::with_id(handle, "menu_stage", "Toggle Stage", true, None::<&str>)?,
+            // ⌘I lives in the webview key router; no accelerator here.
+            &MenuItem::with_id(handle, "menu_inspector", "Toggle Inspector", true, None::<&str>)?,
             &PredefinedMenuItem::separator(handle)?,
             &PredefinedMenuItem::fullscreen(handle, None)?,
         ],
@@ -309,6 +358,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_library,
             list_tracks,
+            get_tag_provenance,
+            set_tags,
             get_lyrics,
             set_lyrics_offset,
             get_artwork,
