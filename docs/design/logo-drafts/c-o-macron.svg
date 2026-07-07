@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept C: ō monogram — the O is a stage ring / vinyl, the macron is a
+       four-segment bar in the WxS member colors. -->
+  <defs>
+    <linearGradient id="macron" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFBB00"/>
+      <stop offset="0.25" stop-color="#FFBB00"/>
+      <stop offset="0.25" stop-color="#FF66BB"/>
+      <stop offset="0.5" stop-color="#FF66BB"/>
+      <stop offset="0.5" stop-color="#33DD99"/>
+      <stop offset="0.75" stop-color="#33DD99"/>
+      <stop offset="0.75" stop-color="#BB88EE"/>
+      <stop offset="1" stop-color="#BB88EE"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <circle cx="256" cy="308" r="112" fill="none" stroke="#e8e6e3" stroke-width="52"/>
+  <rect x="148" y="92" width="216" height="46" rx="23" fill="url(#macron)"/>
+</svg>

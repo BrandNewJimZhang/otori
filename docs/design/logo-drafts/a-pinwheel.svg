@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept A: phoenix pinwheel — four feathers swirling around a center,
+       reads as vinyl spin + phoenix tail. Colors: WxS member colors
+       (Tsukasa/Emu/Nene/Rui), publicly explained as the four accent areas. -->
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <g>
+    <path d="M 256 80 C 330 130 336 218 262 256 C 230 204 226 140 256 80 Z" fill="#FFBB00"/>
+    <path d="M 432 256 C 382 330 294 336 256 262 C 308 230 372 226 432 256 Z" fill="#FF66BB"/>
+    <path d="M 256 432 C 182 382 176 294 250 256 C 282 308 286 372 256 432 Z" fill="#33DD99"/>
+    <path d="M 80 256 C 130 182 218 176 256 250 C 204 282 140 286 80 256 Z" fill="#BB88EE"/>
+  </g>
+  <circle cx="256" cy="256" r="34" fill="#101014"/>
+  <circle cx="256" cy="256" r="20" fill="#e8e6e3"/>
+</svg>

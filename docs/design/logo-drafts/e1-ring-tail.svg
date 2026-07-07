@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept E1 (C+D fusion): phoenix tail rising from behind the Ō ring.
+       Ring = stage/vinyl (the O), four feathers = WxS member colors,
+       publicly the four functional accents. -->
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <!-- tail feathers, drawn behind the ring -->
+  <g transform="translate(256 336)">
+    <g transform="rotate(-48)">
+      <path d="M 0 0 C 34 -66 34 -180 0 -244 C -34 -180 -34 -66 0 0 Z" fill="#FFBB00"/>
+    </g>
+    <g transform="rotate(-16)">
+      <path d="M 0 0 C 34 -72 34 -198 0 -266 C -34 -198 -34 -72 0 0 Z" fill="#FF66BB"/>
+    </g>
+    <g transform="rotate(16)">
+      <path d="M 0 0 C 34 -72 34 -198 0 -266 C -34 -198 -34 -72 0 0 Z" fill="#33DD99"/>
+    </g>
+    <g transform="rotate(48)">
+      <path d="M 0 0 C 34 -66 34 -180 0 -244 C -34 -180 -34 -66 0 0 Z" fill="#BB88EE"/>
+    </g>
+  </g>
+  <!-- ring hole mask + ring on top -->
+  <circle cx="256" cy="336" r="76" fill="#101014"/>
+  <circle cx="256" cy="336" r="100" fill="none" stroke="#e8e6e3" stroke-width="48"/>
+</svg>

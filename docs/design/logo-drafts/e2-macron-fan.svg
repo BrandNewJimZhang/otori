@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept E2 (C+D fusion): Ō monogram where the macron is a fan of four
+       small feathers instead of a flat bar. -->
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <circle cx="256" cy="326" r="106" fill="none" stroke="#e8e6e3" stroke-width="50"/>
+  <!-- macron as feather fan, left to right -->
+  <g transform="translate(172 152) rotate(-24)">
+    <path d="M 0 0 C 16 -32 16 -84 0 -116 C -16 -84 -16 -32 0 0 Z" fill="#FFBB00"/>
+  </g>
+  <g transform="translate(228 140) rotate(-8)">
+    <path d="M 0 0 C 16 -32 16 -84 0 -116 C -16 -84 -16 -32 0 0 Z" fill="#FF66BB"/>
+  </g>
+  <g transform="translate(284 140) rotate(8)">
+    <path d="M 0 0 C 16 -32 16 -84 0 -116 C -16 -84 -16 -32 0 0 Z" fill="#33DD99"/>
+  </g>
+  <g transform="translate(340 152) rotate(24)">
+    <path d="M 0 0 C 16 -32 16 -84 0 -116 C -16 -84 -16 -32 0 0 Z" fill="#BB88EE"/>
+  </g>
+</svg>

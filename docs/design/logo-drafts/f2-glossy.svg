@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept F2 (E1 + cute, softer): fat teardrop feathers with glossy
+       highlight dots, ring stays a clean vinyl, tiny beak makes it a bird. -->
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <g transform="translate(256 344)">
+    <g transform="rotate(-46)"><path d="M 0 0 C 48 -58 48 -142 0 -196 C -48 -142 -48 -58 0 0 Z" fill="#FFBB00"/><circle cx="0" cy="-150" r="12" fill="#ffffff" opacity="0.45"/></g>
+    <g transform="rotate(-15)"><path d="M 0 0 C 50 -62 50 -158 0 -214 C -50 -158 -50 -62 0 0 Z" fill="#FF66BB"/><circle cx="0" cy="-166" r="13" fill="#ffffff" opacity="0.45"/></g>
+    <g transform="rotate(15)"><path d="M 0 0 C 50 -62 50 -158 0 -214 C -50 -158 -50 -62 0 0 Z" fill="#33DD99"/><circle cx="0" cy="-166" r="13" fill="#ffffff" opacity="0.45"/></g>
+    <g transform="rotate(46)"><path d="M 0 0 C 48 -58 48 -142 0 -196 C -48 -142 -48 -58 0 0 Z" fill="#BB88EE"/><circle cx="0" cy="-150" r="12" fill="#ffffff" opacity="0.45"/></g>
+  </g>
+  <circle cx="256" cy="344" r="98" fill="#101014"/>
+  <circle cx="256" cy="344" r="98" fill="none" stroke="#e8e6e3" stroke-width="46"/>
+  <!-- tiny beak -->
+  <path d="M 256 300 l 16 20 l -32 0 Z" fill="#FFBB00"/>
+</svg>

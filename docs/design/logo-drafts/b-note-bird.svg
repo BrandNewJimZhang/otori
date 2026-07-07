@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept B: 音鳥 (bird of sound) — a musical note whose head is a bird
+       and whose flags are four tail feathers in the WxS member colors. -->
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <!-- stem -->
+  <rect x="296" y="112" width="28" height="240" rx="14" fill="#e8e6e3"/>
+  <!-- note head as bird body -->
+  <g transform="rotate(-18 258 356)">
+    <ellipse cx="258" cy="356" rx="62" ry="46" fill="#e8e6e3"/>
+  </g>
+  <!-- beak -->
+  <path d="M 196 330 L 160 342 L 198 356 Z" fill="#FFBB00"/>
+  <!-- eye -->
+  <circle cx="232" cy="336" r="9" fill="#101014"/>
+  <!-- four feather flags -->
+  <rect x="310" y="112" width="150" height="30" rx="15" fill="#FFBB00"/>
+  <rect x="310" y="156" width="128" height="30" rx="15" fill="#FF66BB"/>
+  <rect x="310" y="200" width="106" height="30" rx="15" fill="#33DD99"/>
+  <rect x="310" y="244" width="84" height="30" rx="15" fill="#BB88EE"/>
+</svg>

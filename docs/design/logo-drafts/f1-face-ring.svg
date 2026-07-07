@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept F1 (E1 + cute): plump rounded feathers, ring becomes a face
+       with two eyes + blush. Phoenix chick peeking over a stage ring. -->
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <!-- plump tail feathers behind ring -->
+  <g transform="translate(256 340)">
+    <g transform="rotate(-46)"><path d="M 0 0 C 44 -60 44 -150 0 -210 C -44 -150 -44 -60 0 0 Z" fill="#FFBB00"/></g>
+    <g transform="rotate(-15)"><path d="M 0 0 C 46 -66 46 -168 0 -228 C -46 -168 -46 -66 0 0 Z" fill="#FF66BB"/></g>
+    <g transform="rotate(15)"><path d="M 0 0 C 46 -66 46 -168 0 -228 C -46 -168 -46 -66 0 0 Z" fill="#33DD99"/></g>
+    <g transform="rotate(46)"><path d="M 0 0 C 44 -60 44 -150 0 -210 C -44 -150 -44 -60 0 0 Z" fill="#BB88EE"/></g>
+  </g>
+  <!-- ring body (face) -->
+  <circle cx="256" cy="340" r="102" fill="#e8e6e3"/>
+  <circle cx="256" cy="340" r="60" fill="#101014"/>
+  <!-- eyes flanking the hole -->
+  <circle cx="200" cy="326" r="15" fill="#101014"/>
+  <circle cx="312" cy="326" r="15" fill="#101014"/>
+  <circle cx="204" cy="321" r="5" fill="#e8e6e3"/>
+  <circle cx="316" cy="321" r="5" fill="#e8e6e3"/>
+  <!-- blush -->
+  <circle cx="182" cy="360" r="12" fill="#FF66BB" opacity="0.55"/>
+  <circle cx="330" cy="360" r="12" fill="#FF66BB" opacity="0.55"/>
+</svg>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Concept F3 (E3 + cute): asymmetric swoosh, plump feathers, winking face
+       on the ring — the most playful, phoenix chick in motion. -->
+  <rect width="512" height="512" rx="115" fill="#101014"/>
+  <g transform="translate(214 346)">
+    <g transform="rotate(-8)"><path d="M 0 0 C 42 -58 42 -146 0 -200 C -42 -146 -42 -58 0 0 Z" fill="#FFBB00"/></g>
+    <g transform="rotate(24)"><path d="M 0 0 C 44 -62 44 -160 0 -216 C -44 -160 -44 -62 0 0 Z" fill="#FF66BB"/></g>
+    <g transform="rotate(56)"><path d="M 0 0 C 44 -62 44 -160 0 -216 C -44 -160 -44 -62 0 0 Z" fill="#33DD99"/></g>
+    <g transform="rotate(88)"><path d="M 0 0 C 42 -58 42 -146 0 -200 C -42 -146 -42 -58 0 0 Z" fill="#BB88EE"/></g>
+  </g>
+  <circle cx="214" cy="346" r="96" fill="#e8e6e3"/>
+  <circle cx="214" cy="346" r="56" fill="#101014"/>
+  <!-- winking face: one open eye, one happy curve -->
+  <circle cx="166" cy="332" r="13" fill="#101014"/>
+  <circle cx="170" cy="327" r="4.5" fill="#e8e6e3"/>
+  <path d="M 250 326 q 14 14 28 0" fill="none" stroke="#101014" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="150" cy="366" r="11" fill="#FF66BB" opacity="0.55"/>
+</svg>
