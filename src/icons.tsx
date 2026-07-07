@@ -183,3 +183,21 @@ export function QueueIcon() {
     </svg>
   );
 }
+
+/** Placeholder for a track with no embedded cover: a plain eighth note. */
+export function NoteIcon() {
+  return (
+    <svg {...P}>
+      <path
+        d="M9 17V6l9-2v9"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="6.5" cy="17" r="2.5" />
+      <circle cx="15.5" cy="15" r="2.5" />
+    </svg>
+  );
+}
