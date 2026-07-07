@@ -1,0 +1,11 @@
+[package]
+name = "otori-analysis"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beat-this = "1.0"
+anyhow = "1"
