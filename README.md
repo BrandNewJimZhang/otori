@@ -25,7 +25,9 @@ can be delegated to an AI agent, *safely*.
 Named after 鳳 (ōtori, the phoenix). Also reads as 音鳥 — the bird of
 sound.
 
-> Pre-alpha. macOS-first. APIs, schemas, and UI are all still moving.
+> Pre-alpha (v0.1.0). macOS-first. APIs, schemas, and UI are all still
+> moving — expect breaking changes; the 1.0 bar lives in
+> [CONTRIBUTING.md](CONTRIBUTING.md) § "Reaching 1.0".
 
 ## Why another music player?
 
@@ -180,6 +182,21 @@ Stack: Tauri 2 · Rust (lofty, rusqlite) · Vite · React 19 · TypeScript.
 
 Non-goals for 1.0: streaming integration, recommendations, multi-device
 sync, downloading, DRM decryption.
+
+## Installing the pre-alpha build
+
+Pre-built macOS binaries ship on the GitHub Releases page (arm64 `.dmg`).
+They are **unsigned**: macOS Gatekeeper blocks an unnotarized download on
+first open. To run it, either right-click → *Open*, or strip the
+quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Ōtori.app
+```
+
+A signed + notarized build (Developer ID, ~$99/yr) is deferred until the
+1.0 bar is near; see [CONTRIBUTING.md](CONTRIBUTING.md) § "Reaching 1.0".
+Building from source below needs no signing at all.
 
 ## Contributing
 
