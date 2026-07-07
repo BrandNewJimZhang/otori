@@ -43,6 +43,8 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori undo <txid>` | Roll back an applied transaction | fails if already undone |
 | `otori journal [--json]` | List applied transactions | newest first |
 | `otori status [--json]` | Vital signs: counts, completeness, curation coverage, journal | start here to orient |
+| `otori reanalyze [--low-confidence <t>] [--track <id>...] [--apply] [--json]` | Reopen BPM/mix analysis (whole library by default) | dry-run without `--apply`; values stay visible until re-swept |
+| `otori analyze (--pending \| --track <id>...) [--models-dir <dir>] [--json]` | Run beat analysis headless (Beat This!, same engine as the GUI) | needs the ONNX models (`scripts/download-models.sh`); or set `$OTORI_MODELS_DIR`; exit 2 if any track failed |
 | `otori schema-version` | CLI JSON schema version | breaking JSON changes bump it; additive fields do not — tolerate unknown fields |
 | `--db <path>` (global) | Use a specific library db | default: `~/Library/Application Support/otori/library.db` |
 
