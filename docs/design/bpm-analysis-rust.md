@@ -147,9 +147,13 @@ that can queue thousands of tracks, invisible hours-long work reads
 as "broken". One thin strip at the window bottom (below the player
 bar), not a second toolbar:
 
-- **Analysis**: `analyzing · N left` while the sweep runs (count from
-  the sweep's own worklist, decremented locally — no new IPC); idle
-  → library stats (`N tracks · M analyzed`).
+- **Analysis**: `Analyzing · N left · ~ETA · Title — Artist` while the
+  sweep runs (count from the sweep's own worklist, decremented locally;
+  ETA from a rolling mean of per-track wall time over the trailing ~8
+  tracks; title from the index, filename fallback via `displayTitle` —
+  no new IPC); idle → library stats (`N tracks · M analyzed`). ETA and
+  title are absent while the first few tracks seed the mean or when the
+  current row is unresolved.
 - **Scan**: the existing scan progressbar (`App.tsx` scan-progress)
   relocates here, so all background state lives in one place.
 - Click on the analysis segment → Backstage low-confidence view
