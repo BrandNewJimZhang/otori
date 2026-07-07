@@ -146,3 +146,19 @@ refer to Decisions above.
   agents. GUI edits earn `human` provenance (born curated); this is
   the only low-friction path for humans to enter the trust model,
   since external editors re-enter as `import`.
+
+### A6. Analysis moves into the core after all (supersedes A1)
+
+- Decided 2026-07-07 (same day A1 was written — the reality moved
+  fast). The classical frontend detector's accuracy ceiling (octave
+  errors, weak-percussion failures) justifies what A1 deferred:
+  a Rust-side decode path. A new `otori-analysis` crate wraps the
+  `beat-this` crate (Beat This! transformer, pure-Rust rten ONNX
+  runtime; symphonia decode).
+- A1's reasoning ("don't duplicate the WebView's decoder") is
+  overtaken, not refuted: the duplication now buys SOTA accuracy,
+  CLI parity for analysis (`otori analyze`), and downbeat data the
+  DJ-mix engine can use. Playback decoding stays in the WebView —
+  A1 dies only for analysis.
+- Model weights (~10 MB) are downloaded artifacts, never committed;
+  design: `docs/design/bpm-analysis-rust.md`.
