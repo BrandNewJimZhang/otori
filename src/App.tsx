@@ -61,7 +61,7 @@ import {
 import { headMixPoint, tailMixPoint } from "./mixpoints";
 import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
-import { onSweepProgress, startAnalysisSweep } from "./analysissweep";
+import { onSweepProgress, startAnalysisSweep, type SweepProgress } from "./analysissweep";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type AnalysisModel, type Density, type Theme } from "./prefs";
 import type { LyricsDoc, TrackRow } from "./types";
@@ -218,9 +218,18 @@ function App() {
   // mix anchors) this session. Kicks on mount and again on library
   // changes (new scans add rows).
   useEffect(startAnalysisSweep, []);
-  // Sweep progress for the status bar (null = idle).
-  const [sweepRemaining, setSweepRemaining] = useState<number | null>(null);
-  useEffect(() => onSweepProgress(setSweepRemaining), []);
+  // Sweep progress for the status bar (null = idle): current track id
+  // (resolved to a title below), tracks left, and a rolling ETA.
+  const [sweep, setSweep] = useState<SweepProgress | null>(null);
+  useEffect(() => onSweepProgress(setSweep), []);
+  // Title/artist of the track the sweep is chewing right now (filename
+  // fallback via displayTitle), or null when idle/unknown. App owns the
+  // id→row map; the sweep only ever reports ids.
+  const sweepNowPlaying = useMemo(() => {
+    if (!sweep?.currentId) return null;
+    const t = tracks.find((row) => row.id === sweep.currentId);
+    return t ? { title: displayTitle(t), artist: t.artist } : null;
+  }, [sweep?.currentId, tracks]);
 
   // Sync the persisted model id into the shell's active-model state at
   // startup. The sweep reads the active id when it loads the engine, so
@@ -1359,7 +1368,11 @@ function App() {
           tracks: tracks.length,
           analyzed: tracks.filter((t) => t.bpm != null || t.mix_analyzed).length,
           scanning,
-          sweepRemaining,
+          sweep: sweep
+            ? { remaining: sweep.remaining, etaMs: sweep.etaMs }
+            : null,
+          currentTitle: sweepNowPlaying?.title ?? null,
+          currentArtist: sweepNowPlaying?.artist ?? null,
           // Only name the model when it isn't the default — keeps the
           // line quiet for the common case and calls out a switch's
           // re-sweep.
