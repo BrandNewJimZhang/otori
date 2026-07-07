@@ -13,5 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 otori-core.workspace = true
+otori-analysis.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }

@@ -211,6 +211,54 @@ pub fn parse_tag_bpm(raw: &str) -> Option<f64> {
     Some(bpm)
 }
 
+/// Which tracks a reanalysis pass reopens.
+#[derive(Debug, Clone, Copy)]
+pub enum ReopenScope<'a> {
+    /// Every track (algorithm change, parameter sweep).
+    All,
+    /// Shaky detections below the threshold, plus beatless verdicts —
+    /// the tracks where a better pass could actually change the answer.
+    LowConfidence(f64),
+    /// Exactly these tracks (GUI "reanalyze selected").
+    Tracks(&'a [i64]),
+}
+
+/// Reopen analysis for a scope: clears `bpm_analyzed_at` and
+/// `mix_analyzed_at` so the sweep re-verdicts. Detected values and
+/// hints stay in place until overwritten — a probably-right number
+/// beats a blank column mid-resweep (v10 migration precedent).
+/// Returns the number of tracks reopened. Fails fast when a `Tracks`
+/// scope names an unknown id.
+pub fn reopen_analysis(conn: &Connection, scope: ReopenScope) -> rusqlite::Result<usize> {
+    let reopened = match scope {
+        ReopenScope::All => conn.execute(
+            "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL",
+            [],
+        )?,
+        ReopenScope::LowConfidence(threshold) => conn.execute(
+            "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
+             WHERE bpm_analyzed_at IS NOT NULL
+               AND (bpm IS NULL OR bpm_confidence < ?1)",
+            [threshold],
+        )?,
+        ReopenScope::Tracks(ids) => {
+            let mut stmt = conn.prepare(
+                "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
+                 WHERE id = ?1",
+            )?;
+            let mut n = 0;
+            for &id in ids {
+                if stmt.execute([id])? == 0 {
+                    return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
+                n += 1;
+            }
+            n
+        }
+    };
+    Ok(reopened)
+}
+
 /// Record mix anchors for both ends. `None` for an end = that end has
 /// no stable local grid (variable tempo inside the window, beatless,
 /// or the detector failed) — beat-matching must not be attempted
