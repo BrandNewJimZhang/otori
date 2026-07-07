@@ -284,3 +284,89 @@ fn hint_candidates_lists_tracks_worth_a_provider_lookup() {
     assert!(!paths.contains(&"hinted.mp3"));
     assert!(!paths.contains(&"confident.mp3"));
 }
+
+// ---- reanalysis entry (docs/design/bpm-analysis-rust.md) ----
+
+/// Mark a track fully analyzed with a given confidence, so reopen
+/// scopes have something to distinguish.
+fn analyzed(conn: &otori_core::Connection, id: i64, confidence: f64) {
+    analysis::set_bpm(
+        conn,
+        id,
+        Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence }),
+    )
+    .unwrap();
+    analysis::set_mix_anchors(conn, id, None, None).unwrap();
+}
+
+fn seeded_pair() -> (otori_core::Connection, i64, i64) {
+    let lib = tempfile::tempdir().unwrap();
+    write_minimal_mp3(&lib.path().join("a.mp3"));
+    write_minimal_mp3(&lib.path().join("b.mp3"));
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+    let mut ids = Vec::new();
+    let mut stmt = conn.prepare("SELECT id FROM tracks ORDER BY id").unwrap();
+    let rows: Vec<i64> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+    ids.extend(rows);
+    drop(stmt);
+    (conn, ids[0], ids[1])
+}
+
+#[test]
+fn reopen_all_requeues_every_track_keeping_values() {
+    let (conn, a, b) = seeded_pair();
+    analyzed(&conn, a, 0.9);
+    analyzed(&conn, b, 0.9);
+    assert_eq!(analysis::list_analysis_pending(&conn).unwrap().len(), 0);
+
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::All).unwrap();
+    assert_eq!(n, 2);
+    assert_eq!(analysis::list_analysis_pending(&conn).unwrap().len(), 2);
+    // Stale values stay visible until the sweep replaces them.
+    let bpm: Option<f64> =
+        conn.query_row("SELECT bpm FROM tracks WHERE id = ?1", [a], |r| r.get(0)).unwrap();
+    assert_eq!(bpm, Some(120.0));
+}
+
+#[test]
+fn reopen_low_confidence_requeues_only_shaky_and_beatless() {
+    let (conn, a, b) = seeded_pair();
+    analyzed(&conn, a, 0.2); // shaky
+    analyzed(&conn, b, 0.9); // solid
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::LowConfidence(0.4)).unwrap();
+    assert_eq!(n, 1);
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, a);
+}
+
+#[test]
+fn reopen_low_confidence_includes_beatless_verdicts() {
+    let (conn, a, b) = seeded_pair();
+    analysis::set_bpm(&conn, a, None).unwrap(); // beatless verdict
+    analysis::set_mix_anchors(&conn, a, None, None).unwrap();
+    analyzed(&conn, b, 0.9);
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::LowConfidence(0.4)).unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(analysis::list_analysis_pending(&conn).unwrap()[0].id, a);
+}
+
+#[test]
+fn reopen_tracks_scope_hits_exactly_those_ids() {
+    let (conn, a, b) = seeded_pair();
+    analyzed(&conn, a, 0.9);
+    analyzed(&conn, b, 0.9);
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::Tracks(&[b])).unwrap();
+    assert_eq!(n, 1);
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, b);
+}
+
+#[test]
+fn reopen_unknown_track_fails_fast() {
+    let (conn, _, _) = seeded_pair();
+    let err = analysis::reopen_analysis(&conn, analysis::ReopenScope::Tracks(&[9999]));
+    assert!(err.is_err(), "unknown ids are caller bugs, not no-ops");
+}

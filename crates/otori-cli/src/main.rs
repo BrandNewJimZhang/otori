@@ -187,6 +187,36 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Reopen BPM/mix analysis so the next sweep re-verdicts (values
+    /// stay visible until replaced). Dry-run by default.
+    Reanalyze {
+        /// Reopen only shaky detections below this confidence (plus
+        /// beatless verdicts); omit for the whole library
+        #[arg(long, conflicts_with = "track")]
+        low_confidence: Option<f64>,
+        /// Reopen exactly these track ids
+        #[arg(long)]
+        track: Vec<i64>,
+        /// Actually reopen; default reports the affected count only
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run beat analysis headless (same engine as the GUI sweep)
+    Analyze {
+        /// Analyze everything currently pending
+        #[arg(long, conflicts_with = "track")]
+        pending: bool,
+        /// Analyze exactly these track ids (reopens them first)
+        #[arg(long)]
+        track: Vec<i64>,
+        /// Directory holding the ONNX models (default: $OTORI_MODELS_DIR)
+        #[arg(long)]
+        models_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the CLI JSON schema version
     SchemaVersion,
 }
@@ -1024,11 +1054,144 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Reanalyze { low_confidence, track, apply, json } => {
+            let conn = open_library(cli.db)?;
+            let scope = if !track.is_empty() {
+                otori_core::analysis::ReopenScope::Tracks(&track)
+            } else if let Some(t) = low_confidence {
+                otori_core::analysis::ReopenScope::LowConfidence(t)
+            } else {
+                otori_core::analysis::ReopenScope::All
+            };
+            let affected = if apply {
+                otori_core::analysis::reopen_analysis(&conn, scope)
+                    .map_err(|e| CliError::bad_input(e.to_string()))? as i64
+            } else {
+                // Dry-run: count what the scope would reopen.
+                match scope {
+                    otori_core::analysis::ReopenScope::All => conn
+                        .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get::<_, i64>(0))
+                        .map_err(CliError::library)?,
+                    otori_core::analysis::ReopenScope::LowConfidence(t) => conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM tracks WHERE bpm_analyzed_at IS NOT NULL
+                             AND (bpm IS NULL OR bpm_confidence < ?1)",
+                            [t],
+                            |r| r.get::<_, i64>(0),
+                        )
+                        .map_err(CliError::library)?,
+                    otori_core::analysis::ReopenScope::Tracks(ids) => ids.len() as i64,
+                }
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "applied": apply, "reopened": affected })
+                );
+            } else if apply {
+                println!("reopened analysis for {affected} track(s); sweep re-verdicts on next launch (or run `otori analyze --pending`)");
+            } else {
+                println!("would reopen {affected} track(s); rerun with --apply");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Analyze { pending, track, models_dir, json } => {
+            let conn = open_library(cli.db)?;
+            if !pending && track.is_empty() {
+                return Err(CliError::bad_input("pass --pending or --track <id>"));
+            }
+            let models_dir = models_dir
+                .or_else(|| std::env::var_os("OTORI_MODELS_DIR").map(PathBuf::from))
+                .ok_or_else(|| {
+                    CliError::bad_input("pass --models-dir or set OTORI_MODELS_DIR")
+                })?;
+            let models = otori_analysis::models::resolve(&models_dir)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            let mut engine = otori_analysis::AnalysisEngine::new(&models)
+                .map_err(|e| CliError::library(e.to_string()))?;
+
+            if !track.is_empty() {
+                otori_core::analysis::reopen_analysis(
+                    &conn,
+                    otori_core::analysis::ReopenScope::Tracks(&track),
+                )
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            }
+            let worklist = otori_core::analysis::list_analysis_pending(&conn)
+                .map_err(CliError::library)?;
+            let mut results = Vec::new();
+            let mut failures = 0usize;
+            for item in &worklist {
+                match analyze_one(&conn, &mut engine, item) {
+                    Ok(v) => results.push(v),
+                    Err(e) => {
+                        failures += 1;
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({ "error": e, "kind": "analysis", "path": item.path })
+                        );
+                    }
+                }
+            }
+            if json {
+                println!("{}", serde_json::json!({ "analyzed": results, "failures": failures }));
+            } else {
+                for r in &results {
+                    println!("{r}");
+                }
+                println!("{} analyzed, {failures} failed", results.len());
+            }
+            Ok(if failures > 0 { ExitCode::from(EXIT_PARTIAL) } else { ExitCode::SUCCESS })
+        }
         Command::SchemaVersion => {
             println!("{CLI_SCHEMA_VERSION}");
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// Analyze one pending track and persist verdict + anchors through the
+/// same core writers the GUI uses. Returns a human line for stdout.
+fn analyze_one(
+    conn: &otori_core::Connection,
+    engine: &mut otori_analysis::AnalysisEngine,
+    item: &otori_core::analysis::PendingTrack,
+) -> Result<String, String> {
+    use otori_core::analysis::{set_bpm, set_bpm_verified, set_mix_anchors, DetectedBpm, MixAnchor};
+
+    let result = engine
+        .analyze(std::path::Path::new(&item.path), item.hint_bpm)
+        .map_err(|e| e.to_string())?;
+    let line = if item.needs_bpm {
+        match result.verdict {
+            Some(v) => {
+                let detected = DetectedBpm {
+                    bpm: (v.bpm * 10.0).round() / 10.0,
+                    bpm_max: v.bpm_max.map(|m| (m * 10.0).round() / 10.0),
+                    confidence: (v.confidence * 100.0).round() / 100.0,
+                };
+                if v.hint_applied {
+                    set_bpm_verified(conn, item.id, detected).map_err(|e| e.to_string())?;
+                } else {
+                    set_bpm(conn, item.id, Some(detected)).map_err(|e| e.to_string())?;
+                }
+                match v.bpm_max {
+                    Some(max) => format!("{}: {:.1}\u{2013}{max:.1} BPM", item.path, v.bpm),
+                    None => format!("{}: {:.1} BPM", item.path, v.bpm),
+                }
+            }
+            None => {
+                set_bpm(conn, item.id, None).map_err(|e| e.to_string())?;
+                format!("{}: beatless", item.path)
+            }
+        }
+    } else {
+        format!("{}: anchors only", item.path)
+    };
+    let to_anchor = |a: otori_analysis::MixAnchor| MixAnchor { bpm: a.bpm, beat_sec: a.beat_sec };
+    set_mix_anchors(conn, item.id, result.head.map(to_anchor), result.tail.map(to_anchor))
+        .map_err(|e| e.to_string())?;
+    Ok(line)
 }
 
 fn open_library(db: Option<PathBuf>) -> Result<otori_core::Connection, CliError> {

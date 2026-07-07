@@ -2684,6 +2684,7 @@ name = "otori-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "otori-analysis",
  "otori-core",
  "serde_json",
 ]
