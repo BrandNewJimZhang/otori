@@ -43,6 +43,7 @@ import { seekMax, seekShown, sliderFill } from "./seekbar";
 import {
   AutoThemeIcon,
   DensityIcon,
+  InfoIcon,
   MoonIcon,
   NextIcon,
   PauseIcon,
@@ -88,7 +89,9 @@ function App() {
   const [artwork, setArtwork] = useState<string | null>(null);
   // Shared lazy cover cache for the table (dedup + IPC concurrency cap +
   // negative caching). Created once; the table drives it from view.
-  const artworkCache = useRef(createArtworkCache(getArtwork)).current;
+  const artworkCache = useRef(
+    createArtworkCache((path) => getArtwork(path).then((a) => a?.dataUrl ?? null)),
+  ).current;
   const [paused, setPaused] = useState(true);
   const [scanning, setScanning] = useState(false);
   // Toast stack (audit r5 P1): scan reports and transient info; the
@@ -300,7 +303,7 @@ function App() {
         // Companion surfaces load after playback starts; failures there
         // must never interrupt the music.
         getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
-        getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
+        getArtwork(track.path).then((a) => setArtwork(a?.dataUrl ?? null)).catch(() => setArtwork(null));
       } catch (e) {
         setError(`${displayTitle(track)}: ${e}`);
       }
@@ -456,7 +459,7 @@ function App() {
         // The engine may have advanced into the queue head — consume it.
         setQueue((q) => q.filter((id) => id !== track.id));
         getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
-        getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
+        getArtwork(track.path).then((a) => setArtwork(a?.dataUrl ?? null)).catch(() => setArtwork(null));
       }
     });
   }, [engine]);
@@ -487,7 +490,7 @@ function App() {
           // The handoff may have been into the queue head — consume it.
           setQueue((q) => q.filter((id) => id !== track.id));
           getLyrics(track.path).then(setLyrics).catch(() => setLyrics(null));
-          getArtwork(track.path).then(setArtwork).catch(() => setArtwork(null));
+          getArtwork(track.path).then((a) => setArtwork(a?.dataUrl ?? null)).catch(() => setArtwork(null));
           return;
         }
       }
@@ -803,6 +806,15 @@ function App() {
     if (menu.targets.length === 1) {
       return [
         { label: "Play", action: () => void play(first) },
+        {
+          // The context menu is the natural "act on this row" surface;
+          // ⌘I alone left the inspector undiscoverable (design r2).
+          label: "Get Info",
+          action: () => {
+            setSelection({ ids: new Set([first.id]), anchor: first.id });
+            setInspectorOpen(true);
+          },
+        },
         queueItem,
         {
           label: "Reveal in Finder",
@@ -836,6 +848,10 @@ function App() {
     // Multi-selection: batch actions only (play is inherently single).
     const paths = menu.targets.map((t) => t.path).join("\n");
     return [
+      {
+        label: `Get Info on ${menu.targets.length} tracks`,
+        action: () => setInspectorOpen(true), // targets are the selection already
+      },
       queueItem,
       {
         label: `Copy ${menu.targets.length} paths`,
@@ -962,6 +978,15 @@ function App() {
           <StageIcon />
         </button>
         <button
+          className="icon-btn inspector-toggle"
+          onClick={() => setInspectorOpen((o) => !o)}
+          aria-label="Toggle inspector"
+          aria-pressed={inspectorOpen}
+          data-tip="Inspector (⌘I)"
+        >
+          <InfoIcon />
+        </button>
+        <button
           className="icon-btn density-toggle"
           onClick={() => setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"))}
           aria-label={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
@@ -1032,6 +1057,10 @@ function App() {
                   text: `Saved — otori undo ${txId}`,
                 }),
               );
+            }}
+            onNotice={(text) => {
+              // Non-undoable changes (cover removal, lyrics): no handle.
+              setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text }));
             }}
             onError={(message) => setError(message)}
           />
