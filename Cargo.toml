@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/otori-core", "crates/otori-cli", "src-tauri"]
+members = ["crates/otori-core", "crates/otori-cli", "crates/otori-analysis", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,5 +11,12 @@ repository = "https://github.com/BrandNewJimZhang/otori"
 
 [workspace.dependencies]
 otori-core = { path = "crates/otori-core" }
+otori-analysis = { path = "crates/otori-analysis" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# rten inference is unusable unoptimized (~15x realtime in debug);
+# optimize dependencies even in dev builds. Our own crates stay at
+# dev defaults for fast compile + debuggability.
+[profile.dev.package."*"]
+opt-level = 3

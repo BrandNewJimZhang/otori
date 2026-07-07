@@ -29,3 +29,6 @@ target
 # Ad-hoc build log redirects
 src-tauri/std*.txt
 src-tauri/stderr*.txt
+
+# Downloaded ONNX model weights (scripts/download-models.sh)
+src-tauri/models/
