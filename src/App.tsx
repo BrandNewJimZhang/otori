@@ -1053,22 +1053,29 @@ function App() {
           </button>
         </div>
 
-        <div
-          className="now-playing"
-          onClick={
-            current
-              ? () => setSelection({ ids: new Set([current.id]), anchor: current.id })
-              : undefined
-          }
-          onDoubleClick={current ? () => setMode("stage") : undefined}
-          data-tip={current ? "Click to locate · double-click for Stage" : undefined}
-        >
-          {current && artwork && <img className="np-art" src={artwork} alt="" />}
+        <div className="now-playing">
+          {current && artwork && (
+            <button
+              className="np-art-btn"
+              onClick={() => setMode("stage")}
+              aria-label="Enter Stage mode"
+              data-tip="Stage (S)"
+            >
+              <img className="np-art" src={artwork} alt="" />
+              <span className="np-art-overlay" aria-hidden>
+                <StageIcon />
+              </span>
+            </button>
+          )}
           {current ? (
-            <div className="np-text">
+            <button
+              className="np-text"
+              onClick={() => setSelection({ ids: new Set([current.id]), anchor: current.id })}
+              data-tip="Locate in library"
+            >
               <div className="np-title">{displayTitle(current)}</div>
               <div className="np-artist">{current.artist ?? "—"}</div>
-            </div>
+            </button>
           ) : (
             <div className="np-title idle">Double-click a track to play</div>
           )}
