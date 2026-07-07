@@ -103,3 +103,36 @@ fn scan_then_list_roundtrip() {
     assert_eq!(tracks[0].title.as_deref(), Some("Ghost"));
     assert!(tracks[0].id > 0);
 }
+
+#[test]
+fn tag_provenance_exposes_the_trust_layer() {
+    let conn = db::open_in_memory().unwrap();
+    conn.execute_batch(
+        "INSERT INTO tracks (path, format, first_seen, last_scanned)
+         VALUES ('/lib/a.mp3', 'mp3', datetime('now'), datetime('now'));
+         INSERT INTO tag_values (track_id, field, value, source, curated, written_by, written_at)
+         VALUES (1, 'title',  'Iris',     'human',  1, 'gui',          datetime('now')),
+                (1, 'artist', 'Camellia', 'agent',  0, 'agent:claude', datetime('now')),
+                (1, 'album',  'U.U.F.O.', 'import', 0, NULL,           datetime('now'));",
+    )
+    .unwrap();
+
+    let rows = query::tag_provenance(&conn, 1).unwrap();
+    assert_eq!(rows.len(), 3);
+    let title = rows.iter().find(|r| r.field == "title").unwrap();
+    assert_eq!(title.value.as_deref(), Some("Iris"));
+    assert_eq!(title.source, "human");
+    assert!(title.curated);
+    assert_eq!(title.written_by.as_deref(), Some("gui"));
+    let album = rows.iter().find(|r| r.field == "album").unwrap();
+    assert_eq!(album.source, "import");
+    assert!(!album.curated);
+    assert_eq!(album.written_by, None);
+}
+
+#[test]
+fn tag_provenance_unknown_track_is_empty() {
+    let conn = db::open_in_memory().unwrap();
+    let rows = query::tag_provenance(&conn, 999).unwrap();
+    assert!(rows.is_empty(), "no rows is a valid initial state, not corruption");
+}
