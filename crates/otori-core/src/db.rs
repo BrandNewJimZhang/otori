@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -284,6 +284,18 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
             "ALTER TABLE tracks ADD COLUMN lyrics_offset_ms INTEGER NOT NULL DEFAULT 0;",
         )?;
         conn.pragma_update(None, "user_version", 12)?;
+    }
+    if (1..=12).contains(&version) {
+        // v13: detector swap — classical autocorrelation (frontend)
+        // retired for Beat This! in Rust (ADR-0001 A6). Every verdict
+        // and every mix anchor predates the new engine; reopen all
+        // analysis, keep stale values visible until the sweep
+        // replaces them (v10 precedent). Hints are untouched. Future
+        // algorithm tweaks use `otori reanalyze`, not migrations.
+        conn.execute_batch(
+            "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL;",
+        )?;
+        conn.pragma_update(None, "user_version", 13)?;
     }
     Ok(conn)
 }
