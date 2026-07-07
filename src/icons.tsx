@@ -184,6 +184,37 @@ export function QueueIcon() {
   );
 }
 
+/** Brand mark for the toolbar: same geometry as docs/assets/logo-mark-*.svg.
+    Ring rides currentColor so it flips with the theme (light ring on dark
+    Backstage, ink ring on the light variant); feathers keep the fixed brand
+    palette (docs/design/logo.md). */
+export function BrandMark() {
+  const short = "M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z";
+  const long = "M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z";
+  return (
+    <svg width="22" height="22" viewBox="84 92 400 400" aria-hidden>
+      <defs>
+        <mask id="brand-ring-hole">
+          <rect x="84" y="92" width="400" height="400" fill="white" />
+          <circle cx="226" cy="350" r="96" fill="black" />
+        </mask>
+      </defs>
+      {/* Mask and translate on separate groups: userSpaceOnUse mask coords
+          are re-mapped by the masked element's own transform, which shifts
+          the white rect off the feathers and blanks them. */}
+      <g mask="url(#brand-ring-hole)">
+        <g transform="translate(226 350)">
+          <path d={short} fill="#FFBB00" transform="rotate(-14)" />
+          <path d={long} fill="#FF66BB" transform="rotate(16)" />
+          <path d={long} fill="#33DD99" transform="rotate(46)" />
+          <path d={short} fill="#BB88EE" transform="rotate(76)" />
+        </g>
+      </g>
+      <circle cx="226" cy="350" r="96" fill="none" stroke="currentColor" strokeWidth="44" />
+    </svg>
+  );
+}
+
 /** Placeholder for a track with no embedded cover: a plain eighth note. */
 export function NoteIcon() {
   return (
