@@ -477,6 +477,14 @@ td {
   text-overflow: ellipsis;
 }
 
+/* Virtualization spacers: the two <tr>s standing in for off-window
+   rows. No padding/border so their height is exactly the reserved
+   px — otherwise the scrollbar and row offsets drift. */
+.virt-pad {
+  padding: 0;
+  border: 0;
+}
+
 /* Row density: compact tightens vertical rhythm for long-list triage. */
 .density-compact td {
   padding-top: 3px;
