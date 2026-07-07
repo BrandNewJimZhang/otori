@@ -801,10 +801,47 @@ td.col-format {
   border-radius: var(--radius-s);
   object-fit: cover;
   flex-shrink: 0;
+  display: block;
+}
+
+/* Cover art is the Stage door (sota-player pattern): single click
+   enters, hover reveals a scrim + Stage glyph so the affordance is
+   discoverable instead of hidden behind a double-click. */
+.np-art-btn {
+  position: relative;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.np-art-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-s);
+  background: var(--scrim);
+  color: #e8e6e3;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.np-art-btn:hover .np-art-overlay,
+.np-art-btn:focus-visible .np-art-overlay {
+  opacity: 1;
 }
 
 .np-text {
   min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: default;
 }
 
 .np-title {
