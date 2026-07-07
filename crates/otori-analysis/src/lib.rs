@@ -6,6 +6,8 @@
 pub mod derive;
 pub mod engine;
 pub mod models;
+pub mod persist;
 
 pub use derive::{mix_anchors, tempo_verdict, MixAnchor, TempoVerdict};
 pub use engine::AnalysisEngine;
+pub use persist::{analyze_and_persist, PersistedVerdict};

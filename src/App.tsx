@@ -56,7 +56,7 @@ import {
   SunIcon,
   VolumeIcon,
 } from "./icons";
-import { headMixPoint, tailMixPoint } from "./beatservice";
+import { headMixPoint, tailMixPoint } from "./mixpoints";
 import { startAnalysisSweep } from "./analysissweep";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";

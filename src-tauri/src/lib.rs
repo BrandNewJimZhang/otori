@@ -110,10 +110,10 @@ fn set_tags(
     Ok(tx_id)
 }
 
-/// Analysis sweep, shell half: the GUI decodes and detects (Web Audio
-/// is the only decoder in the stack); these commands let it pull the
-/// worklist and persist outcomes (BPM verdict + mix anchors) into the
-/// index.
+/// Analysis sweep, shell half (ADR-0001 A6): detection runs in Rust
+/// (otori-analysis, Beat This!); the GUI only pulls the worklist and
+/// asks for one track at a time. The engine loads models lazily on
+/// the first call and lives for the app's lifetime.
 #[tauri::command]
 fn list_analysis_pending(
     state: tauri::State<'_, Library>,
@@ -122,52 +122,64 @@ fn list_analysis_pending(
     analysis::list_analysis_pending(&conn).map_err(|e| e.to_string())
 }
 
-/// Mirror of analysis::MixAnchor for IPC deserialization.
-#[derive(serde::Deserialize)]
-struct MixAnchorArg {
-    bpm: f64,
-    beat_sec: f64,
-}
+/// Lazily initialized beat-tracking engine. Behind its own mutex so a
+/// long inference never blocks Library commands (table refresh, tag
+/// saves) — only other analyses queue on it.
+struct Analyzer(Mutex<Option<otori_analysis::AnalysisEngine>>);
 
+/// Analyze one pending track (decode + Beat This! + persist verdict
+/// and anchors). Runs on Tauri's blocking pool by virtue of being a
+/// sync command; ~1s per minute of audio.
 #[tauri::command]
-fn set_mix_anchors(
-    state: tauri::State<'_, Library>,
+fn analyze_track(
+    app: tauri::AppHandle,
+    library: tauri::State<'_, Library>,
+    analyzer: tauri::State<'_, Analyzer>,
     track_id: i64,
-    head: Option<MixAnchorArg>,
-    tail: Option<MixAnchorArg>,
-) -> Result<(), String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let anchor = |a: MixAnchorArg| analysis::MixAnchor { bpm: a.bpm, beat_sec: a.beat_sec };
-    analysis::set_mix_anchors(&conn, track_id, head.map(anchor), tail.map(anchor))
-        .map_err(|e| e.to_string())
-}
-
-/// Mirror of analysis::DetectedBpm for IPC deserialization.
-#[derive(serde::Deserialize)]
-struct DetectedBpmArg {
-    bpm: f64,
-    bpm_max: Option<f64>,
-    confidence: f64,
-}
-
-#[tauri::command]
-fn set_bpm(
-    state: tauri::State<'_, Library>,
-    track_id: i64,
-    detected: Option<DetectedBpmArg>,
-    used_hint: bool,
-) -> Result<(), String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let detected = detected.map(|d| analysis::DetectedBpm {
-        bpm: d.bpm,
-        bpm_max: d.bpm_max,
-        confidence: d.confidence,
-    });
-    match (detected, used_hint) {
-        (Some(d), true) => analysis::set_bpm_verified(&conn, track_id, d),
-        (d, _) => analysis::set_bpm(&conn, track_id, d),
+) -> Result<otori_analysis::PersistedVerdict, String> {
+    // Read the work item, then release the library lock for the slow part.
+    let item = {
+        let conn = library.0.lock().map_err(|e| e.to_string())?;
+        analysis::list_analysis_pending(&conn)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|t| t.id == track_id)
+            .ok_or_else(|| format!("track {track_id} is not pending analysis"))?
+    };
+    let mut engine_slot = analyzer.0.lock().map_err(|e| e.to_string())?;
+    if engine_slot.is_none() {
+        let dir = app
+            .path()
+            .resolve("models", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| e.to_string())?;
+        let models = otori_analysis::models::resolve(&dir).map_err(|e| e.to_string())?;
+        *engine_slot = Some(otori_analysis::AnalysisEngine::new(&models).map_err(|e| e.to_string())?);
     }
-    .map_err(|e| e.to_string())
+    let engine = engine_slot.as_mut().expect("initialized above");
+
+    let verdict = {
+        // Inference holds only the engine lock; take the library lock
+        // just for the final writes inside analyze_and_persist.
+        let conn = library.0.lock().map_err(|e| e.to_string())?;
+        otori_analysis::analyze_and_persist(&conn, engine, &item).map_err(|e| e.to_string())?
+    };
+    Ok(verdict)
+}
+
+/// Reopen analysis (GUI reanalyze entry; scope mirrors the CLI).
+#[tauri::command]
+fn reopen_analysis(
+    state: tauri::State<'_, Library>,
+    track_ids: Option<Vec<i64>>,
+    low_confidence: Option<f64>,
+) -> Result<usize, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let scope = match (&track_ids, low_confidence) {
+        (Some(ids), _) => analysis::ReopenScope::Tracks(ids),
+        (None, Some(t)) => analysis::ReopenScope::LowConfidence(t),
+        (None, None) => analysis::ReopenScope::All,
+    };
+    analysis::reopen_analysis(&conn, scope).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -349,6 +361,7 @@ pub fn run() {
             let conn = db::open(&path)?;
             app.manage(Library(Mutex::new(conn)));
             app.manage(SleepBlocker(Mutex::new(None)));
+            app.manage(Analyzer(Mutex::new(None)));
             spawn_library_watcher(app.handle().clone(), path.clone());
             spawn_launch_rescan(app.handle().clone(), path);
             setup_tray(app)?;
@@ -366,8 +379,8 @@ pub fn run() {
             update_tray,
             set_display_awake,
             list_analysis_pending,
-            set_bpm,
-            set_mix_anchors
+            analyze_track,
+            reopen_analysis
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
