@@ -273,7 +273,7 @@ pub fn apply_set_many(
     // compensation list if a later file in the batch fails.
     let mut written: Vec<(&Path, Vec<(String, Option<String>)>)> = Vec::new();
 
-    let mut apply_one = |tx: &rusqlite::Transaction,
+    let apply_one = |tx: &rusqlite::Transaction,
                          track_id: i64,
                          edit: &TrackChanges,
                          plan: &Plan|
