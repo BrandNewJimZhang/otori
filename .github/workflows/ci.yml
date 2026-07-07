@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      # The ship gate (autoskill.yml) covers core + tsc + vitest. The
+      # release/CI gate additionally runs the full Rust workspace and the
+      # acceptance test that keeps AGENTS.md honest (CONTRIBUTING.md §
+      # "Reaching 1.0"). The ignored model-gated analysis tests need
+      # downloaded weights and stay out of CI.
+      - name: Rust workspace tests
+        run: cargo test --workspace --quiet
+
+      - name: Build the CLI (acceptance needs the binary)
+        run: cargo build -p otori-cli --quiet
+
+      - name: CLI acceptance contract (AGENTS.md)
+        run: scripts/acceptance.sh target/debug/otori
+
+      - name: Frontend typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Frontend unit tests
+        run: pnpm exec vitest run --silent
