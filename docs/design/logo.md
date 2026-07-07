@@ -63,7 +63,21 @@ point.
 
 ## Assets
 
-- `docs/assets/logo.svg` — canonical source
-- `docs/assets/logo.png` — 256 px, used by README and `social-preview.svg`
+Two forms of the mark:
+
+- **Tile** — `logo.svg` / `logo.png`: the mark on a dark rounded-square
+  tile. Used as the app icon and by README / `social-preview.svg`.
+- **Transparent mark** — bare mark, no tile, ring hole truly cut out
+  (feathers masked, not covered). The ring color flips per background
+  because the light ring (`#e8e6e3`) vanishes on white:
+  - `logo-mark-dark.svg` / `.png` — light ring, for **dark** backgrounds.
+  - `logo-mark-light.svg` / `.png` — ink ring, for **light** backgrounds.
+
+Full list:
+
+- `docs/assets/logo.svg` — canonical tile source
+- `docs/assets/logo.png` — 256 px tile, used by README and `social-preview.svg`
+- `docs/assets/logo-mark-dark.svg` / `.png` — transparent, light ring
+- `docs/assets/logo-mark-light.svg` / `.png` — transparent, ink ring
 - `docs/design/logo-drafts/` — the full exploration (A–D concepts,
   E1–E3 fusions, F1–F3 cute pass, `otori-logo.svg` final)
