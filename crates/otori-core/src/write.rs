@@ -508,6 +508,65 @@ pub fn embed_artwork(
     Ok(tx_id)
 }
 
+/// Strip the embedded picture from the audio file (inspector "Remove
+/// cover"). The mirror of [`embed_artwork`]: refuses when nothing is
+/// embedded, full L2 (backup, first-touch snapshot, journal). Sidecar
+/// and folder images are files on disk, not tags — untouched; the
+/// resolve chain falls back to them after removal.
+///
+/// The journal stores provenance, not bytes, so undoing a removal is
+/// impossible (`("picture", Some(_))` fails in undo) — recovery is the
+/// first-touch snapshot / file backups, and callers must not promise
+/// an undo handle for this transaction.
+pub fn remove_artwork(
+    conn: &mut Connection,
+    path: &Path,
+    actor: Actor<'_>,
+) -> Result<i64, WriteError> {
+    let path_str = path.to_string_lossy().into_owned();
+    let track_id = find_track(conn, &path_str)?;
+
+    match crate::artwork::resolve(path)? {
+        Some(a) if a.source == "embedded" => {}
+        _ => {
+            return Err(WriteError::UnknownField(
+                "no embedded picture to remove (sidecar/folder art is a file, not a tag)"
+                    .to_string(),
+            ))
+        }
+    }
+
+    // Real file write → same pre-mutation safety net as apply_set.
+    backup_before_mutation(conn)?;
+
+    let tx = conn.transaction().map_err(WriteError::Db)?;
+
+    // First touch: same immutable snapshot rule as tag writes.
+    let original = crate::read_track_tags(path)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO first_touch_snapshots (track_id, snapshot, captured_at)
+         VALUES (?1, ?2, datetime('now'))",
+        params![track_id, serde_json::to_string(&original).unwrap()],
+    )?;
+    tx.execute(
+        "INSERT INTO transactions (actor, started_at) VALUES (?1, datetime('now'))",
+        [actor.label()],
+    )?;
+    let tx_id = tx.last_insert_rowid();
+
+    // Disk first: failure rolls back snapshot + journal together.
+    write_fields_to_file(path, std::iter::once(("picture", None)))?;
+
+    // Journal: old = there was an embedded picture, new = none.
+    tx.execute(
+        "INSERT INTO tx_changes (tx_id, track_id, field, old_value, old_source, old_curated, new_value, new_source)
+         VALUES (?1, ?2, 'picture', 'embedded', NULL, 0, NULL, ?3)",
+        params![tx_id, track_id, actor.source()],
+    )?;
+    tx.commit()?;
+    Ok(tx_id)
+}
+
 /// The onboarding oath: mark existing values as curated so past labor
 /// is protected before any agent touches the library. `path = None`
 /// curates the whole library. Returns how many fields were protected.
