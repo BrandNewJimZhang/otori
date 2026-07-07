@@ -3,12 +3,13 @@
 // playing" indicator. Pure presentation — sort/filter/selection state
 // lives in App, logic in library.ts, column prefs in prefs.ts.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
 import { displayTitle } from "./library";
 import { formatTime } from "./format";
 import { PlayIcon, SortArrowIcon } from "./icons";
 import type { TrackRow } from "./types";
+import { revealOffset, rowWindow } from "./virtualwindow";
 
 const COLUMNS: { key: SortKey; label: string; className?: string; resizable?: boolean }[] = [
   { key: "title", label: "Title", resizable: true },
@@ -78,13 +79,74 @@ export function LibraryTable({
 }: Props) {
   const dragRef = useRef<{ key: SortKey; startX: number; startW: number } | null>(null);
   const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
+  const tableRef = useRef<HTMLTableElement>(null);
+  // The scroll container is the table's parent (main.library). We read
+  // its scrollTop/height rather than wrapping our own scroller, so the
+  // sticky <thead> and table-layout column sizing keep working.
+  const scrollerRef = useRef<HTMLElement | null>(null);
+  const rowHeightRef = useRef(0);
+
+  // Virtualization window: only [start, end) of `tracks` becomes real
+  // <tr>s; spacer rows stand in for the rest so the scrollbar and row
+  // offsets match the full list.
+  const [win, setWin] = useState({ scrollTop: 0, viewport: 0 });
+
+  // Measured height of one rendered row (varies with density). Falls
+  // back to a sane default before the first row paints. Zero-height
+  // rows (e.g. display:none while hidden) never poison the window.
+  const measured = tableRef.current?.querySelector<HTMLTableRowElement>("tbody tr[data-row]");
+  const rh = measured?.offsetHeight || rowHeightRef.current || 30;
+
+  const window_ = rowWindow({
+    scrollTop: win.scrollTop,
+    viewport: win.viewport,
+    rowHeight: rh,
+    total: tracks.length,
+    overscan: 8,
+  });
+
+  // Latest tracks/rowHeight for the anchor-reveal effect, which fires
+  // on anchor change only — reading these through refs keeps a
+  // background library refresh from yanking scroll back to the anchor.
+  const tracksRef = useRef(tracks);
+  tracksRef.current = tracks;
+  rowHeightRef.current = rh;
+
+  // Bind scroll + resize listeners to the parent scroller once mounted.
+  useLayoutEffect(() => {
+    const scroller = tableRef.current?.parentElement ?? null;
+    scrollerRef.current = scroller;
+    if (!scroller) return;
+    const sync = () => setWin({ scrollTop: scroller.scrollTop, viewport: scroller.clientHeight });
+    sync();
+    scroller.addEventListener("scroll", sync, { passive: true });
+    const ro = new ResizeObserver(sync);
+    ro.observe(scroller);
+    return () => {
+      scroller.removeEventListener("scroll", sync);
+      ro.disconnect();
+    };
+  }, []);
 
   // Keyboard selection must stay visible (audit P0): when the anchor
-  // moves, bring its row into view. block:"nearest" is a no-op for
-  // rows already on screen, so click selection never causes a jump.
+  // moves, scroll it into view. With virtualization the anchor row may
+  // not be rendered, so we compute the offset from its index instead
+  // of relying on a DOM node. null = already visible, so click
+  // selection never causes a jump.
   useEffect(() => {
-    if (selection.anchor == null) return;
-    rowRefs.current.get(selection.anchor)?.scrollIntoView({ block: "nearest" });
+    const scroller = scrollerRef.current;
+    if (selection.anchor == null || !scroller) return;
+    const index = tracksRef.current.findIndex((t) => t.id === selection.anchor);
+    if (index < 0) return;
+    const headroom = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+    const next = revealOffset({
+      index,
+      scrollTop: scroller.scrollTop,
+      viewport: scroller.clientHeight,
+      rowHeight: rowHeightRef.current || 30,
+      headroom,
+    });
+    if (next != null) scroller.scrollTop = next;
   }, [selection.anchor]);
 
   function beginResize(key: SortKey, e: React.PointerEvent<HTMLSpanElement>) {
@@ -111,7 +173,7 @@ export function LibraryTable({
   return (
     // role="grid": <table> alone doesn't permit aria-selected on rows
     // (audit P3); the table is an interactive multiselect listing.
-    <table role="grid" aria-multiselectable="true">
+    <table ref={tableRef} role="grid" aria-multiselectable="true">
       <thead>
         <tr>
           {COLUMNS.map((c) => (
@@ -151,12 +213,18 @@ export function LibraryTable({
         </tr>
       </thead>
       <tbody>
-        {tracks.map((t) => {
+        {window_.padTop > 0 && (
+          <tr aria-hidden style={{ height: window_.padTop }}>
+            <td className="virt-pad" colSpan={COLUMNS.length} />
+          </tr>
+        )}
+        {tracks.slice(window_.start, window_.end).map((t) => {
           const playing = t.id === playingId;
           const selected = selection.ids.has(t.id);
           return (
             <tr
               key={t.id}
+              data-row
               ref={(el) => {
                 if (el) rowRefs.current.set(t.id, el);
                 else rowRefs.current.delete(t.id);
@@ -214,6 +282,11 @@ export function LibraryTable({
             </tr>
           );
         })}
+        {window_.padBottom > 0 && (
+          <tr aria-hidden style={{ height: window_.padBottom }}>
+            <td className="virt-pad" colSpan={COLUMNS.length} />
+          </tr>
+        )}
       </tbody>
     </table>
   );
