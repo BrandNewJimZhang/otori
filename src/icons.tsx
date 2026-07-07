@@ -27,6 +27,17 @@ export function PauseIcon() {
   );
 }
 
+/** Inspector toggle: an ⓘ info circle (mac "Get Info" convention). */
+export function InfoIcon() {
+  return (
+    <svg {...P}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" fill="none" />
+      <circle cx="12" cy="7.8" r="1.3" />
+      <rect x="10.9" y="10.5" width="2.2" height="7" rx="1.1" />
+    </svg>
+  );
+}
+
 export function PrevIcon() {
   return (
     <svg {...P}>
