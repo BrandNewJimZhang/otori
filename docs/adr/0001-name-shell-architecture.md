@@ -1,7 +1,7 @@
 # ADR-0001: Name, shell, and architecture split
 
 Date: 2026-07-06
-Status: accepted
+Status: accepted (amended 2026-07-07 — see Amendments)
 
 ## Context
 
@@ -90,3 +90,59 @@ otori-core (Rust) ← otori-cli (agents/scripts)
   invariant, not a GUI feature.
 - Anything the GUI can do must be expressible as a CLI call; feature
   work that violates this parity needs an ADR.
+
+## Amendments (2026-07-07)
+
+Reality check against the shipped code, one day in. Section numbers
+refer to Decisions above.
+
+### A1. Audio analysis runs in the GUI, not the core (amends §3)
+
+- Web Audio is the only decoder in the stack — the core never gained
+  symphonia. BPM/beat-grid detection therefore lives in the frontend
+  (`beatgrid.ts`, `beatservice.ts`, `analysissweep.ts`); the core owns
+  only the bookkeeping (`analysis.rs`: pending list, verdicts, mix
+  anchors).
+- Deliberate inversion of "core owns everything": adding a Rust
+  decoder solely for analysis would duplicate one the WebView already
+  ships. If a native playback engine ever lands (§5), analysis should
+  move into the core with it.
+
+### A2. Playback grew into a two-deck DJ-mix engine (extends §5)
+
+- The `<audio>`-element MVP became a two-deck architecture: the next
+  track preloads on the idle deck for near-gapless handoff, and
+  tempo-compatible pairs get beat-matched transitions (`djmix.ts`
+  plans, the engine executes). The §5 interface bet paid off — UI code
+  never touched engine internals through the evolution.
+- Native engine (symphonia + cpal) remains a possibility, not a plan.
+
+### A3. New capability: online metadata/lyrics providers (extends §3)
+
+- `otori-core` gained a provider layer (`provider.rs`): VocaDB for
+  editor-curated BPM/metadata, LRCLIB for synced lyrics. Network I/O
+  in the core was not in the original decision; it lives there so CLI
+  and GUI share one implementation (same reasoning as tag writes).
+- External values are hints, never results: the local detector
+  verifies every hint and owns the bpm column (`bpm_source` records
+  `detected` vs `detected+hint`).
+- Unofficial/grey-area providers (e.g. NetEase lyrics) stay out of the
+  repo: scripts live in `local/`, excluded via `.git/info/exclude`.
+
+### A4. Wonderhoy theme: demoted from commitment to backlog (amends §1)
+
+- `otori theme wonderhoy` was never built. Shipped theming is
+  dark/light/auto via a CSS root attribute — no named-theme subsystem
+  exists, and none is planned. The name stays reserved as future
+  output flair; §1's "survives as an in-app theme" should be read as
+  intent, not a commitment.
+
+### A5. GUI tag editing joins the parity rule (extends Consequences)
+
+- A Backstage tag inspector (Swinsian-style side panel) is approved
+  (2026-07-07). Its writes must route through `otori-core` via Tauri
+  IPC — never frontend file access — so provenance, journal, backups,
+  and the single-writer lock apply identically to GUI, CLI, and
+  agents. GUI edits earn `human` provenance (born curated); this is
+  the only low-friction path for humans to enter the trust model,
+  since external editors re-enter as `import`.
