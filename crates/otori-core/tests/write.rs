@@ -328,3 +328,160 @@ fn unknown_track_fails_fast() {
     );
     assert!(err.is_err(), "unindexed path must error, not silently index");
 }
+
+// ---- auto-backup as a core invariant (ADR-0001 amendment A5) ----
+// "No backup, no mutation" must be unbypassable by any consumer: the
+// CLI used to own this; a GUI IPC call must get it for free.
+
+/// File-backed library (auto-backup needs a real db path; in-memory
+/// dbs deliberately skip it — nothing durable to protect).
+fn file_backed_library(dir: &Path) -> (otori_core::Connection, PathBuf, PathBuf) {
+    let db_path = dir.join("library.db");
+    let p = dir.join("song.mp3");
+    write_tagged_mp3(&p, "Old Title", "Old Artist");
+    let mut conn = db::open(&db_path).unwrap();
+    scan::scan(&mut conn, dir).unwrap();
+    (conn, p, db_path)
+}
+
+fn auto_backups(db_path: &Path) -> Vec<PathBuf> {
+    let dir = db_path.parent().unwrap().join("backups");
+    match fs::read_dir(&dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[test]
+fn apply_backs_up_the_db_before_mutating() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut conn, path, db_path) = file_backed_library(dir.path());
+    assert!(auto_backups(&db_path).is_empty());
+
+    write::apply_set(
+        &mut conn,
+        &path,
+        &[human("title", "New Title")],
+        Actor::Human { via: "gui" },
+        false,
+    )
+    .unwrap()
+    .expect("apply must produce a transaction");
+
+    assert_eq!(auto_backups(&db_path).len(), 1, "apply without a backup is forbidden");
+}
+
+#[test]
+fn undo_backs_up_the_db_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut conn, path, db_path) = file_backed_library(dir.path());
+    let tx_id = write::apply_set(
+        &mut conn,
+        &path,
+        &[human("title", "X")],
+        Actor::Human { via: "gui" },
+        false,
+    )
+    .unwrap()
+    .unwrap();
+
+    write::undo(&mut conn, tx_id).unwrap();
+    assert_eq!(auto_backups(&db_path).len(), 2, "undo rewrites the trust layer — same net");
+}
+
+#[test]
+fn noop_apply_makes_no_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut conn, path, db_path) = file_backed_library(dir.path());
+
+    let tx = write::apply_set(
+        &mut conn,
+        &path,
+        &[human("title", "Old Title")], // already the on-disk value
+        Actor::Human { via: "gui" },
+        false,
+    )
+    .unwrap();
+
+    assert!(tx.is_none());
+    assert!(auto_backups(&db_path).is_empty(), "no mutation, no backup churn");
+}
+
+// ---- batch apply: one journal transaction across N files ----
+// PRODUCT.md promises `otori undo <txid>` rolls back a whole batch;
+// the GUI inspector's multi-select save depends on it.
+
+#[test]
+fn batch_apply_is_one_transaction_and_one_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.mp3");
+    let b = dir.path().join("b.mp3");
+    write_tagged_mp3(&a, "Title A", "Artist A");
+    write_tagged_mp3(&b, "Title B", "Artist B");
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, dir.path()).unwrap();
+
+    let edits = vec![
+        write::TrackChanges { path: a.clone(), changes: vec![human("album", "Same Album")] },
+        write::TrackChanges { path: b.clone(), changes: vec![human("album", "Same Album")] },
+    ];
+    let tx_id = write::apply_set_many(&mut conn, &edits, Actor::Human { via: "gui" }, false)
+        .unwrap()
+        .expect("two real changes must apply");
+
+    // One transactions row, two tx_changes rows.
+    let txs: i64 = conn.query_row("SELECT count(*) FROM transactions", [], |r| r.get(0)).unwrap();
+    assert_eq!(txs, 1, "a batch save is ONE journal transaction");
+    let on_a = otori_core::read_track_tags(&a).unwrap();
+    let on_b = otori_core::read_track_tags(&b).unwrap();
+    assert_eq!(on_a.album.as_deref(), Some("Same Album"));
+    assert_eq!(on_b.album.as_deref(), Some("Same Album"));
+
+    // One undo reverts both files.
+    write::undo(&mut conn, tx_id).unwrap();
+    let on_a = otori_core::read_track_tags(&a).unwrap();
+    let on_b = otori_core::read_track_tags(&b).unwrap();
+    assert_eq!(on_a.album, None, "undo of a fill-empty removes the field");
+    assert_eq!(on_b.album, None);
+}
+
+#[test]
+fn batch_apply_all_noops_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut conn, path) = library_with_track(dir.path());
+
+    let edits = vec![write::TrackChanges {
+        path: path.clone(),
+        changes: vec![human("title", "Old Title")],
+    }];
+    let tx = write::apply_set_many(&mut conn, &edits, Actor::Human { via: "gui" }, false).unwrap();
+    assert!(tx.is_none());
+}
+
+#[test]
+fn batch_apply_failure_rolls_back_everything() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.mp3");
+    write_tagged_mp3(&a, "Title A", "Artist A");
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, dir.path()).unwrap();
+    // Second entry points at an indexed path whose file we then delete:
+    // planning succeeds, the disk write fails mid-batch.
+    let b = dir.path().join("b.mp3");
+    write_tagged_mp3(&b, "Title B", "Artist B");
+    scan::scan(&mut conn, dir.path()).unwrap();
+    fs::remove_file(&b).unwrap();
+
+    let edits = vec![
+        write::TrackChanges { path: a.clone(), changes: vec![human("album", "New")] },
+        write::TrackChanges { path: b.clone(), changes: vec![human("album", "New")] },
+    ];
+    let err = write::apply_set_many(&mut conn, &edits, Actor::Human { via: "gui" }, false);
+    assert!(err.is_err(), "a missing file must fail the batch");
+
+    // The journal recorded nothing and file A was compensated back.
+    let txs: i64 = conn.query_row("SELECT count(*) FROM transactions", [], |r| r.get(0)).unwrap();
+    assert_eq!(txs, 0, "failed batch must not journal");
+    let on_a = otori_core::read_track_tags(&a).unwrap();
+    assert_eq!(on_a.album, None, "already-written file must be compensated back");
+}

@@ -78,3 +78,36 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
     })?;
     rows.collect()
 }
+
+/// Per-field trust state for one track — the provenance layer the
+/// GUI inspector renders as badges (source + curated lock). Read-only
+/// view over `tag_values`; the write path in `write.rs` owns mutation.
+#[derive(Debug, Clone, Serialize)]
+pub struct TagProvenance {
+    pub field: String,
+    pub value: Option<String>,
+    pub source: String,
+    pub curated: bool,
+    pub written_by: Option<String>,
+    pub written_at: String,
+}
+
+/// All known tag fields for a track with their provenance. Empty for
+/// an unknown/unscanned track id (a valid initial state, not an error).
+pub fn tag_provenance(conn: &Connection, track_id: i64) -> rusqlite::Result<Vec<TagProvenance>> {
+    let mut stmt = conn.prepare(
+        "SELECT field, value, source, curated, written_by, written_at
+         FROM tag_values WHERE track_id = ?1 ORDER BY field",
+    )?;
+    let rows = stmt.query_map([track_id], |row| {
+        Ok(TagProvenance {
+            field: row.get(0)?,
+            value: row.get(1)?,
+            source: row.get(2)?,
+            curated: row.get::<_, i64>(3)? == 1,
+            written_by: row.get(4)?,
+            written_at: row.get(5)?,
+        })
+    })?;
+    rows.collect()
+}

@@ -849,8 +849,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 None => Actor::Human { via: "cli" },
             };
             let mut conn = open_library(cli.db.clone())?;
-            // Real file write → same safety net as set --apply.
-            auto_backup(&cli.db)?;
+            // Pre-write db backup happens inside the core (write.rs).
             let tx_id = otori_core::write::embed_artwork(&mut conn, &path, actor)
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             if json {
@@ -889,9 +888,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 otori_core::write::plan_set(&mut conn, &path, &changes, actor, override_curated)
                     .map_err(|e| CliError::bad_input(e.to_string()))?;
             let tx_id = if apply && plan.outcome() == PlanOutcome::Changes {
-                // Safety net before any destructive write: the trust layer
-                // (provenance/journal) lives only in this db.
-                auto_backup(&cli.db)?;
+                // Pre-write db backup happens inside the core (write.rs).
                 otori_core::write::apply_set(&mut conn, &path, &changes, actor, override_curated)
                     .map_err(CliError::library)?
             } else {
@@ -955,8 +952,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         }
         Command::Undo { tx_id } => {
             let mut conn = open_library(cli.db.clone())?;
-            // Undo rewrites files and the trust layer — same safety net.
-            auto_backup(&cli.db)?;
+            // Pre-write db backup happens inside the core (write.rs).
             otori_core::write::undo(&mut conn, tx_id)
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             println!("transaction {tx_id} rolled back");
@@ -1057,19 +1053,4 @@ fn strip_category_markers(title: &str) -> String {
     rest.to_string()
 }
 
-/// Pre-destructive-write safety net: timestamped snapshot into
-/// `<db-dir>/backups/`, keeping the newest few. Failure aborts the
-/// write — no backup, no mutation.
-fn auto_backup(db: &Option<PathBuf>) -> Result<(), CliError> {
-    let db_path = match db {
-        Some(p) => p.clone(),
-        None => otori_core::db::default_path().map_err(CliError::library)?,
-    };
-    let conn = otori_core::db::open(&db_path).map_err(CliError::library)?;
-    let dir = db_path
-        .parent()
-        .ok_or_else(|| CliError::bad_input("db path has no parent directory"))?
-        .join("backups");
-    otori_core::backup::auto_backup(&conn, &dir).map_err(CliError::library)?;
-    Ok(())
-}
+
