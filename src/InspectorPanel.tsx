@@ -9,14 +9,21 @@ import { useEffect, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   getArtwork,
+  getLyricsRaw,
   getTagProvenance,
+  removeArtwork,
+  setLyricsRaw,
   setTags,
+  type ArtworkInfo,
+  type RawLyrics,
   type TagProvenance,
   type WritableField,
 } from "./ipc";
 import {
   buildCliCommand,
+  canRemoveCover,
   diffEdits,
+  lyricsEditorState,
   mergeTracks,
   MULTIPLE,
   noEdits,
@@ -32,6 +39,8 @@ interface Props {
   onClose(): void;
   /** Save landed (tx id): App toasts and refreshes via library-changed. */
   onSaved(txId: number): void;
+  /** A non-undoable change landed (cover removal, lyrics): plain toast. */
+  onNotice(message: string): void;
   onError(message: string): void;
 }
 
@@ -49,31 +58,43 @@ const SOURCE_BADGES: Record<TagProvenance["source"], { letter: string; tip: stri
   inferred: { letter: "?", tip: "Guessed (filename or heuristics)" },
 };
 
-export function InspectorPanel({ tracks, onClose, onSaved, onError }: Props) {
+export function InspectorPanel({ tracks, onClose, onSaved, onNotice, onError }: Props) {
   const single = tracks.length === 1 ? tracks[0] : null;
   const merged = mergeTracks(tracks);
   const [edits, setEdits] = useState<FieldEdits>(noEdits);
   const [saving, setSaving] = useState(false);
-  const [artwork, setArtwork] = useState<string | null>(null);
+  const [artwork, setArtwork] = useState<ArtworkInfo | null>(null);
   const [provenance, setProvenance] = useState<TagProvenance[]>([]);
+  // Lyrics editor: raw source text, the user's draft (null = untouched),
+  // and whether the section is expanded (collapsed summary by default).
+  const [rawLyrics, setRawLyrics] = useState<RawLyrics | null>(null);
+  const [lyricsDraft, setLyricsDraft] = useState<string | null>(null);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
+  const [lyricsSaving, setLyricsSaving] = useState(false);
   // Selection identity: switching rows discards unsaved edits (the
   // inputs are previews of the selection, not a persistent form).
   const selectionKey = tracks.map((t) => t.id).join(",");
   useEffect(() => {
     setEdits(noEdits);
+    setLyricsDraft(null);
+    setLyricsOpen(false);
   }, [selectionKey]);
 
-  // Artwork + provenance are single-track affordances; batch mode
-  // shows neither (whose cover would it be?).
+  // Artwork + provenance + lyrics are single-track affordances; batch
+  // mode shows none of them (whose cover would it be?).
   useEffect(() => {
     let stale = false;
     setArtwork(null);
     setProvenance([]);
+    setRawLyrics(null);
     if (!single) return;
     getArtwork(single.path).then((a) => !stale && setArtwork(a)).catch(() => {});
     getTagProvenance(single.id)
       .then((p) => !stale && setProvenance(p))
       .catch(() => {}); // badge-less fields degrade gracefully
+    getLyricsRaw(single.path)
+      .then((l) => !stale && setRawLyrics(l))
+      .catch(() => {}); // section degrades to "No lyrics"
     return () => {
       stale = true;
     };
@@ -95,6 +116,37 @@ export function InspectorPanel({ tracks, onClose, onSaved, onError }: Props) {
       onError(String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function removeCover() {
+    if (!single) return;
+    try {
+      await removeArtwork(single.path);
+      // Deliberately no undo handle: the journal cannot restore bytes.
+      onNotice("Cover removed");
+      const art = await getArtwork(single.path); // fall back to sidecar/folder
+      setArtwork(art);
+    } catch (e) {
+      onError(String(e));
+    }
+  }
+
+  const lyricsEd = lyricsEditorState(rawLyrics);
+  const lyricsDirty = lyricsDraft !== null && lyricsDraft !== lyricsEd.text;
+
+  async function saveLyrics() {
+    if (!single || !lyricsDirty || lyricsSaving) return;
+    setLyricsSaving(true);
+    try {
+      await setLyricsRaw(single.path, lyricsDraft!);
+      setRawLyrics({ source: "sidecar", text: lyricsDraft! });
+      setLyricsDraft(null);
+      onNotice("Lyrics saved");
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLyricsSaving(false);
     }
   }
 
@@ -126,7 +178,18 @@ export function InspectorPanel({ tracks, onClose, onSaved, onError }: Props) {
       {single && (
         <div className="inspector-identity">
           {artwork ? (
-            <img className="inspector-art" src={artwork} alt="" />
+            <div className="inspector-art-wrap">
+              <img className="inspector-art" src={artwork.dataUrl} alt="" />
+              {canRemoveCover(artwork) && (
+                <button
+                  className="inspector-art-remove"
+                  onClick={() => void removeCover()}
+                  data-tip="Remove the embedded cover (kept in backups, not undoable)"
+                >
+                  Remove cover
+                </button>
+              )}
+            </div>
           ) : (
             <div className="inspector-art placeholder" aria-hidden="true" />
           )}
@@ -192,6 +255,61 @@ export function InspectorPanel({ tracks, onClose, onSaved, onError }: Props) {
           );
         })}
       </div>
+
+      {single && (
+        <section className="inspector-lyrics">
+          <button
+            className="inspector-lyrics-toggle"
+            onClick={() => setLyricsOpen((o) => !o)}
+            aria-expanded={lyricsOpen}
+          >
+            <span className="inspector-label">Lyrics</span>
+            <span className="inspector-lyrics-summary">
+              {rawLyrics
+                ? `${rawLyrics.source} · ${rawLyrics.text.split("\n").length} lines`
+                : "none — click to add"}
+            </span>
+          </button>
+          {lyricsOpen &&
+            (lyricsEd.kind === "readonly" ? (
+              <>
+                <textarea
+                  className="inspector-lyrics-text"
+                  value={lyricsEd.text}
+                  readOnly
+                  rows={10}
+                />
+                <p className="inspector-lyrics-note">
+                  Embedded in the file's tag — read-only here.
+                </p>
+              </>
+            ) : (
+              <>
+                <textarea
+                  className="inspector-lyrics-text"
+                  value={lyricsDraft ?? lyricsEd.text}
+                  placeholder="Paste LRC or plain lyrics…"
+                  rows={10}
+                  onChange={(e) => setLyricsDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape" && lyricsDirty) {
+                      e.stopPropagation(); // first Esc reverts, like tag fields
+                      setLyricsDraft(null);
+                    }
+                  }}
+                />
+                <button
+                  className="inspector-save"
+                  onClick={() => void saveLyrics()}
+                  disabled={!lyricsDirty || lyricsSaving}
+                  data-tip="Writes the sidecar .lrc next to the audio file"
+                >
+                  {lyricsSaving ? "Saving…" : "Save lyrics"}
+                </button>
+              </>
+            ))}
+        </section>
+      )}
 
       {single && (
         <dl className="inspector-analysis">

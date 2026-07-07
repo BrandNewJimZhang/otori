@@ -5,7 +5,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCliCommand,
+  canRemoveCover,
   diffEdits,
+  lyricsEditorState,
   mergeField,
   MULTIPLE,
   type FieldEdits,
@@ -101,5 +103,35 @@ describe("MULTIPLE sentinel", () => {
   it("is not a plausible tag value", () => {
     // Rendered as a placeholder, never written; keep it visually obvious.
     expect(MULTIPLE).toMatch(/[⟨⟩]/);
+  });
+});
+
+describe("canRemoveCover", () => {
+  it("only embedded pictures are removable", () => {
+    // Sidecar/folder art is files on disk — Finder's job, not a tag op.
+    expect(canRemoveCover({ dataUrl: "data:x", source: "embedded" })).toBe(true);
+    expect(canRemoveCover({ dataUrl: "data:x", source: "sidecar" })).toBe(false);
+    expect(canRemoveCover({ dataUrl: "data:x", source: "folder" })).toBe(false);
+    expect(canRemoveCover(null)).toBe(false);
+  });
+});
+
+describe("lyricsEditorState", () => {
+  it("no lyrics yields an empty editable editor (paste lyrics in)", () => {
+    expect(lyricsEditorState(null)).toEqual({ kind: "editable", text: "" });
+  });
+
+  it("sidecar lyrics are editable with the raw text", () => {
+    expect(lyricsEditorState({ source: "sidecar", text: "[00:01.00]Hi" })).toEqual({
+      kind: "editable",
+      text: "[00:01.00]Hi",
+    });
+  });
+
+  it("embedded lyrics are read-only (no USLT writer in core)", () => {
+    expect(lyricsEditorState({ source: "embedded", text: "[00:01.00]Hi" })).toEqual({
+      kind: "readonly",
+      text: "[00:01.00]Hi",
+    });
   });
 });

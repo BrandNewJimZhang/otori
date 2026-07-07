@@ -199,18 +199,75 @@ fn set_lyrics_offset(
     otori_core::lyrics::set_offset(&conn, track_id, offset_ms).map_err(|e| e.to_string())
 }
 
+/// Cover art payload: the data URL plus where it came from — the
+/// inspector shows "Remove cover" only for embedded pictures.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtworkInfo {
+    data_url: String,
+    /// "embedded" | "sidecar" | "folder"
+    source: &'static str,
+}
+
 /// Cover art as a data URL, or None. Resolution chain lives in
 /// otori-core (embedded → sidecar image → folder cover) so CLI and
 /// GUI agree on what art a track has.
 #[tauri::command]
-fn get_artwork(path: String) -> Result<Option<String>, String> {
+fn get_artwork(path: String) -> Result<Option<ArtworkInfo>, String> {
     use base64::Engine;
     let art = otori_core::artwork::resolve(std::path::Path::new(&path))
         .map_err(|e| e.to_string())?;
     Ok(art.map(|a| {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&a.data);
-        format!("data:{};base64,{b64}", a.mime)
+        ArtworkInfo { data_url: format!("data:{};base64,{b64}", a.mime), source: a.source }
     }))
+}
+
+/// Strip the embedded cover (inspector "Remove cover"). Full L2 in the
+/// core; the journal cannot restore picture bytes, so the UI must not
+/// offer `otori undo` for the returned tx (recovery = backups).
+#[tauri::command]
+fn remove_artwork(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Library>,
+    path: String,
+) -> Result<i64, String> {
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    let tx_id = write::remove_artwork(
+        &mut conn,
+        std::path::Path::new(&path),
+        write::Actor::Human { via: "gui" },
+    )
+    .map_err(|e| e.to_string())?;
+    // Cover thumbnails re-resolve through the same refresh pipe.
+    let _ = app.emit("library-changed", ());
+    Ok(tx_id)
+}
+
+/// Raw lyrics text + source for the inspector editor (unparsed — the
+/// editor round-trips the human's exact text).
+#[derive(serde::Serialize)]
+struct RawLyrics {
+    /// "embedded" | "sidecar"
+    source: &'static str,
+    text: String,
+}
+
+#[tauri::command]
+fn get_lyrics_raw(path: String) -> Result<Option<RawLyrics>, String> {
+    otori_core::lyrics::read_raw(std::path::Path::new(&path))
+        .map(|r| r.map(|(source, text)| RawLyrics { source, text }))
+        .map_err(|e| e.to_string())
+}
+
+/// Inspector lyrics save: replace the sidecar `.lrc` wholesale — the
+/// human decision the agent path (`write_sidecar`) refuses to make.
+/// No event: no table column shows lyrics; the panel re-reads itself.
+#[tauri::command]
+fn set_lyrics_raw(path: String, text: String) -> Result<(), String> {
+    otori_core::lyrics::overwrite_sidecar(std::path::Path::new(&path), &text)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Status-bar menu, frontend contract: the UI mirrors playback state
@@ -377,8 +434,11 @@ pub fn run() {
             get_tag_provenance,
             set_tags,
             get_lyrics,
+            get_lyrics_raw,
+            set_lyrics_raw,
             set_lyrics_offset,
             get_artwork,
+            remove_artwork,
             update_tray,
             set_display_awake,
             list_analysis_pending,
