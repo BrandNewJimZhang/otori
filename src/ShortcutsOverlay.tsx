@@ -23,6 +23,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ["Home / End", "First / last track"],
       ["PgUp / PgDn", "Page through the list"],
       ["⌘A", "Select all"],
+      ["⌘I", "Tag inspector"],
       ["a–z …", "Type-ahead jump"],
       ["Esc", "Clear selection"],
     ],

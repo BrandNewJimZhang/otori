@@ -57,6 +57,18 @@ describe("routeKey — global zone", () => {
     });
   });
 
+  it("⌘I toggles the inspector (mac Get Info), except inside inputs", () => {
+    expect(routeKey(combo("i", { meta: true }), "global")).toEqual({ kind: "toggle-inspector" });
+    expect(routeKey(combo("i", { meta: true }), "input")).toEqual({ kind: "native" });
+    // Stage has no inspector — the chord must go inert, not toggle
+    // hidden Backstage state.
+    expect(routeKey(combo("i", { meta: true }), "global", "stage")).toEqual({ kind: "native" });
+  });
+
+  it("plain i still feeds type-ahead", () => {
+    expect(routeKey(combo("i"), "global")).toEqual({ kind: "type-ahead", char: "i" });
+  });
+
   it("⌘A selects all visible rows (audit P1)", () => {
     expect(routeKey(combo("a", { meta: true }), "global")).toEqual({ kind: "select-all" });
     expect(routeKey(combo("a", { meta: true }), "input")).toEqual({ kind: "native" });

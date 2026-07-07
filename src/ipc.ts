@@ -12,6 +12,38 @@ export function listTracks(): Promise<TrackRow[]> {
   return invoke<TrackRow[]>("list_tracks");
 }
 
+// ---- tag inspector (design: docs/design/tag-inspector.md) ----
+
+export type WritableField = "title" | "artist" | "album";
+
+export interface FieldChange {
+  field: WritableField;
+  value: string;
+}
+
+/** Per-field trust state (mirrors query::TagProvenance). */
+export interface TagProvenance {
+  field: string;
+  value: string | null;
+  source: "human" | "agent" | "import" | "inferred";
+  curated: boolean;
+  written_by: string | null;
+  written_at: string;
+}
+
+export function getTagProvenance(trackId: number): Promise<TagProvenance[]> {
+  return invoke<TagProvenance[]>("get_tag_provenance", { trackId });
+}
+
+/**
+ * Save edits to N tracks as ONE journal transaction (`otori undo <tx>`
+ * reverts the whole batch). Values land human-sourced, born curated.
+ * Returns the tx id, or null when nothing actually changed.
+ */
+export function setTags(paths: string[], changes: FieldChange[]): Promise<number | null> {
+  return invoke<number | null>("set_tags", { paths, changes });
+}
+
 export function getLyrics(path: string): Promise<LyricsDoc | null> {
   return invoke<LyricsDoc | null>("get_lyrics", { path });
 }

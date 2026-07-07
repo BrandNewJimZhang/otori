@@ -37,6 +37,7 @@ import {
 import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
 import { dequeue, enqueueNext, queueMove, queueRemove } from "./queue";
 import { QueuePanel } from "./QueuePanel";
+import { InspectorPanel } from "./InspectorPanel";
 import { escapeIntent, routeKey, type KeyZone } from "./uikeys";
 import { seekMax, seekShown, sliderFill } from "./seekbar";
 import {
@@ -122,6 +123,9 @@ function App() {
   // Up-next panel (audit r5 P0): queue + order preview, toggled from
   // the player bar.
   const [queueOpen, setQueueOpen] = useState(false);
+  // Tag inspector (design: docs/design/tag-inspector.md): ⌘I / View
+  // menu; renders only in Backstage with a non-empty selection.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const engine = useMemo(createEngine, []);
   const searchRef = useRef<HTMLInputElement>(null);
   // Shuffle order is frozen when shuffle turns on (or a track starts
@@ -145,6 +149,12 @@ function App() {
     const byId = new Map(visible.map((t) => [t.id, t]));
     return queue.map((id) => byId.get(id)).filter((t): t is TrackRow => t != null);
   }, [queue, visible]);
+  // Inspector subjects: selected rows in table order. Recomputed from
+  // `tracks` so a save (via library-changed refresh) updates the panel.
+  const inspected = useMemo(() => {
+    if (!inspectorOpen) return [];
+    return visible.filter((t) => selection.ids.has(t.id));
+  }, [inspectorOpen, visible, selection]);
   const upcoming = useMemo(() => {
     if (!queueOpen) return []; // panel closed: skip the walk
     const visibleIds = visible.map((t) => t.id);
@@ -575,6 +585,9 @@ function App() {
         case "stage":
           setMode((m) => (m === "backstage" ? "stage" : "backstage"));
           break;
+        case "inspector":
+          setInspectorOpen((o) => !o);
+          break;
         case "scan":
           void pickAndScan();
           break;
@@ -678,6 +691,9 @@ function App() {
           break;
         case "show-shortcuts":
           setShortcutsOpen(true);
+          break;
+        case "toggle-inspector":
+          setInspectorOpen((o) => !o);
           break;
         case "escape":
           switch (escapeIntent(modeRef.current, selectionRef.current.ids.size > 0)) {
@@ -935,7 +951,7 @@ function App() {
 
       {scanning && <div className="scan-progress" role="progressbar" aria-label="Scanning" />}
 
-      <main className={`library density-${density}`}>
+      <main className={`library density-${density} ${inspectorOpen ? "with-inspector" : ""}`}>
         {tracks.length === 0 ? (
           <div className="empty">
             <StageIcon />
@@ -971,6 +987,23 @@ function App() {
               });
             }}
             onPlay={play}
+          />
+        )}
+        {inspectorOpen && (
+          <InspectorPanel
+            tracks={inspected}
+            onClose={() => setInspectorOpen(false)}
+            onSaved={(txId) => {
+              // The save already emitted library-changed; toast the
+              // undo handle so a batch mistake is one command away.
+              setToasts((ts) =>
+                pushToast(ts, {
+                  id: ++toastSeq.current,
+                  text: `Saved — otori undo ${txId}`,
+                }),
+              );
+            }}
+            onError={(message) => setError(message)}
           />
         )}
       </main>
