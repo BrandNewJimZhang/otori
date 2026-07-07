@@ -824,6 +824,10 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                     })
                 );
             } else {
+                // Safe by construction: a None dims makes below_floor true,
+                // which returns early above — so dims is Some here. unwrap
+                // (not `if let`) keeps this a fail-fast invariant, not a
+                // silent skip, if that ever ceases to hold.
                 let (w, h) = dims.unwrap();
                 println!("jacket saved: {} ({w}x{h})", sidecar.display());
             }

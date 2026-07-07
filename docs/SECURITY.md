@@ -50,6 +50,17 @@ build"](../README.md#installing-the-pre-alpha-build). This is a
 cost/scale decision (Developer ID is ~$99/yr), deferred to 1.0 — see
 [ADR-0002](adr/0002-first-release-v0.1.0.md).
 
+### No auto-update channel
+
+The Tauri updater is **not wired** — there is no `tauri-plugin-updater`
+dependency, no signing pubkey, and no `updater` block in
+`tauri.conf.json`. Updates are manual: re-download the next release.
+This is deliberate for pre-alpha (the app is changing fast enough that
+silent background updates would be a liability). An auto-update channel
+implies a code-signing backbone (signed updates verify against a
+pubkey), so it arrives together with the 1.0 signing work — there is no
+path to updater that skips notarization.
+
 ### Provider data is hints, never results
 
 External metadata (VocaDB BPM, LRCLIB lyrics) enters the library as
@@ -62,7 +73,9 @@ See [AGENTS.md](../AGENTS.md) and [PRODUCT.md](PRODUCT.md) § Pillar 1.
 
 - A strict CSP (script-src self, no inline) once the frontend is
   audited for inline handlers.
-- Signed + notarized macOS build (Developer ID).
+- Signed + notarized macOS build (Developer ID) **and** the Tauri
+  updater channel that depends on it (signed updates verified against
+  a bundled pubkey).
 - CI gate including `scripts/acceptance.sh` (landed in `0.1.0` —
   `.github/workflows/ci.yml`).
 
