@@ -720,6 +720,21 @@ td.col-format {
 
 /* ---- player bar ---- */
 
+.status-bar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  user-select: none;
+}
+
+.status-line {
+  padding: 3px 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
 .player-bar {
   display: flex;
   align-items: center;
