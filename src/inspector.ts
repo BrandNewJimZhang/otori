@@ -3,7 +3,7 @@
 // and render the CLI-equivalent command (L5: the GUI teaches the
 // automation surface by example). Component code stays a thin renderer.
 
-import type { FieldChange, WritableField } from "./ipc";
+import type { ArtworkInfo, FieldChange, RawLyrics, WritableField } from "./ipc";
 
 export const WRITABLE_FIELDS: WritableField[] = ["title", "artist", "album"];
 
@@ -71,4 +71,24 @@ function shellQuote(s: string): string {
 export function buildCliCommand(paths: string[], changes: FieldChange[]): string {
   const flags = changes.map((c) => `--${c.field} ${shellQuote(c.value)}`).join(" ");
   return paths.map((p) => `otori set ${shellQuote(p)} ${flags} --apply`).join("\n");
+}
+
+/**
+ * Removal targets the embedded picture only — sidecar/folder art is
+ * files on disk (Finder's job, not a tag operation).
+ */
+export function canRemoveCover(art: ArtworkInfo | null): boolean {
+  return art?.source === "embedded";
+}
+
+/** Lyrics section state: what the editor shows and whether it writes. */
+export type LyricsEditor =
+  | { kind: "editable"; text: string } // sidecar or none — save overwrites the .lrc
+  | { kind: "readonly"; text: string }; // embedded tag — no USLT writer in core
+
+export function lyricsEditorState(raw: RawLyrics | null): LyricsEditor {
+  if (raw === null) return { kind: "editable", text: "" };
+  return raw.source === "embedded"
+    ? { kind: "readonly", text: raw.text }
+    : { kind: "editable", text: raw.text };
 }

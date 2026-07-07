@@ -53,9 +53,38 @@ export function setLyricsOffset(trackId: number, offsetMs: number): Promise<void
   return invoke<void>("set_lyrics_offset", { trackId, offsetMs });
 }
 
-/** Embedded cover art as a data URL, or null. */
-export function getArtwork(path: string): Promise<string | null> {
-  return invoke<string | null>("get_artwork", { path });
+/** Raw lyrics text for the inspector editor (unparsed, exact bytes). */
+export interface RawLyrics {
+  source: "embedded" | "sidecar";
+  text: string;
+}
+
+export function getLyricsRaw(path: string): Promise<RawLyrics | null> {
+  return invoke<RawLyrics | null>("get_lyrics_raw", { path });
+}
+
+/** Replace the sidecar .lrc wholesale (a human decision; agents can't). */
+export function setLyricsRaw(path: string, text: string): Promise<void> {
+  return invoke<void>("set_lyrics_raw", { path, text });
+}
+
+/** Embedded cover art as a data URL + which source resolved. */
+export interface ArtworkInfo {
+  dataUrl: string;
+  source: "embedded" | "sidecar" | "folder";
+}
+
+export function getArtwork(path: string): Promise<ArtworkInfo | null> {
+  return invoke<ArtworkInfo | null>("get_artwork", { path });
+}
+
+/**
+ * Strip the embedded cover. Returns the tx id, but the journal holds
+ * provenance, not bytes — never surface `otori undo <tx>` for this
+ * (recovery = first-touch snapshot / backups).
+ */
+export function removeArtwork(path: string): Promise<number> {
+  return invoke<number>("remove_artwork", { path });
 }
 
 /**
