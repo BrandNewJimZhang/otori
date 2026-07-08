@@ -10,7 +10,7 @@ Organize · Enjoy · Delegate — one library, with stage presence.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
-![Platform: macOS + Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+![Platform: macOS + Linux + Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
@@ -25,8 +25,8 @@ can be delegated to an AI agent, *safely*.
 Named after 鳳 (ōtori, the phoenix). Also reads as 音鳥 — the bird of
 sound.
 
-> Pre-alpha (v0.1.0). macOS is the primary platform; Windows (x86_64)
-> is supported as of this port. APIs, schemas, and UI are all still
+> Pre-alpha (v0.1.0). macOS is the primary platform; Linux (amd64) and
+> Windows (x86_64) are supported as of this port. APIs, schemas, and UI are all still
 > moving — expect breaking changes; the 1.0 bar lives in
 > [CONTRIBUTING.md](CONTRIBUTING.md) § "Reaching 1.0".
 
@@ -160,13 +160,16 @@ contract.
 
 Prerequisites: [Rust](https://rustup.rs/) (stable), Node.js +
 [pnpm](https://pnpm.io/), and the
-[Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/).
+[Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/)
+(on Linux: `libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev
+librsvg2-dev libxdo-dev` and build-essential; macOS and Windows need
+nothing beyond the language toolchains).
 
 ```bash
 pnpm install
 pnpm tauri dev                          # desktop app
 cargo run -p otori-cli -- tags <file>   # CLI
-pnpm tauri build --bundles app          # package .app
+pnpm tauri build                        # package (app/dmg/msi/deb/AppImage by OS)
 ```
 
 Stack: Tauri 2 · Rust (lofty, rusqlite) · Vite · React 19 · TypeScript.
@@ -197,10 +200,11 @@ xattr -dr com.apple.quarantine /Applications/Ōtori.app
 
 A signed + notarized build (Developer ID, ~$99/yr) is deferred until the
 1.0 bar is near; see [CONTRIBUTING.md](CONTRIBUTING.md) § "Reaching 1.0".
-Building from source below needs no signing at all. A Windows (x86_64)
-`.msi`/`.exe` build is produced by CI from this same source; the Windows
-binary is also unsigned, so SmartScreen warns on first run — click
-*More info → Run anyway*.
+Building from source below needs no signing at all. Windows (x86_64)
+`.msi`/`.exe` and Linux (amd64) `.deb`/`.AppImage` artifacts are produced
+by CI from this same source; both are unsigned. Windows SmartScreen warns
+on first run — click *More info → Run anyway*; Linux users mark the
+AppImage executable (`chmod +x`) or install the `.deb`.
 
 ## Contributing
 

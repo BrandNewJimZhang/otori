@@ -11,17 +11,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS is the primary platform; Windows (x86_64) is a supported
-        # second target. The core avoids mac-only APIs, so the same
-        # workspace test suite proves both. git-bash on the Windows
-        # runner lets the shell scripts (download-models.sh) run as-is.
-        os: [macos-14, windows-latest]
+        # macOS is the primary platform; Windows (x86_64) and Linux
+        # (amd64) are supported second targets. The core avoids mac-only
+        # APIs, so the same workspace test suite proves all three.
+        # git-bash on the Windows runner lets the shell scripts
+        # (download-models.sh) run as-is; bash on ubuntu is native.
+        os: [macos-14, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      # Tauri 2 on Linux links against webkit2gtk + friends; the macOS
+      # and Windows runners ship everything Tauri needs, so this step is
+      # Linux-only. The package set is the Tauri v2 prerequisites list.
+      - name: Install Tauri system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -66,13 +78,13 @@ jobs:
         run: cargo build -p otori-cli --quiet
 
       # The acceptance contract (AGENTS.md) is a bash script that couples
-      # to unix semantics; it runs on macOS where the CLI's agent surface
-      # is canonically exercised. The Windows job instead proves the build
-      # + the full workspace test suite (including the cross-platform
-      # default_path library_dir tests, which assert Windows paths when
-      # run on a Windows host).
+      # to unix semantics; it runs on the unix runners (macOS + Linux)
+      # where the CLI's agent surface is canonically exercised. The
+      # Windows job instead proves the build + the full workspace test
+      # suite (including the cross-platform default_path library_dir
+      # tests, which assert Windows paths when run on a Windows host).
       - name: CLI acceptance contract (AGENTS.md)
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-14' || matrix.os == 'ubuntu-latest'
         run: scripts/acceptance.sh target/debug/otori
 
       - name: Frontend typecheck
