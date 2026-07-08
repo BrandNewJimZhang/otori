@@ -13,6 +13,25 @@ export interface KeyCombo {
 
 export type KeyZone = "global" | "input" | "button" | "slider";
 
+/**
+ * Classify a keydown target into a routing zone. Duck-typed on
+ * tagName/type (not instanceof) so the table stays pure and testable.
+ * TEXTAREA counts as "input": the lyrics editor is a textarea, and
+ * Space there is typing, not play/pause.
+ */
+export function zoneOf(target: { tagName?: string; type?: string } | null | undefined): KeyZone {
+  switch (target?.tagName) {
+    case "TEXTAREA":
+      return "input";
+    case "INPUT":
+      return target.type === "range" ? "slider" : "input";
+    case "BUTTON":
+      return "button";
+    default:
+      return "global";
+  }
+}
+
 export type KeyAction =
   | { kind: "native" } // let the browser/focused element handle it
   | { kind: "focus-search" }

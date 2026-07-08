@@ -41,7 +41,7 @@ import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } fro
 import { dequeue, enqueueNext, queueMove, queueRemove } from "./queue";
 import { QueuePanel } from "./QueuePanel";
 import { InspectorPanel } from "./InspectorPanel";
-import { escapeIntent, routeKey, type KeyZone } from "./uikeys";
+import { escapeIntent, routeKey, zoneOf, type KeyZone } from "./uikeys";
 import { seekMax, seekShown, sliderFill } from "./seekbar";
 import {
   AutoThemeIcon,
@@ -736,14 +736,7 @@ function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target;
-      const zone: KeyZone =
-        t instanceof HTMLInputElement
-          ? t.type === "range"
-            ? "slider"
-            : "input"
-          : t instanceof HTMLButtonElement
-            ? "button"
-            : "global";
+      const zone: KeyZone = zoneOf(t instanceof HTMLElement ? t : null);
       // Lyric sync nudge (Stage): [ = lyrics earlier, ] = later. Handled
       // before the routing table: Stage renders no table, so this cannot
       // collide with type-ahead; Backstage keeps [ ] as printable input.
