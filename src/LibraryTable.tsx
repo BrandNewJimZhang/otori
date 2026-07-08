@@ -5,7 +5,7 @@
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
-import { displayTitle } from "./library";
+import { displayTitle, formatBpm } from "./library";
 import { formatTime } from "./format";
 import { NoteIcon, PlayIcon, SortArrowIcon } from "./icons";
 import type { ArtworkCache } from "./artworkcache";
@@ -42,17 +42,6 @@ interface Props {
   onRowClick(id: number, mods: { shift: boolean; meta: boolean }): void;
   onRowContextMenu(track: TrackRow, e: React.MouseEvent): void;
   onPlay(track: TrackRow): void;
-}
-
-/** BPM cell: verified tempo, a min–max range (variable/soflan), an
-    unverified hint ("≈185"), or "—". */
-function formatBpm(t: TrackRow): string {
-  if (t.bpm != null) {
-    if (t.bpm_max != null) return `${Math.round(t.bpm)}–${Math.round(t.bpm_max)}`;
-    return t.bpm.toFixed(1);
-  }
-  if (t.bpm_hint != null) return `≈${Math.round(t.bpm_hint)}`;
-  return "—";
 }
 
 /** Three animated bars; freezes when paused (CSS drives the motion). */
