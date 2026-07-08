@@ -80,6 +80,31 @@ fn non_harmonic_hint_is_ignored() {
 }
 
 #[test]
+fn window_octave_flip_is_steady_not_soflan() {
+    // The tracker drops to half-time in a breakdown: 90s locked at
+    // 170, 45s at 85. Every window's grid is clean; only the octave
+    // flips. That's ambiguity, not soflan — a "85–171 range" is wrong.
+    let mut beats = grid(170.0, 90.0, 0.0);
+    beats.extend(grid(85.0, 45.0, 90.0));
+    let v = tempo_verdict(&beats, None).unwrap();
+    assert!(v.bpm_max.is_none(), "octave flip must not report a range: {:?}", v.bpm_max);
+    // Majority of windows tracked 170 — that octave wins.
+    assert!((v.bpm - 170.0).abs() < 2.0, "bpm = {}", v.bpm);
+}
+
+#[test]
+fn window_octave_flip_still_folds_onto_hint() {
+    // Mostly half-time tracking with a doubled stretch; before the
+    // flip fix this became a range and the 170 tag could never anchor.
+    let mut beats = grid(85.0, 90.0, 0.0);
+    beats.extend(grid(170.0, 45.0, 90.0));
+    let v = tempo_verdict(&beats, Some(170.0)).unwrap();
+    assert!(v.bpm_max.is_none());
+    assert!((v.bpm - 170.0).abs() < 2.0, "bpm = {}", v.bpm);
+    assert!(v.hint_applied);
+}
+
+#[test]
 fn ranges_never_fold_onto_hints() {
     // A soflan range is a measurement, not an octave ambiguity.
     let mut beats = grid(120.0, 60.0, 0.0);
