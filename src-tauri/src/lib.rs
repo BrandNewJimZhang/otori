@@ -55,6 +55,47 @@ fn cap_analysis_threads() {
     }
 }
 
+/// The active analysis model id, shared across the sweep and the UI.
+/// Starts at the registry default; the GUI syncs the user's pref into
+/// it at startup (`set_analysis_model`) and on every switch.
+struct ActiveModel(Mutex<&'static str>);
+
+/// Directories the engine searches for model weights, in priority
+/// order: the writable data dir (downloaded models live here) then the
+/// bundled resource dir (the small model ships here). Built once per
+/// app launch from the resolved paths. Returns Err if the data dir
+/// can't be resolved — the resource dir alone is enough for small, but
+/// standard needs the data dir to land in, so resolve both up front
+/// and surface a failure as a setup error, not a later analysis miss.
+fn model_search_dirs(app: &tauri::AppHandle) -> Result<Vec<std::path::PathBuf>, String> {
+    let data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?
+        .join("models");
+    let resource = app
+        .path()
+        .resolve("models", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| format!("resource models dir: {e}"))?;
+    Ok(vec![data, resource])
+}
+
+/// Resolve model paths for `id` across the two search dirs, or the
+/// registry default when `id` is None. The thin wrapper every analysis
+/// command goes through — it keeps the search-order policy in one place.
+fn resolve_models(
+    app: &tauri::AppHandle,
+    id: Option<&str>,
+) -> Result<otori_analysis::ModelPaths, String> {
+    let dirs = model_search_dirs(app)?;
+    let dirs: Vec<&std::path::Path> = dirs.iter().map(std::path::PathBuf::as_path).collect();
+    // unwrap_or (not unwrap_or_else): default_id returns `&'static str`,
+    // which won't unify with the borrowed `&str` through unwrap_or_else's
+    // fn-pointer bound; eager eval is a const slice lookup and sidesteps it.
+    let id = id.unwrap_or(otori_analysis::models::default_id());
+    otori_analysis::models::resolve_model(&dirs, id).map_err(|e| e.to_string())
+}
+
 /// Display-sleep blocker: a `caffeinate -d` child (macOS-native, no
 /// dependency) held while Stage mode plays. Dropping/killing the child
 /// releases the assertion; if Ōtori dies, the child dies with it.
@@ -166,6 +207,7 @@ fn analyze_track(
     app: tauri::AppHandle,
     library: tauri::State<'_, Library>,
     analyzer: tauri::State<'_, Analyzer>,
+    active: tauri::State<'_, ActiveModel>,
     track_id: i64,
 ) -> Result<otori_analysis::PersistedVerdict, String> {
     // Read the work item, then release the library lock for the slow part.
@@ -178,12 +220,13 @@ fn analyze_track(
             .ok_or_else(|| format!("track {track_id} is not pending analysis"))?
     };
     let mut engine_slot = analyzer.0.lock().map_err(|e| e.to_string())?;
-    if engine_slot.is_none() {
-        let dir = app
-            .path()
-            .resolve("models", tauri::path::BaseDirectory::Resource)
-            .map_err(|e| e.to_string())?;
-        let models = otori_analysis::models::resolve(&dir).map_err(|e| e.to_string())?;
+    // Rebuild the engine if the active model changed since it was loaded —
+    // a switch drops the slot, the next track reloads under the new model.
+    let active_id = *active.0.lock().map_err(|e| e.to_string())?;
+    let need_rebuild =
+        engine_slot.as_ref().is_none_or(|e| e.model() != active_id);
+    if need_rebuild {
+        let models = resolve_models(&app, Some(active_id))?;
         *engine_slot = Some(otori_analysis::AnalysisEngine::new(&models).map_err(|e| e.to_string())?);
     }
     let engine = engine_slot.as_mut().expect("initialized above");
@@ -203,14 +246,198 @@ fn reopen_analysis(
     state: tauri::State<'_, Library>,
     track_ids: Option<Vec<i64>>,
     low_confidence: Option<f64>,
+    model: Option<String>,
 ) -> Result<usize, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let scope = match (&track_ids, low_confidence) {
-        (Some(ids), _) => analysis::ReopenScope::Tracks(ids),
-        (None, Some(t)) => analysis::ReopenScope::LowConfidence(t),
-        (None, None) => analysis::ReopenScope::All,
+    let scope = match (&track_ids, low_confidence, &model) {
+        (Some(ids), _, _) => analysis::ReopenScope::Tracks(ids),
+        (None, Some(t), _) => analysis::ReopenScope::LowConfidence(t),
+        (None, None, Some(m)) => {
+            // Validate the id up front: a typo should fail fast, not
+            // silently reopen every track (NULL analysis_model matches
+            // "not m"). The registry is the SSOT for valid ids.
+            if otori_analysis::models::find(m).is_none() {
+                return Err(format!(
+                    "unknown analysis model {m:?}; expected one of {}",
+                    otori_analysis::models::MODELS
+                        .iter()
+                        .map(|x| x.id)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            analysis::ReopenScope::Model(m.as_str())
+        }
+        (None, None, None) => analysis::ReopenScope::All,
     };
     analysis::reopen_analysis(&conn, scope).map_err(|e| e.to_string())
+}
+
+/// Set the active analysis model for the sweep. Mount-time sync from
+/// the user's pref (no reopen); the next `analyze_track` loads the
+/// engine under it. A bogus id fails fast — the pref layer should have
+/// validated, but the registry is the SSOT, never trust a string.
+#[tauri::command]
+fn set_analysis_model(active: tauri::State<'_, ActiveModel>, id: String) -> Result<(), String> {
+    let model = otori_analysis::models::find(&id)
+        .ok_or_else(|| format!("unknown analysis model {id:?}"))?;
+    *active.0.lock().map_err(|e| e.to_string())? = model.id;
+    Ok(())
+}
+
+/// Switch the active analysis model and reopen only foreign-model
+/// verdicts so the sweep re-runs them under the new model. Drops the
+/// cached engine so the next track reloads. Emits `library-changed` so
+/// the table/status bar refresh. Same-model verdicts are kept: a
+/// small→standard→small round trip must not re-run the whole library.
+#[tauri::command]
+fn switch_analysis_model(
+    app: tauri::AppHandle,
+    library: tauri::State<'_, Library>,
+    analyzer: tauri::State<'_, Analyzer>,
+    active: tauri::State<'_, ActiveModel>,
+    id: String,
+) -> Result<usize, String> {
+    let model = otori_analysis::models::find(&id)
+        .ok_or_else(|| format!("unknown analysis model {id:?}"))?;
+    // Set first: if reopening fails, the active id already matches the
+    // new model, so the next sweep won't fight a stale engine.
+    *active.0.lock().map_err(|e| e.to_string())? = model.id;
+    *analyzer.0.lock().map_err(|e| e.to_string())? = None;
+    let reopened = {
+        let conn = library.0.lock().map_err(|e| e.to_string())?;
+        analysis::reopen_analysis(&conn, analysis::ReopenScope::Model(model.id))
+            .map_err(|e| e.to_string())?
+    };
+    let _ = app.emit("library-changed", ());
+    Ok(reopened)
+}
+
+/// Which beat models the UI can offer: the registry, each marked with
+/// whether its weights are present in the search dirs. The cycle button
+/// shows all registered models; an unavailable one is a
+/// download-and-switch, not a hard error. `activeId` is echoed back so
+/// the UI doesn't need a separate read for the current selection.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisModelInfo {
+    id: String,
+    label: String,
+    available: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisModels {
+    active_id: String,
+    models: Vec<AnalysisModelInfo>,
+}
+
+#[tauri::command]
+fn list_analysis_models(
+    app: tauri::AppHandle,
+    active: tauri::State<'_, ActiveModel>,
+) -> Result<AnalysisModels, String> {
+    let dirs = model_search_dirs(&app)?;
+    let dirs: Vec<&std::path::Path> = dirs.iter().map(std::path::PathBuf::as_path).collect();
+    let available = otori_analysis::models::available_ids(&dirs);
+    let active_id = active.0.lock().map_err(|e| e.to_string())?.to_string();
+    let models = otori_analysis::models::MODELS
+        .iter()
+        .map(|m| AnalysisModelInfo {
+            id: m.id.to_string(),
+            label: m.label.to_string(),
+            available: available.contains(&m.id),
+        })
+        .collect();
+    Ok(AnalysisModels { active_id, models })
+}
+
+/// Download a model's weights into the writable models dir, verifying
+/// the SHA-256 from the matching `.sha256` sidecar the upstream release
+/// ships. Pure HTTP + fs — no Tauri in the inner logic, so the
+/// verify-and-write step is unit-testable without the app. Runs on the
+/// blocking pool (sync command); the GUI disables the cycle button
+/// while the `download_analysis_model` promise is in flight.
+#[tauri::command]
+fn download_analysis_model(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<(), String> {
+    let url = otori_analysis::models::download_url(&id)
+        .ok_or_else(|| format!("model {id:?} has no download URL (it may be bundled)"))?;
+    let data_dir = model_search_dirs(&app)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "models data dir unresolved".to_string())?;
+    let model = otori_analysis::models::find(&id)
+        .ok_or_else(|| format!("unknown analysis model {id:?}"))?;
+    let dest = data_dir.join(model.file);
+
+    let bytes = http_get_bytes(url)?;
+    // Fetch the `.sha256` sidecar the upstream release ships; a parse
+    // failure of the sidecar is a download error, not a skip — a
+    // download we can't verify must not load as a model.
+    let sidecar = http_get_text(&format!("{url}.sha256"))?;
+    let expected = parse_sha256_sidecar(&sidecar)?;
+    verify_sha256(&bytes, &expected)?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| format!("mkdir {}: {e}", data_dir.display()))?;
+    std::fs::write(&dest, &bytes)
+        .map_err(|e| format!("write {}: {e}", dest.display()))?;
+    let _ = app.emit("analysis-model-downloaded", &id);
+    Ok(())
+}
+
+/// HTTP GET returning the full body as bytes. Mirrors otori-core's
+/// private helper (kept here so the shell is self-contained and the
+/// model-download path doesn't grow a new cross-crate dependency).
+fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
+    ureq::get(url)
+        .header("User-Agent", "otori")
+        .call()
+        .map_err(|e| format!("GET {url}: {e}"))?
+        .body_mut()
+        .read_to_vec()
+        .map_err(|e| format!("read {url}: {e}"))
+}
+
+/// HTTP GET returning the body as text (used for the `.sha256` sidecar).
+fn http_get_text(url: &str) -> Result<String, String> {
+    ureq::get(url)
+        .header("User-Agent", "otori")
+        .call()
+        .map_err(|e| format!("GET {url}: {e}"))?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("read {url}: {e}"))
+}
+
+/// Parse a `sha256sum`-style sidecar (`<hash>  <filename>` or bare
+/// `<hash>`), returning lowercase hex or an error if malformed. The
+/// upstream release ships `<hash>  beat_this.onnx`; tolerate the bare
+/// form too so a future asset change doesn't silently break.
+fn parse_sha256_sidecar(text: &str) -> Result<String, String> {
+    let first = text.split_whitespace().next().ok_or_else(|| "empty sha256 sidecar".to_string())?;
+    if first.len() != 64 || !first.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("malformed sha256 sidecar: {first:?}"));
+    }
+    Ok(first.to_ascii_lowercase())
+}
+
+/// Verify `data` against a lowercase-hex SHA-256 `expected`. Fails fast
+/// on mismatch — a corrupted download must not load as a model. Pure so
+/// the check is unit-testable.
+fn verify_sha256(data: &[u8], expected: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let got = hasher.finalize();
+    let got_hex: String = got.iter().map(|b| format!("{b:02x}")).collect();
+    if got_hex == expected {
+        Ok(())
+    } else {
+        Err(format!("sha256 mismatch: expected {expected}, got {got_hex}"))
+    }
 }
 
 #[tauri::command]
@@ -454,6 +681,7 @@ pub fn run() {
             app.manage(Library(Mutex::new(conn)));
             app.manage(SleepBlocker(Mutex::new(None)));
             app.manage(Analyzer(Mutex::new(None)));
+            app.manage(ActiveModel(Mutex::new(otori_analysis::models::default_id())));
             spawn_library_watcher(app.handle().clone(), path.clone());
             spawn_launch_rescan(app.handle().clone(), path);
             setup_tray(app)?;
@@ -475,7 +703,11 @@ pub fn run() {
             set_display_awake,
             list_analysis_pending,
             analyze_track,
-            reopen_analysis
+            reopen_analysis,
+            set_analysis_model,
+            switch_analysis_model,
+            list_analysis_models,
+            download_analysis_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -547,7 +779,7 @@ fn spawn_library_watcher(app: tauri::AppHandle, db_path: std::path::PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use super::rten_thread_cap;
+    use super::{parse_sha256_sidecar, rten_thread_cap, verify_sha256};
 
     #[test]
     fn caps_when_user_has_not_set_rten_threads() {
@@ -560,5 +792,51 @@ mod tests {
         // A power user who exported RTEN_NUM_THREADS wins over our default;
         // we must not silently clobber their explicit choice.
         assert_eq!(rten_thread_cap(Some("4".as_ref())), None);
+    }
+
+    #[test]
+    fn sha256_sidecar_parses_sha256sum_format() {
+        // The upstream release ships "<hash>  beat_this.onnx"; the first
+        // whitespace token is the hash, rest (filename) is ignored.
+        let s = parse_sha256_sidecar(
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  beat_this.onnx",
+        )
+        .unwrap();
+        assert_eq!(s, "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
+    }
+
+    #[test]
+    fn sha256_sidecar_parses_bare_hash() {
+        // Tolerate the bare form so a future asset change doesn't break.
+        let s = parse_sha256_sidecar(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .unwrap();
+        assert_eq!(s, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    }
+
+    #[test]
+    fn sha256_sidecar_rejects_short_and_non_hex() {
+        assert!(parse_sha256_sidecar("tooshort").is_err());
+        // 64 chars but with a non-hex char in the middle.
+        assert!(parse_sha256_sidecar(
+            "zzz3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn verify_sha256_accepts_a_matching_digest() {
+        // "abc" → the well-known SHA-256; prove the verifier accepts it.
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        verify_sha256(b"abc", expected).unwrap();
+    }
+
+    #[test]
+    fn verify_sha256_rejects_a_mismatch() {
+        // A mismatched digest must fail — a corrupted download must not
+        // load as a model.
+        let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
+        assert!(verify_sha256(b"abc", wrong).is_err());
     }
 }

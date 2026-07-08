@@ -61,20 +61,20 @@ pub fn analyze_and_persist(
                     confidence: (v.confidence * 100.0).round() / 100.0,
                 };
                 if v.hint_applied {
-                    set_bpm_verified(conn, item.id, detected)?;
+                    set_bpm_verified(conn, item.id, detected, engine.model())?;
                 } else {
-                    set_bpm(conn, item.id, Some(detected))?;
+                    set_bpm(conn, item.id, Some(detected), engine.model())?;
                 }
                 out.bpm = Some(detected.bpm);
                 out.bpm_max = detected.bpm_max;
                 out.confidence = Some(detected.confidence);
                 out.hint_applied = v.hint_applied;
             }
-            None => set_bpm(conn, item.id, None)?,
+            None => set_bpm(conn, item.id, None, engine.model())?,
         }
     }
     let anchor = |a: PersistedAnchor| MixAnchor { bpm: a.bpm, beat_sec: a.beat_sec };
-    set_mix_anchors(conn, item.id, out.head.map(anchor), out.tail.map(anchor))?;
+    set_mix_anchors(conn, item.id, out.head.map(anchor), out.tail.map(anchor), engine.model())?;
     Ok(out)
 }
 

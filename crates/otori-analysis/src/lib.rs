@@ -10,4 +10,5 @@ pub mod persist;
 
 pub use derive::{mix_anchors, tempo_verdict, MixAnchor, TempoVerdict};
 pub use engine::AnalysisEngine;
+pub use models::ModelPaths;
 pub use persist::{analyze_and_persist, PersistedVerdict};

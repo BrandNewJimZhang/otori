@@ -197,6 +197,11 @@ enum Command {
         /// Reopen exactly these track ids
         #[arg(long)]
         track: Vec<i64>,
+        /// Reopen only verdicts produced by a different model than this
+        /// id (use after switching the active model; same-model
+        /// verdicts are kept)
+        #[arg(long, conflicts_with = "track", conflicts_with = "low_confidence")]
+        model: Option<String>,
         /// Actually reopen; default reports the affected count only
         #[arg(long)]
         apply: bool,
@@ -214,6 +219,10 @@ enum Command {
         /// Directory holding the ONNX models (default: $OTORI_MODELS_DIR)
         #[arg(long)]
         models_dir: Option<PathBuf>,
+        /// Which beat model to use: small (default) or standard. Unknown
+        /// ids fail fast; see `otori analyze --help` for the registry.
+        #[arg(long)]
+        model: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -1058,12 +1067,27 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Command::Reanalyze { low_confidence, track, apply, json } => {
+        Command::Reanalyze { low_confidence, track, model, apply, json } => {
             let conn = open_library(cli.db)?;
             let scope = if !track.is_empty() {
                 otori_core::analysis::ReopenScope::Tracks(&track)
             } else if let Some(t) = low_confidence {
                 otori_core::analysis::ReopenScope::LowConfidence(t)
+            } else if let Some(m) = &model {
+                // Validate the model id against the registry up front:
+                // a typo should fail fast here, not silently reopen
+                // every track (NULL analysis_model matches "not m").
+                if otori_analysis::models::find(m).is_none() {
+                    return Err(CliError::bad_input(format!(
+                        "unknown model {m:?}; expected one of {}",
+                        otori_analysis::models::MODELS
+                            .iter()
+                            .map(|x| x.id)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
+                }
+                otori_core::analysis::ReopenScope::Model(m.as_str())
             } else {
                 otori_core::analysis::ReopenScope::All
             };
@@ -1085,6 +1109,15 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                         )
                         .map_err(CliError::library)?,
                     otori_core::analysis::ReopenScope::Tracks(ids) => ids.len() as i64,
+                    otori_core::analysis::ReopenScope::Model(m) => conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM tracks
+                             WHERE bpm_analyzed_at IS NOT NULL
+                               AND (analysis_model IS NULL OR analysis_model != ?1)",
+                            [m],
+                            |r| r.get::<_, i64>(0),
+                        )
+                        .map_err(CliError::library)?,
                 }
             };
             if json {
@@ -1099,7 +1132,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Command::Analyze { pending, track, models_dir, json } => {
+        Command::Analyze { pending, track, models_dir, model, json } => {
             let conn = open_library(cli.db)?;
             if !pending && track.is_empty() {
                 return Err(CliError::bad_input("pass --pending or --track <id>"));
@@ -1109,7 +1142,8 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 .ok_or_else(|| {
                     CliError::bad_input("pass --models-dir or set OTORI_MODELS_DIR")
                 })?;
-            let models = otori_analysis::models::resolve(&models_dir)
+            let model_id = model.as_deref().unwrap_or(otori_analysis::models::default_id());
+            let models = otori_analysis::models::resolve_model(&[&models_dir], model_id)
                 .map_err(|e| CliError::bad_input(e.to_string()))?;
             let mut engine = otori_analysis::AnalysisEngine::new(&models)
                 .map_err(|e| CliError::library(e.to_string()))?;
