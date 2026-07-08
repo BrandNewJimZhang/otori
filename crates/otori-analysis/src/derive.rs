@@ -40,8 +40,10 @@ const MIN_WINDOW_IBIS: usize = 8;
 const HINT_MATCH_TOLERANCE: f64 = 0.06;
 /// Mix window: the stretch of track a transition actually plays.
 const MIX_WINDOW_SEC: f64 = 45.0;
-/// Anchors below this consistency must not drive a tempo bend.
-const MIN_ANCHOR_CONFIDENCE: f64 = 0.4;
+/// A local measurement below this grid consistency didn't measure a
+/// real tempo (mixed beat populations, heavy jitter): it must not
+/// drive a verdict or anchor a tempo bend.
+const MIN_TRUSTED_CONSISTENCY: f64 = 0.4;
 
 /// Interquartile mean of intervals: robust to a missed/extra beat
 /// (outlier interval) *and* to bimodal jitter, where a plain median
@@ -112,14 +114,40 @@ pub fn tempo_verdict(beats: &[f32], hint_bpm: Option<f64>) -> Option<TempoVerdic
         return None;
     }
 
+    // Fold each window onto the median window's octave before judging
+    // steadiness: the tracker flips metrical level mid-track (half-time
+    // breakdowns), and a ×2/×3 split between clean windows is octave
+    // ambiguity, not soflan — "85–171" is one tempo tracked at two
+    // levels. Genuine tempo changes sit off the harmonics and survive.
+    let mut sorted: Vec<f64> = locals.iter().map(|&(b, _)| b).collect();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let reference = sorted[sorted.len() / 2];
+    for local in &mut locals {
+        local.0 = fold_to_reference(local.0, reference);
+    }
+
     // Confidence: mean grid consistency, diluted by windows that
     // failed to measure (parts of the track had no usable grid).
     let coverage = locals.len() as f64 / total_windows as f64;
     let consistency = locals.iter().map(|&(_, c)| c).sum::<f64>() / locals.len() as f64;
     let confidence = (consistency * coverage).min(1.0);
 
-    let lo = locals.iter().map(|&(b, _)| b).fold(f64::INFINITY, f64::min);
-    let hi = locals.iter().map(|&(b, _)| b).fold(0.0, f64::max);
+    // A window straddling a metrical flip mixes two beat populations
+    // and reads an artifact between the octaves — its intervals don't
+    // sit on its own grid, so its consistency exposes it. Judge on
+    // trusted windows; when none qualify (heavy jitter) every window
+    // is equally rough, so use them all.
+    let mut bpms: Vec<f64> = locals
+        .iter()
+        .filter(|&&(_, c)| c >= MIN_TRUSTED_CONSISTENCY)
+        .map(|&(b, _)| b)
+        .collect();
+    if bpms.is_empty() {
+        bpms = locals.iter().map(|&(b, _)| b).collect();
+    }
+
+    let lo = bpms.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = bpms.iter().copied().fold(0.0, f64::max);
     if hi / lo > 1.0 + STEADY_TOLERANCE {
         // Variable tempo. Hints don't re-fold ranges: a soflan range
         // is a measurement, not an octave ambiguity.
@@ -132,13 +160,24 @@ pub fn tempo_verdict(beats: &[f32], hint_bpm: Option<f64>) -> Option<TempoVerdic
     }
 
     // Steady: median of local tempos (robust to one flaky window).
-    let mut bpms: Vec<f64> = locals.iter().map(|&(b, _)| b).collect();
     bpms.sort_by(|a, b| a.total_cmp(b));
     let bpm = bpms[bpms.len() / 2];
     Some(apply_hint(
         TempoVerdict { bpm, bpm_max: None, confidence, hint_applied: false },
         hint_bpm,
     ))
+}
+
+/// Fold one window's tempo onto the reference octave. Only a harmonic
+/// (×2/×0.5/×3/×⅓ — same family as `apply_hint`) that lands within
+/// STEADY_TOLERANCE of the reference folds; anything else keeps its
+/// measured value, so a genuine 1.5× soflan is never bent into range.
+fn fold_to_reference(bpm: f64, reference: f64) -> f64 {
+    [2.0, 0.5, 3.0, 1.0 / 3.0]
+        .iter()
+        .map(|f| bpm * f)
+        .find(|folded| (folded / reference - 1.0).abs() <= STEADY_TOLERANCE)
+        .unwrap_or(bpm)
 }
 
 /// Reconcile a steady detection with an external hint (tag / provider
@@ -193,7 +232,7 @@ fn window_anchor(beats: &[f64], start: f64, end: f64) -> Option<MixAnchor> {
         return None;
     }
     let (bpm, consistency) = window_tempo(beats, start, end)?;
-    if consistency < MIN_ANCHOR_CONFIDENCE {
+    if consistency < MIN_TRUSTED_CONSISTENCY {
         return None;
     }
     // The anchor beat is a real detected beat, not a derived phase.
