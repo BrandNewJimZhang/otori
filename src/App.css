@@ -2268,3 +2268,126 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+/* ---- tray mini player (window "mini", src-tauri setup_mini_panel) ----
+   Frameless transparent window: this element IS the visible panel, so
+   it owns the rounded corners + border the window chrome would have.
+   Size must match MINI_PANEL_SIZE in src-tauri/src/lib.rs. */
+.mini-panel {
+  box-sizing: border-box;
+  width: 340px;
+  height: 132px;
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+}
+
+.mini-art {
+  width: 108px;
+  height: 108px;
+  flex-shrink: 0;
+  border-radius: var(--radius-m);
+  object-fit: cover;
+  background: var(--bg-hover);
+}
+
+.mini-art-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  color: var(--text-dim);
+}
+
+.mini-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.mini-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-artist {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-seek {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mini-seek input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.mini-time {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.mini-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.mini-transport button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mini-transport button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.mini-transport button:disabled {
+  color: var(--text-dim);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mini-transport button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mini-transport .mini-play svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* The mini window's <body> must stay transparent so the panel's
+   rounded corners show the desktop through (macOSPrivateApi). */
+body:has(.mini-panel) {
+  background: transparent;
+}
