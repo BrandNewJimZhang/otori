@@ -10,7 +10,7 @@
 //!   dual/triple-format linking (mp3/flac/alac) is N-to-N and lives in
 //!   `track_links` as link groups, not pairs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
@@ -116,12 +116,78 @@ CREATE TABLE scan_roots (
 );
 "#;
 
-/// Default library location: `~/Library/Application Support/otori/library.db`
-/// (macOS-first; revisit when a second platform lands).
-pub fn default_path() -> Result<std::path::PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-    let dir = std::path::Path::new(&home)
-        .join("Library/Application Support/otori");
+/// Which host the library lives on. The pure `library_dir` resolver is
+/// parameterized over this so its per-platform branch can be tested
+/// without mutating the process environment (which would race other
+/// tests). `default_path` wires the live env vars into it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Macos,
+    Windows,
+    Linux,
+}
+
+/// The OS this build runs on, chosen at compile time. Identifying it by
+/// `target_os` (not arch) keeps the library root an OS concern — a
+/// Windows-ARM64 build still wants `%APPDATA%`. Any unix that isn't
+/// macOS falls through to the Linux (XDG) branch, so BSD etc. keep
+/// building on the unix convention.
+#[cfg(target_os = "macos")]
+pub const HOST: Platform = Platform::Macos;
+#[cfg(target_os = "windows")]
+pub const HOST: Platform = Platform::Windows;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const HOST: Platform = Platform::Linux;
+
+/// Resolve the library *directory* for `platform` from the supplied env
+/// values, without touching the process environment or the filesystem.
+///
+/// - macOS: `$HOME/Library/Application Support/otori`
+/// - Windows: `%APPDATA%\otori` (Roaming — same root Tauri's
+///   `app_data_dir` uses, so the GUI's downloaded models and the CLI's
+///   db coexist)
+/// - Linux: `$XDG_DATA_HOME/otori`, else `$HOME/.local/share/otori`
+///
+/// Unset home/data env is a setup error — return Err rather than fall
+/// back to cwd (fail fast: a wrong root silently fragments the library
+/// across machines is worse than a loud open failure).
+pub fn library_dir(
+    platform: Platform,
+    home: Option<PathBuf>,
+    appdata: Option<PathBuf>,
+    xdg_data_home: Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    match platform {
+        Platform::Macos => {
+            let home = home.ok_or("HOME is not set")?;
+            Ok(home.join("Library/Application Support/otori"))
+        }
+        Platform::Windows => {
+            let appdata = appdata.ok_or("APPDATA is not set")?;
+            Ok(appdata.join("otori"))
+        }
+        Platform::Linux => {
+            if let Some(xdg) = xdg_data_home {
+                Ok(xdg.join("otori"))
+            } else {
+                let home = home.ok_or("HOME is not set (and XDG_DATA_HOME unset)")?;
+                Ok(home.join(".local/share/otori"))
+            }
+        }
+    }
+}
+
+/// Default library location, host-resolved: `~/Library/Application
+/// Support/otori/library.db` on macOS, `%APPDATA%\otori\library.db` on
+/// Windows, `$XDG_DATA_HOME/otori/library.db` (or `~/.local/share/otori`)
+/// on Linux. Creates the directory on first run.
+pub fn default_path() -> Result<PathBuf, String> {
+    let dir = library_dir(
+        HOST,
+        std::env::var_os("HOME").map(PathBuf::from),
+        std::env::var_os("APPDATA").map(PathBuf::from),
+        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+    )?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     Ok(dir.join("library.db"))
 }

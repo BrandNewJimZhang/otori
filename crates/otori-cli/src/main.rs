@@ -14,7 +14,10 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "otori", version, about = "Ōtori music library CLI")]
 struct Cli {
-    /// Library database path (default: ~/Library/Application Support/otori/library.db)
+    /// Library database path (default: OS data dir —
+    /// ~/Library/Application Support/otori/library.db on macOS,
+    /// %APPDATA%\otori\library.db on Windows,
+    /// $XDG_DATA_HOME/otori/library.db on Linux)
     #[arg(long, global = true)]
     db: Option<PathBuf>,
 

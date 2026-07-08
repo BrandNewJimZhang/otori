@@ -8,7 +8,18 @@ on:
 
 jobs:
   test:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is the primary platform; Windows (x86_64) is a supported
+        # second target. The core avoids mac-only APIs, so the same
+        # workspace test suite proves both. git-bash on the Windows
+        # runner lets the shell scripts (download-models.sh) run as-is.
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +65,14 @@ jobs:
       - name: Build the CLI (acceptance needs the binary)
         run: cargo build -p otori-cli --quiet
 
+      # The acceptance contract (AGENTS.md) is a bash script that couples
+      # to unix semantics; it runs on macOS where the CLI's agent surface
+      # is canonically exercised. The Windows job instead proves the build
+      # + the full workspace test suite (including the cross-platform
+      # default_path library_dir tests, which assert Windows paths when
+      # run on a Windows host).
       - name: CLI acceptance contract (AGENTS.md)
+        if: matrix.os == 'macos-14'
         run: scripts/acceptance.sh target/debug/otori
 
       - name: Frontend typecheck
