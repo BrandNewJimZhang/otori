@@ -44,7 +44,7 @@ fn write_click_wav(path: &Path, bpm: f64, secs: f64, rate: u32) {
 #[ignore = "needs downloaded models (scripts/download-models.sh)"]
 fn click_track_detects_known_bpm() {
     let models_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src-tauri/models");
-    let paths = models::resolve(&models_dir).expect("models downloaded");
+    let paths = models::resolve(&[&models_dir]).expect("models downloaded");
     let mut engine = AnalysisEngine::new(&paths).unwrap();
 
     let dir = std::env::temp_dir().join("otori-analysis-test");

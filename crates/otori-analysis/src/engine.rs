@@ -27,11 +27,24 @@ pub struct TrackAnalysis {
 
 pub struct AnalysisEngine {
     tracker: BeatThis<<RtenRuntime as Runtime>::Model>,
+    /// Which beat model this engine loaded — stamped onto every verdict
+    /// it writes so a later model switch can reopen only foreign-model rows.
+    model_id: &'static str,
 }
 
 impl AnalysisEngine {
     pub fn new(models: &ModelPaths) -> Result<Self> {
-        Ok(Self { tracker: BeatThis::new(&RtenRuntime, &models.mel, &models.beat)? })
+        Ok(Self {
+            tracker: BeatThis::new(&RtenRuntime, &models.mel, &models.beat)?,
+            model_id: models.model_id,
+        })
+    }
+
+    /// The beat model id this engine writes verdicts for. Stamped into
+    /// the index by `analyze_and_persist`; used by `ReopenScope::Model`
+    /// to scope a model switch to foreign-model verdicts only.
+    pub fn model(&self) -> &'static str {
+        self.model_id
     }
 
     /// Decode + track beats + derive verdicts. `hint_bpm` anchors

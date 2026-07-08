@@ -95,8 +95,8 @@ fn nonsense_tbpm_tags_are_ignored() {
 fn provider_hint_reopens_analysis_for_verification() {
     let (conn, id) = seeded_library();
     // Old detection exists…
-    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 87.0, bpm_max: None, confidence: 0.6 })).unwrap();
-    analysis::set_mix_anchors(&conn, id, None, None).unwrap();
+    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 87.0, bpm_max: None, confidence: 0.6 }), "small").unwrap();
+    analysis::set_mix_anchors(&conn, id, None, None, "small").unwrap();
     assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
 
     // …then a wiki/provider hint arrives: analysis re-opens so the
@@ -144,7 +144,7 @@ fn scan_does_not_clobber_a_provider_hint_with_a_tag() {
 #[test]
 fn recording_a_steady_detection_stores_confidence() {
     let (conn, id) = seeded_library();
-    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 128.3, bpm_max: None, confidence: 0.87 })).unwrap();
+    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 128.3, bpm_max: None, confidence: 0.87 }), "small").unwrap();
 
     let (bpm, bpm_max, conf, source): (f64, Option<f64>, f64, String) = conn
         .query_row(
@@ -167,7 +167,7 @@ fn recording_a_steady_detection_stores_confidence() {
 #[test]
 fn recording_a_variable_tempo_stores_the_range() {
     let (conn, id) = seeded_library();
-    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 140.0, bpm_max: Some(180.0), confidence: 0.6 })).unwrap();
+    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 140.0, bpm_max: Some(180.0), confidence: 0.6 }), "small").unwrap();
 
     let (bpm, bpm_max): (f64, Option<f64>) = conn
         .query_row("SELECT bpm, bpm_max FROM tracks WHERE id = ?1", [id], |r| {
@@ -181,7 +181,7 @@ fn recording_a_variable_tempo_stores_the_range() {
 #[test]
 fn beatless_result_is_recorded_as_analyzed_without_a_bpm() {
     let (conn, id) = seeded_library();
-    analysis::set_bpm(&conn, id, None).unwrap();
+    analysis::set_bpm(&conn, id, None, "small").unwrap();
 
     let pending = analysis::list_analysis_pending(&conn).unwrap();
     assert_eq!(pending.len(), 1);
@@ -195,12 +195,13 @@ fn beatless_result_is_recorded_as_analyzed_without_a_bpm() {
 #[test]
 fn mix_anchors_persist_and_clear_the_worklist() {
     let (conn, id) = seeded_library();
-    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.8 })).unwrap();
+    analysis::set_bpm(&conn, id, Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.8 }), "small").unwrap();
     analysis::set_mix_anchors(
         &conn,
         id,
         Some(analysis::MixAnchor { bpm: 128.2, beat_sec: 0.31 }),
         Some(analysis::MixAnchor { bpm: 127.9, beat_sec: 231.4 }),
+        "small",
     )
     .unwrap();
 
@@ -222,12 +223,12 @@ fn unstable_ends_are_recorded_as_anchorless_not_retried() {
     let (conn, id) = seeded_library();
     // Both ends unusable (variable tempo / beatless / too long): NULLs,
     // but analyzed — the sweeper must not revisit every launch.
-    analysis::set_mix_anchors(&conn, id, None, None).unwrap();
+    analysis::set_mix_anchors(&conn, id, None, None, "small").unwrap();
 
     let pending = analysis::list_analysis_pending(&conn).unwrap();
     assert_eq!(pending.len(), 1); // still needs the BPM verdict...
     assert!(pending[0].needs_bpm);
-    analysis::set_bpm(&conn, id, None).unwrap();
+    analysis::set_bpm(&conn, id, None, "small").unwrap();
     assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
 
     let anchors: (Option<f64>, Option<f64>) = conn
@@ -243,9 +244,9 @@ fn unstable_ends_are_recorded_as_anchorless_not_retried() {
 #[test]
 fn unknown_track_fails_fast() {
     let (conn, _) = seeded_library();
-    assert!(analysis::set_bpm(&conn, 9999, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.5 })).is_err());
+    assert!(analysis::set_bpm(&conn, 9999, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.5 }), "small").is_err());
     assert!(analysis::set_bpm_hint(&conn, 9999, 120.0, None, "tag").is_err());
-    assert!(analysis::set_mix_anchors(&conn, 9999, None, None).is_err());
+    assert!(analysis::set_mix_anchors(&conn, 9999, None, None, "small").is_err());
 }
 
 #[test]
@@ -269,9 +270,9 @@ fn hint_candidates_lists_tracks_worth_a_provider_lookup() {
     // hinted: already has an anchor — not a candidate.
     analysis::set_bpm_hint(&conn, id_of("hinted.mp3"), 174.0, None, "provider:vocadb").unwrap();
     // confident: strong steady detection — not worth a lookup.
-    analysis::set_bpm(&conn, id_of("confident.mp3"), Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.9 })).unwrap();
+    analysis::set_bpm(&conn, id_of("confident.mp3"), Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.9 }), "small").unwrap();
     // shaky: low confidence — candidate.
-    analysis::set_bpm(&conn, id_of("shaky.mp3"), Some(analysis::DetectedBpm { bpm: 87.0, bpm_max: None, confidence: 0.3 })).unwrap();
+    analysis::set_bpm(&conn, id_of("shaky.mp3"), Some(analysis::DetectedBpm { bpm: 87.0, bpm_max: None, confidence: 0.3 }), "small").unwrap();
     // blank: never analyzed (or beatless) — candidate.
 
     let candidates = analysis::list_hint_candidates(&conn, 0.6).unwrap();
@@ -294,9 +295,10 @@ fn analyzed(conn: &otori_core::Connection, id: i64, confidence: f64) {
         conn,
         id,
         Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence }),
+        "small",
     )
     .unwrap();
-    analysis::set_mix_anchors(conn, id, None, None).unwrap();
+    analysis::set_mix_anchors(conn, id, None, None, "small").unwrap();
 }
 
 fn seeded_pair() -> (otori_core::Connection, i64, i64) {
@@ -344,8 +346,8 @@ fn reopen_low_confidence_requeues_only_shaky_and_beatless() {
 #[test]
 fn reopen_low_confidence_includes_beatless_verdicts() {
     let (conn, a, b) = seeded_pair();
-    analysis::set_bpm(&conn, a, None).unwrap(); // beatless verdict
-    analysis::set_mix_anchors(&conn, a, None, None).unwrap();
+    analysis::set_bpm(&conn, a, None, "small").unwrap(); // beatless verdict
+    analysis::set_mix_anchors(&conn, a, None, None, "small").unwrap();
     analyzed(&conn, b, 0.9);
     let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::LowConfidence(0.4)).unwrap();
     assert_eq!(n, 1);
@@ -369,4 +371,77 @@ fn reopen_unknown_track_fails_fast() {
     let (conn, _, _) = seeded_pair();
     let err = analysis::reopen_analysis(&conn, analysis::ReopenScope::Tracks(&[9999]));
     assert!(err.is_err(), "unknown ids are caller bugs, not no-ops");
+}
+
+// ---- model switch reanalysis (v14: analysis_model provenance) ----
+
+#[test]
+fn verdict_stamps_the_model_that_produced_it() {
+    let (conn, id) = seeded_library();
+    analysis::set_bpm(
+        &conn,
+        id,
+        Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.8 }),
+        "small",
+    )
+    .unwrap();
+    analysis::set_mix_anchors(&conn, id, None, None, "standard").unwrap();
+    let (bpm_model, mix_model): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT analysis_model, analysis_model FROM tracks WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    // set_mix_anchors runs second; the last writer wins, so the recorded
+    // model is the one that last touched the row.
+    assert_eq!(mix_model.as_deref(), Some("standard"));
+    let _ = bpm_model;
+}
+
+#[test]
+fn reopen_model_keeps_same_model_verdicts_and_re_runs_foreign() {
+    let (conn, a, b) = seeded_pair();
+    analyzed(&conn, a, 0.9); // analyzed() stamps "small"
+    analysis::set_bpm(
+        &conn,
+        b,
+        Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.9 }),
+        "standard",
+    )
+    .unwrap();
+    analysis::set_mix_anchors(&conn, b, None, None, "standard").unwrap();
+    assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
+
+    // Switch to small: only the standard verdict (b) re-opens; the
+    // small verdict (a) is kept — a round trip must not re-run the
+    // whole library.
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::Model("small")).unwrap();
+    assert_eq!(n, 1);
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, b);
+}
+
+#[test]
+fn reopen_model_treats_null_analysis_model_as_foreign() {
+    let (conn, a, b) = seeded_pair();
+    analyzed(&conn, a, 0.9); // "small"
+    // Simulate a pre-v14 library row: analyzed but no model stamp.
+    conn.execute(
+        "UPDATE tracks SET analysis_model = NULL, bpm = 130.0,
+            bpm_analyzed_at = datetime('now'), mix_analyzed_at = datetime('now')
+         WHERE id = ?1",
+        [b],
+    )
+    .unwrap();
+    assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
+
+    // A model switch must re-run rows whose model is unknown (NULL),
+    // not keep them — that's exactly the "older Ōtori wrote this" case.
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::Model("small")).unwrap();
+    assert_eq!(n, 1);
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, b);
 }

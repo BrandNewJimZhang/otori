@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -32,6 +32,7 @@ CREATE TABLE tracks (
     bpm_source   TEXT              -- how bpm was produced
                  CHECK (bpm_source IN ('detected', 'detected+hint') OR bpm_source IS NULL),
     bpm_analyzed_at TEXT,          -- set once analysis ran (bpm NULL = beatless)
+    analysis_model  TEXT,          -- which beat model produced the verdict (model switch reopens foreign-model rows)
     bpm_hint     REAL,             -- external anchor (tag/provider); analysis input, not output
     bpm_hint_max REAL,             -- hint range ceiling
     bpm_hint_source TEXT           -- 'tag' | 'provider:<name>'
@@ -296,6 +297,15 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
             "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL;",
         )?;
         conn.pragma_update(None, "user_version", 13)?;
+    }
+    if (1..=13).contains(&version) {
+        // v14: record which beat model produced each verdict, so a
+        // user-facing model switch (small ↔ standard) can reopen only
+        // foreign-model rows instead of the whole library. NULL on
+        // existing rows = "unknown model"; the next sweep stamps the
+        // active model, and a model switch re-runs them (ReopenScope::Model).
+        conn.execute_batch("ALTER TABLE tracks ADD COLUMN analysis_model TEXT;")?;
+        conn.pragma_update(None, "user_version", 14)?;
     }
     Ok(conn)
 }

@@ -18,15 +18,16 @@ fn v10_reopens_detections_made_by_the_narrow_window_detector() {
                  bpm, bpm_confidence, bpm_source, bpm_analyzed_at)
              VALUES ('/a.mp3', 'mp3', datetime('now'), datetime('now'),
                  87.0, 0.8, 'detected', datetime('now'));
-             -- A real v9 library predates the v11 mix-anchor and v12
-             -- lyrics-offset columns; drop them so the replayed
-             -- migrations can re-add them.
+             -- A real v9 library predates the v11 mix-anchor, v12
+             -- lyrics-offset, and v14 analysis-model columns; drop
+             -- them so the replayed migrations can re-add them.
              ALTER TABLE tracks DROP COLUMN mix_head_bpm;
              ALTER TABLE tracks DROP COLUMN mix_head_beat_sec;
              ALTER TABLE tracks DROP COLUMN mix_tail_bpm;
              ALTER TABLE tracks DROP COLUMN mix_tail_beat_sec;
              ALTER TABLE tracks DROP COLUMN mix_analyzed_at;
-             ALTER TABLE tracks DROP COLUMN lyrics_offset_ms;",
+             ALTER TABLE tracks DROP COLUMN lyrics_offset_ms;
+             ALTER TABLE tracks DROP COLUMN analysis_model;",
         )
         .unwrap();
         conn.pragma_update(None, "user_version", 9).unwrap();
@@ -63,7 +64,10 @@ fn v13_reopens_everything_for_the_beat_this_engine() {
                  mix_head_bpm, mix_head_beat_sec, mix_analyzed_at)
              VALUES ('/a.mp3', 'mp3', datetime('now'), datetime('now'),
                  120.0, 0.9, 'detected', datetime('now'),
-                 120.0, 0.5, datetime('now'));",
+                 120.0, 0.5, datetime('now'));
+             -- A real v12 library predates the v14 analysis-model column;
+             -- drop it so the replayed v14 migration can re-add it.
+             ALTER TABLE tracks DROP COLUMN analysis_model;",
         )
         .unwrap();
         conn.pragma_update(None, "user_version", 12).unwrap();
@@ -79,4 +83,43 @@ fn v13_reopens_everything_for_the_beat_this_engine() {
     assert_eq!(bpm, Some(120.0), "stale value stays visible until re-swept");
     assert_eq!(bpm_at, None);
     assert_eq!(mix_at, None, "anchors re-measure under the new engine too");
+}
+
+#[test]
+fn v14_adds_analysis_model_without_reopening_or_dropping_values() {
+    // The v13→v14 migration adds the analysis_model column (NULL on
+    // existing rows) but does NOT reopen analysis or clear values — a
+    // pure additive column add. NULL means "unknown model"; the next
+    // sweep stamps the active model, and a later model switch re-runs
+    // these rows (ReopenScope::Model treats NULL as foreign).
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lib.db");
+    {
+        let conn = db::open(&path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO tracks (path, format, first_seen, last_scanned,
+                 bpm, bpm_confidence, bpm_source, bpm_analyzed_at,
+                 mix_head_bpm, mix_head_beat_sec, mix_analyzed_at)
+             VALUES ('/a.mp3', 'mp3', datetime('now'), datetime('now'),
+                 120.0, 0.9, 'detected', datetime('now'),
+                 120.0, 0.5, datetime('now'));
+             ALTER TABLE tracks DROP COLUMN analysis_model;",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 13).unwrap();
+    }
+    let conn = db::open(&path).unwrap();
+    let (bpm, bpm_at, model): (Option<f64>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT bpm, bpm_analyzed_at, analysis_model FROM tracks WHERE path = '/a.mp3'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(bpm, Some(120.0), "v14 must not clear existing values");
+    assert!(bpm_at.is_some(), "v13 detection stays analyzed");
+    assert_eq!(model, None, "existing rows get NULL (unknown model)");
+    // Nothing reopens: a pure column add must not queue work. (Both
+    // timestamps set, so the worklist sees this row as done.)
+    assert!(otori_core::analysis::list_analysis_pending(&conn).unwrap().is_empty());
 }

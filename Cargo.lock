@@ -2665,6 +2665,7 @@ dependencies = [
  "beat-this",
  "otori-core",
  "serde",
+ "tempfile",
 ]
 
 [[package]]
@@ -2676,10 +2677,13 @@ dependencies = [
  "otori-core",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tempfile",
+ "ureq",
 ]
 
 [[package]]

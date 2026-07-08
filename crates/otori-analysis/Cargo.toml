@@ -11,3 +11,6 @@ beat-this = "1.0"
 anyhow = "1"
 otori-core.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

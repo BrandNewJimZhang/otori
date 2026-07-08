@@ -74,13 +74,16 @@ pub fn list_analysis_pending(conn: &Connection) -> rusqlite::Result<Vec<PendingT
 /// Record a detection outcome. `None` = analyzed, no steady beat —
 /// distinct from never-analyzed, so the sweeper won't retry forever.
 /// `used_hint` marks whether an external anchor folded the octave.
-/// Fails fast on unknown ids.
+/// `model` stamps which analysis model produced the verdict, so a
+/// later model switch can reopen only foreign-model verdicts. Fails
+/// fast on unknown ids.
 pub fn set_bpm(
     conn: &Connection,
     track_id: i64,
     detected: Option<DetectedBpm>,
+    model: &str,
 ) -> rusqlite::Result<()> {
-    set_bpm_with_source(conn, track_id, detected, false)
+    set_bpm_with_source(conn, track_id, detected, false, model)
 }
 
 /// `set_bpm` variant recording that the hint anchored the result.
@@ -88,8 +91,9 @@ pub fn set_bpm_verified(
     conn: &Connection,
     track_id: i64,
     detected: DetectedBpm,
+    model: &str,
 ) -> rusqlite::Result<()> {
-    set_bpm_with_source(conn, track_id, Some(detected), true)
+    set_bpm_with_source(conn, track_id, Some(detected), true, model)
 }
 
 fn set_bpm_with_source(
@@ -97,22 +101,25 @@ fn set_bpm_with_source(
     track_id: i64,
     detected: Option<DetectedBpm>,
     used_hint: bool,
+    model: &str,
 ) -> rusqlite::Result<()> {
     let source = if used_hint { "detected+hint" } else { "detected" };
     let updated = match detected {
         Some(d) => conn.execute(
             "UPDATE tracks
              SET bpm = ?1, bpm_max = ?2, bpm_confidence = ?3,
-                 bpm_source = ?4, bpm_analyzed_at = datetime('now')
-             WHERE id = ?5",
-            rusqlite::params![d.bpm, d.bpm_max, d.confidence, source, track_id],
+                 bpm_source = ?4, bpm_analyzed_at = datetime('now'),
+                 analysis_model = ?5
+             WHERE id = ?6",
+            rusqlite::params![d.bpm, d.bpm_max, d.confidence, source, model, track_id],
         )?,
         None => conn.execute(
             "UPDATE tracks
              SET bpm = NULL, bpm_max = NULL, bpm_confidence = NULL,
-                 bpm_source = NULL, bpm_analyzed_at = datetime('now')
+                 bpm_source = NULL, bpm_analyzed_at = datetime('now'),
+                 analysis_model = ?2
              WHERE id = ?1",
-            [track_id],
+            rusqlite::params![track_id, model],
         )?,
     };
     if updated == 0 {
@@ -221,6 +228,12 @@ pub enum ReopenScope<'a> {
     LowConfidence(f64),
     /// Exactly these tracks (GUI "reanalyze selected").
     Tracks(&'a [i64]),
+    /// Only tracks whose verdict came from a *different* model than
+    /// `model` (or from no model — pre-v14 libraries). Used when the
+    /// user switches the active analysis model: stale same-model
+    /// verdicts are kept (a switch to standard then back to small must
+    /// not re-run the whole library), foreign-model verdicts are re-run.
+    Model(&'a str),
 }
 
 /// Reopen analysis for a scope: clears `bpm_analyzed_at` and
@@ -255,6 +268,16 @@ pub fn reopen_analysis(conn: &Connection, scope: ReopenScope) -> rusqlite::Resul
             }
             n
         }
+        ReopenScope::Model(model) => conn.execute(
+            // Reopen verdicts whose recorded model differs from the
+            // active one (or is NULL — a pre-v14 library). Same-model
+            // verdicts stay: a small→standard→small round trip must not
+            // re-run the whole library on the way back.
+            "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
+             WHERE bpm_analyzed_at IS NOT NULL
+               AND (analysis_model IS NULL OR analysis_model != ?1)",
+            [model],
+        )?,
     };
     Ok(reopened)
 }
@@ -263,24 +286,28 @@ pub fn reopen_analysis(conn: &Connection, scope: ReopenScope) -> rusqlite::Resul
 /// no stable local grid (variable tempo inside the window, beatless,
 /// or the detector failed) — beat-matching must not be attempted
 /// there. Recorded as analyzed either way so the sweeper moves on.
-/// Fails fast on unknown ids.
+/// `model` stamps which analysis model measured the anchors (same
+/// reasoning as `set_bpm`). Fails fast on unknown ids.
 pub fn set_mix_anchors(
     conn: &Connection,
     track_id: i64,
     head: Option<MixAnchor>,
     tail: Option<MixAnchor>,
+    model: &str,
 ) -> rusqlite::Result<()> {
     let updated = conn.execute(
         "UPDATE tracks
          SET mix_head_bpm = ?1, mix_head_beat_sec = ?2,
              mix_tail_bpm = ?3, mix_tail_beat_sec = ?4,
-             mix_analyzed_at = datetime('now')
-         WHERE id = ?5",
+             mix_analyzed_at = datetime('now'),
+             analysis_model = ?5
+         WHERE id = ?6",
         rusqlite::params![
             head.map(|a| a.bpm),
             head.map(|a| a.beat_sec),
             tail.map(|a| a.bpm),
             tail.map(|a| a.beat_sec),
+            model,
             track_id
         ],
     )?;
