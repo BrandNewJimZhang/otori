@@ -9,6 +9,7 @@ import {
   edgeSelect,
   emptySelection,
   filterTracks,
+  formatBpm,
   selectAll,
   sortTracks,
   stepSelect,
@@ -88,6 +89,33 @@ describe("sortTracks", () => {
     const before = rows.map((t) => t.id);
     expect(sortTracks(rows, { key: "artist", dir: 1 }).map((t) => t.id)).toEqual([3, 1, 2]);
     expect(rows.map((t) => t.id)).toEqual(before);
+  });
+
+  it("treats bpm ranges as unsortable, grouped last with missing values", () => {
+    const bpmRows = [
+      track(1, { bpm: 140, bpm_max: 200 }), // variable tempo: no single comparable value
+      track(2, { bpm: 128 }),
+      track(3), // bpm null
+      track(4, { bpm: 174 }),
+    ];
+    expect(sortTracks(bpmRows, { key: "bpm", dir: 1 }).map((t) => t.id)).toEqual([2, 4, 1, 3]);
+    expect(sortTracks(bpmRows, { key: "bpm", dir: -1 }).map((t) => t.id)).toEqual([4, 2, 1, 3]);
+  });
+});
+
+describe("formatBpm", () => {
+  it("rounds a verified single tempo to an integer", () => {
+    expect(formatBpm(track(1, { bpm: 128.4 }))).toBe("128");
+    expect(formatBpm(track(1, { bpm: 174.6 }))).toBe("175");
+  });
+
+  it("renders a variable tempo as a rounded range", () => {
+    expect(formatBpm(track(1, { bpm: 139.7, bpm_max: 200.2 }))).toBe("140–200");
+  });
+
+  it("hedges an unverified hint and dashes the unknown", () => {
+    expect(formatBpm(track(1, { bpm_hint: 184.5 }))).toBe("≈185");
+    expect(formatBpm(track(1))).toBe("—");
   });
 });
 

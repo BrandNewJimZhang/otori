@@ -25,7 +25,14 @@ export function toggleSort(spec: SortSpec | null, key: SortKey): SortSpec | null
 export function sortTracks(rows: TrackRow[], spec: SortSpec | null): TrackRow[] {
   if (!spec) return rows;
   const { key, dir } = spec;
-  const val = (t: TrackRow) => (key === "title" ? displayTitle(t) : t[key]);
+  const val = (t: TrackRow) => {
+    if (key === "title") return displayTitle(t);
+    // A bpm range (variable tempo / soflan) has no single comparable
+    // value; ranking it by its lower bound would call 140–200 "slower"
+    // than a straight 150. Group ranges with the unknowns instead.
+    if (key === "bpm" && t.bpm_max != null) return null;
+    return t[key];
+  };
   return [...rows].sort((a, b) => {
     const va = val(a);
     const vb = val(b);
@@ -39,6 +46,19 @@ export function sortTracks(rows: TrackRow[], spec: SortSpec | null): TrackRow[] 
         : va.toLowerCase().localeCompare((vb as string).toLowerCase());
     return cmp * dir;
   });
+}
+
+/** BPM display: verified tempo, a min–max range (variable/soflan), an
+    unverified hint ("≈185"), or "—". Whole numbers throughout — the
+    detector's confidence doesn't support tenths, and the inspector
+    already rounds. */
+export function formatBpm(t: TrackRow): string {
+  if (t.bpm != null) {
+    if (t.bpm_max != null) return `${Math.round(t.bpm)}–${Math.round(t.bpm_max)}`;
+    return `${Math.round(t.bpm)}`;
+  }
+  if (t.bpm_hint != null) return `≈${Math.round(t.bpm_hint)}`;
+  return "—";
 }
 
 // ---- filtering ----

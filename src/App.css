@@ -450,6 +450,10 @@ th {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+  /* Header labels never wrap: a label plus the always-rendered
+     sort-arrow slot breaking onto a second line leaves headers at
+     different heights and baselines. */
+  white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -685,15 +689,18 @@ tbody tr:hover .art-overlay-play {
   height: 12px;
 }
 
+/* Narrow columns are sized to fit their header label plus the fixed
+   sort-arrow slot on one line; anything tighter forces the label to
+   wrap (pre-nowrap this made header heights diverge). */
 .col-duration {
-  width: 64px;
+  width: 76px;
   text-align: right;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 
 .col-bpm {
-  width: 72px;
+  width: 76px;
   text-align: right;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
@@ -706,7 +713,7 @@ tbody tr:hover .art-overlay-play {
 }
 
 .col-format {
-  width: 68px;
+  width: 92px;
   color: var(--text-dim);
 }
 
