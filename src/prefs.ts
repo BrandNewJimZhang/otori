@@ -10,6 +10,16 @@ import type { RepeatMode } from "./playorder";
 export type Theme = "dark" | "light" | "auto";
 export type Density = "comfortable" | "compact";
 
+/**
+ * Selectable Beat This! analysis models. The id is the SSOT string the
+ * index stamps into `analysis_model`; the Rust registry
+ * (`crates/otori-analysis/src/models.rs`) is the authority for the
+ * valid set — this is the allowlist that survives a corrupt pref
+ * without poisoning the rest. Add a model here AND in the Rust
+ * registry together.
+ */
+export type AnalysisModel = "small" | "standard";
+
 export interface Prefs {
   volume: number;
   sort: SortSpec | null;
@@ -22,6 +32,8 @@ export interface Prefs {
   density: Density;
   /** User-dragged column widths in px; missing = auto layout. */
   columnWidths: ColumnWidths;
+  /** Which beat model the sweep runs. */
+  analysisModel: AnalysisModel;
 }
 
 const KEY = "otori.prefs";
@@ -34,12 +46,14 @@ const DEFAULTS: Prefs = {
   crossfadeSec: 0,
   density: "comfortable",
   columnWidths: {},
+  analysisModel: "small",
 };
 const SORT_KEYS = new Set(["title", "artist", "album", "duration_secs", "bpm", "format"]);
 const REPEAT_MODES = new Set<RepeatMode>(["off", "all", "one"]);
 const THEMES = new Set<Theme>(["dark", "light", "auto"]);
 const CROSSFADE_MAX_SEC = 30;
 const DENSITIES = new Set<Density>(["comfortable", "compact"]);
+const ANALYSIS_MODELS = new Set<AnalysisModel>(["small", "standard"]);
 
 export function loadPrefs(storage: Storage): Prefs {
   const raw = storage.getItem(KEY);
@@ -66,6 +80,7 @@ export function loadPrefs(storage: Storage): Prefs {
       Object.values(p.columnWidths).every((w) => typeof w === "number" && w > 0)
         ? p.columnWidths
         : {};
+    const analysisModel = ANALYSIS_MODELS.has(p.analysisModel) ? p.analysisModel : "small";
     return {
       volume: p.volume,
       sort: p.sort,
@@ -75,6 +90,7 @@ export function loadPrefs(storage: Storage): Prefs {
       crossfadeSec,
       density,
       columnWidths,
+      analysisModel,
     };
   } catch {
     return DEFAULTS;

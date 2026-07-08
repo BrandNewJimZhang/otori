@@ -129,16 +129,64 @@ export function analyzeTrack(trackId: number): Promise<PersistedVerdict> {
 }
 
 /** Reopen analysis so the sweep re-verdicts. No args = whole library;
-    `trackIds` = exactly those; `lowConfidence` = shaky + beatless.
-    Returns the number of tracks reopened. */
+    `trackIds` = exactly those; `lowConfidence` = shaky + beatless;
+    `model` = only verdicts produced by a different model (use after a
+    model switch). Returns the number of tracks reopened. */
 export function reopenAnalysis(opts: {
   trackIds?: number[];
   lowConfidence?: number;
+  model?: string;
 } = {}): Promise<number> {
   return invoke<number>("reopen_analysis", {
     trackIds: opts.trackIds ?? null,
     lowConfidence: opts.lowConfidence ?? null,
+    model: opts.model ?? null,
   });
+}
+
+/** Sync the user's pref model id into the shell's active-model state.
+    Mount-time only — does NOT reopen analysis; the next sweep picks up
+    the new engine. The switch entry point (with reopen) is
+    `switchAnalysisModel`. */
+export function setAnalysisModel(id: string): Promise<void> {
+  return invoke<void>("set_analysis_model", { id });
+}
+
+/** One registered beat model, with whether its weights are present
+    (downloaded) so the UI can offer a download-and-switch. */
+export interface AnalysisModelInfo {
+  id: string;
+  label: string;
+  available: boolean;
+}
+
+/** The registry + availability snapshot the cycle button renders from.
+    `activeId` is echoed back so the UI doesn't need a separate read for
+    the current selection. */
+export interface AnalysisModels {
+  activeId: string;
+  models: AnalysisModelInfo[];
+}
+
+/** List registered beat models, marked available when their weights are
+    present; also echoes the active id. Drives the cycle button. */
+export function listAnalysisModels(): Promise<AnalysisModels> {
+  return invoke<AnalysisModels>("list_analysis_models");
+}
+
+/** Switch the active model and reopen only foreign-model verdicts so the
+    sweep re-runs them. Emits `library-changed` (the table + status bar
+    refresh through the usual path). Returns the count reopened. */
+export function switchAnalysisModel(id: string): Promise<number> {
+  return invoke<number>("switch_analysis_model", { id });
+}
+
+/** Download a model's weights into the writable models dir (sha256-
+    verified against the upstream `.sha256` sidecar). Resolves on success;
+    rejects on network or checksum failure. Emits
+    `analysis-model-downloaded` with the id on success. */
+export function downloadAnalysisModel(id: string): Promise<void> {
+  return invoke<void>("download_analysis_model", { id });
 }
 
 /** Hold/release the display-sleep assertion (Stage mode playing). */

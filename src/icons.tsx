@@ -243,3 +243,27 @@ export function NoteIcon() {
     </svg>
   );
 }
+
+/** Analysis-model toggle: a metronome, the one icon that reads as
+    "tempo detection" without leaning on a literal BPM glyph. */
+export function MetronomeIcon() {
+  return (
+    <svg {...P}>
+      <path
+        d="M9 20h6l3-13H6l3 13z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinejoin="round"
+      />
+      <path d="M6.5 7 17 4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M12 17 9.5 9.5"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <circle cx="9.5" cy="9.5" r="1.3" />
+    </svg>
+  );
+}
