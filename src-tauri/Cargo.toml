@@ -20,7 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 otori-core.workspace = true
 otori-analysis.workspace = true
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="84 92 400 400">
+  <!-- Ōtori status-bar (tray) TEMPLATE icon: same geometry as
+       docs/assets/logo-mark-*.svg, but solid black on transparent.
+       macOS template rendering uses only the alpha channel, so color
+       is irrelevant — the app icon's dark tile must NOT be here or the
+       whole square renders as a black blob. Ring stroke is thickened
+       (44 → 52) to survive the 18pt menu-bar size. -->
+  <defs>
+    <mask id="ring-hole">
+      <rect x="84" y="92" width="400" height="400" fill="white"/>
+      <circle cx="226" cy="350" r="96" fill="black"/>
+    </mask>
+  </defs>
+  <g mask="url(#ring-hole)">
+    <g transform="translate(226 350)">
+      <g transform="rotate(-14)"><path d="M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z" fill="#000"/></g>
+      <g transform="rotate(16)"><path d="M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z" fill="#000"/></g>
+      <g transform="rotate(46)"><path d="M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z" fill="#000"/></g>
+      <g transform="rotate(76)"><path d="M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z" fill="#000"/></g>
+    </g>
+  </g>
+  <circle cx="226" cy="350" r="96" fill="none" stroke="#000" stroke-width="52"/>
+</svg>
