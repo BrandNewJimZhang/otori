@@ -9,11 +9,55 @@ export function displayTitle(t: TrackRow): string {
 
 // ---- sorting ----
 
-export type SortKey = "title" | "artist" | "album" | "duration_secs" | "bpm" | "format";
+export type SortKey =
+  | "title"
+  | "artist"
+  | "album"
+  | "duration_secs"
+  | "bpm"
+  | "format"
+  | "first_seen"
+  | "bpm_analyzed_at";
 
 export interface SortSpec {
   key: SortKey;
   dir: 1 | -1;
+}
+
+// ---- columns ----
+
+export interface ColumnSpec {
+  key: SortKey;
+  label: string;
+  className?: string;
+  resizable?: boolean;
+  /** false = always shown (the table needs one identifying column). */
+  hideable: boolean;
+}
+
+/** Column registry (SSOT): order, labels, and hideability for the
+    Backstage table; prefs validate hidden keys against it. */
+export const COLUMNS: readonly ColumnSpec[] = [
+  { key: "title", label: "Title", resizable: true, hideable: false },
+  { key: "artist", label: "Artist", resizable: true, hideable: true },
+  { key: "album", label: "Album", resizable: true, hideable: true },
+  { key: "duration_secs", label: "Time", className: "col-duration", hideable: true },
+  { key: "bpm", label: "BPM", className: "col-bpm", hideable: true },
+  { key: "format", label: "Format", className: "col-format", hideable: true },
+  { key: "first_seen", label: "Added", className: "col-date", hideable: true },
+  { key: "bpm_analyzed_at", label: "Analyzed", className: "col-date", hideable: true },
+];
+
+/** Registry order minus the hidden set. */
+export function visibleColumns(hidden: readonly SortKey[]): ColumnSpec[] {
+  return COLUMNS.filter((c) => !hidden.includes(c.key));
+}
+
+/** Flip one column's visibility; non-hideable keys are a no-op. */
+export function toggleColumn(hidden: readonly SortKey[], key: SortKey): SortKey[] {
+  const spec = COLUMNS.find((c) => c.key === key);
+  if (!spec?.hideable) return [...hidden];
+  return hidden.includes(key) ? hidden.filter((k) => k !== key) : [...hidden, key];
 }
 
 /** Column header click cycle: none → asc → desc → none. */

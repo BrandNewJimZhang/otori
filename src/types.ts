@@ -21,6 +21,10 @@ export interface TrackRow {
   mix_analyzed: boolean;
   /** User's per-track lyrics sync nudge in ms; positive = lyrics later. */
   lyrics_offset_ms: number;
+  /** SQLite UTC "YYYY-MM-DD HH:MM:SS" — when the file entered the library. */
+  first_seen: string;
+  /** Same format; null = analysis pending (the sweep hasn't reached it). */
+  bpm_analyzed_at: string | null;
   title: string | null;
   artist: string | null;
   album: string | null;

@@ -2,7 +2,8 @@
 // launch). localStorage is a preference cache, not authoritative data —
 // invalid blobs fall back to defaults instead of failing fast.
 
-import type { SortSpec } from "./library";
+import type { SortKey, SortSpec } from "./library";
+import { COLUMNS } from "./library";
 import type { ColumnWidths } from "./LibraryTable";
 import type { RepeatMode } from "./playorder";
 
@@ -32,6 +33,8 @@ export interface Prefs {
   density: Density;
   /** User-dragged column widths in px; missing = auto layout. */
   columnWidths: ColumnWidths;
+  /** Columns the user hid via the header context menu; empty = all shown. */
+  hiddenColumns: readonly SortKey[];
   /** Which beat model the sweep runs. */
   analysisModel: AnalysisModel;
 }
@@ -46,9 +49,13 @@ const DEFAULTS: Prefs = {
   crossfadeSec: 0,
   density: "comfortable",
   columnWidths: {},
+  hiddenColumns: [],
   analysisModel: "small",
 };
-const SORT_KEYS = new Set(["title", "artist", "album", "duration_secs", "bpm", "format"]);
+const SORT_KEYS = new Set(COLUMNS.map((c) => c.key));
+// Only registry columns marked hideable may persist as hidden — a
+// removed column or a hand-edited "title" degrades to all-visible.
+const HIDEABLE_KEYS = new Set(COLUMNS.filter((c) => c.hideable).map((c) => c.key));
 const REPEAT_MODES = new Set<RepeatMode>(["off", "all", "one"]);
 const THEMES = new Set<Theme>(["dark", "light", "auto"]);
 const CROSSFADE_MAX_SEC = 30;
@@ -81,6 +88,10 @@ export function loadPrefs(storage: Storage): Prefs {
         ? p.columnWidths
         : {};
     const analysisModel = ANALYSIS_MODELS.has(p.analysisModel) ? p.analysisModel : "small";
+    const hiddenColumns =
+      Array.isArray(p.hiddenColumns) && p.hiddenColumns.every((k) => HIDEABLE_KEYS.has(k))
+        ? p.hiddenColumns
+        : [];
     return {
       volume: p.volume,
       sort: p.sort,
@@ -90,6 +101,7 @@ export function loadPrefs(storage: Storage): Prefs {
       crossfadeSec,
       density,
       columnWidths,
+      hiddenColumns,
       analysisModel,
     };
   } catch {

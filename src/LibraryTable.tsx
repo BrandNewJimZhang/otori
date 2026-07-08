@@ -5,21 +5,12 @@
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
-import { displayTitle, formatBpm } from "./library";
-import { formatTime } from "./format";
+import { displayTitle, formatBpm, visibleColumns } from "./library";
+import { formatDate, formatDateTime, formatTime } from "./format";
 import { NoteIcon, PlayIcon, SortArrowIcon } from "./icons";
 import type { ArtworkCache } from "./artworkcache";
 import type { TrackRow } from "./types";
 import { revealOffset, rowWindow } from "./virtualwindow";
-
-const COLUMNS: { key: SortKey; label: string; className?: string; resizable?: boolean }[] = [
-  { key: "title", label: "Title", resizable: true },
-  { key: "artist", label: "Artist", resizable: true },
-  { key: "album", label: "Album", resizable: true },
-  { key: "duration_secs", label: "Time", className: "col-duration" },
-  { key: "bpm", label: "BPM", className: "col-bpm" },
-  { key: "format", label: "Format", className: "col-format" },
-];
 
 export type ColumnWidths = Partial<Record<SortKey, number>>;
 
@@ -35,12 +26,16 @@ interface Props {
   selection: Selection;
   sort: SortSpec | null;
   columnWidths: ColumnWidths;
+  /** Columns hidden via the header context menu (library.ts COLUMNS registry). */
+  hiddenColumns: readonly SortKey[];
   /** Lazy cover-art source; the table fetches only rows scrolled into view. */
   artwork: ArtworkCache;
   onColumnWidths(widths: ColumnWidths): void;
   onSort(key: SortKey): void;
   onRowClick(id: number, mods: { shift: boolean; meta: boolean }): void;
   onRowContextMenu(track: TrackRow, e: React.MouseEvent): void;
+  /** Right-click on the header row: App opens the column chooser. */
+  onHeaderContextMenu(e: React.MouseEvent): void;
   onPlay(track: TrackRow): void;
 }
 
@@ -113,13 +108,16 @@ export function LibraryTable({
   selection,
   sort,
   columnWidths,
+  hiddenColumns,
   artwork,
   onColumnWidths,
   onSort,
   onRowClick,
   onRowContextMenu,
+  onHeaderContextMenu,
   onPlay,
 }: Props) {
+  const columns = visibleColumns(hiddenColumns);
   const dragRef = useRef<{ key: SortKey; startX: number; startW: number } | null>(null);
   const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
   const tableRef = useRef<HTMLTableElement>(null);
@@ -242,11 +240,11 @@ export function LibraryTable({
     // (audit P3); the table is an interactive multiselect listing.
     <table ref={tableRef} role="grid" aria-multiselectable="true">
       <thead>
-        <tr>
+        <tr onContextMenu={onHeaderContextMenu}>
           {/* Art column: no label, no sort — a spacer aligning the
               header grid with the thumbnail cells below. */}
           <th className="col-art" aria-hidden />
-          {COLUMNS.map((c) => (
+          {columns.map((c) => (
             <th
               key={c.key}
               className={c.className}
@@ -285,7 +283,7 @@ export function LibraryTable({
       <tbody>
         {window_.padTop > 0 && (
           <tr aria-hidden style={{ height: window_.padTop }}>
-            <td className="virt-pad" colSpan={COLUMNS.length} />
+            <td className="virt-pad" colSpan={columns.length + 1} />
           </tr>
         )}
         {tracks.slice(window_.start, window_.end).map((t) => {
@@ -322,41 +320,87 @@ export function LibraryTable({
                   />
                 </span>
               </td>
-              <td>
-                {displayTitle(t)}
-                {queuePositions.has(t.id) && (
-                  <span className="queue-badge" title={`Playing next (#${queuePositions.get(t.id)})`}>
-                    {queuePositions.get(t.id)}
-                  </span>
-                )}
-              </td>
-              <td>{t.artist ?? "—"}</td>
-              <td>{t.album ?? "—"}</td>
-              <td className="col-duration">{formatTime(t.duration_secs)}</td>
-              <td
-                className={`col-bpm ${
-                  (t.bpm != null && (t.bpm_confidence ?? 0) < 0.4) ||
-                  (t.bpm == null && t.bpm_hint != null)
-                    ? "low-confidence"
-                    : ""
-                }`}
-                title={
-                  t.bpm != null && t.bpm_confidence != null
-                    ? `confidence ${(t.bpm_confidence * 100).toFixed(0)}%`
-                    : t.bpm_hint != null
-                      ? "external value, not yet verified by analysis"
-                      : undefined
+              {columns.map((c) => {
+                switch (c.key) {
+                  case "title":
+                    return (
+                      <td key={c.key}>
+                        {displayTitle(t)}
+                        {queuePositions.has(t.id) && (
+                          <span
+                            className="queue-badge"
+                            title={`Playing next (#${queuePositions.get(t.id)})`}
+                          >
+                            {queuePositions.get(t.id)}
+                          </span>
+                        )}
+                      </td>
+                    );
+                  case "artist":
+                    return <td key={c.key}>{t.artist ?? "—"}</td>;
+                  case "album":
+                    return <td key={c.key}>{t.album ?? "—"}</td>;
+                  case "duration_secs":
+                    return (
+                      <td key={c.key} className="col-duration">
+                        {formatTime(t.duration_secs)}
+                      </td>
+                    );
+                  case "bpm":
+                    return (
+                      <td
+                        key={c.key}
+                        className={`col-bpm ${
+                          (t.bpm != null && (t.bpm_confidence ?? 0) < 0.4) ||
+                          (t.bpm == null && t.bpm_hint != null)
+                            ? "low-confidence"
+                            : ""
+                        }`}
+                        title={
+                          t.bpm != null && t.bpm_confidence != null
+                            ? `confidence ${(t.bpm_confidence * 100).toFixed(0)}%`
+                            : t.bpm_hint != null
+                              ? "external value, not yet verified by analysis"
+                              : undefined
+                        }
+                      >
+                        {formatBpm(t)}
+                      </td>
+                    );
+                  case "format":
+                    return (
+                      <td key={c.key} className="col-format">
+                        {t.format}
+                      </td>
+                    );
+                  case "first_seen":
+                    return (
+                      <td key={c.key} className="col-date" title={formatDateTime(t.first_seen)}>
+                        {formatDate(t.first_seen)}
+                      </td>
+                    );
+                  case "bpm_analyzed_at":
+                    return (
+                      <td
+                        key={c.key}
+                        className="col-date"
+                        title={
+                          t.bpm_analyzed_at
+                            ? formatDateTime(t.bpm_analyzed_at)
+                            : "analysis pending"
+                        }
+                      >
+                        {formatDate(t.bpm_analyzed_at)}
+                      </td>
+                    );
                 }
-              >
-                {formatBpm(t)}
-              </td>
-              <td className="col-format">{t.format}</td>
+              })}
             </tr>
           );
         })}
         {window_.padBottom > 0 && (
           <tr aria-hidden style={{ height: window_.padBottom }}>
-            <td className="virt-pad" colSpan={COLUMNS.length} />
+            <td className="virt-pad" colSpan={columns.length + 1} />
           </tr>
         )}
       </tbody>

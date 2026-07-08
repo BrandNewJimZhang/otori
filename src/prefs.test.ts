@@ -26,6 +26,7 @@ const DEFAULTS = {
   crossfadeSec: 0,
   density: "comfortable",
   columnWidths: {},
+  hiddenColumns: [],
   analysisModel: "small",
 } as const;
 
@@ -41,6 +42,7 @@ describe("prefs", () => {
       crossfadeSec: 8,
       density: "compact",
       columnWidths: { title: 320, artist: 140 },
+      hiddenColumns: ["format", "bpm"],
       analysisModel: "standard",
     } as const;
     savePrefs(s, prefs);
@@ -102,5 +104,27 @@ describe("prefs", () => {
     const p = loadPrefs(s);
     expect(p.analysisModel).toBe("small");
     expect(p.volume).toBe(0.6);
+  });
+
+  it("invalid hidden-column entries degrade to none without dropping the rest", () => {
+    const s = fakeStorage();
+    // Unknown keys (a removed column, a typo) and non-arrays fall back
+    // to "all visible" alone — never poisoning the other prefs.
+    s.setItem(
+      "otori.prefs",
+      JSON.stringify({ volume: 0.6, sort: null, hiddenColumns: ["bpm", "nope"] }),
+    );
+    expect(loadPrefs(s)).toEqual({ ...DEFAULTS, volume: 0.6 });
+    s.setItem("otori.prefs", JSON.stringify({ volume: 0.6, sort: null, hiddenColumns: "bpm" }));
+    expect(loadPrefs(s)).toEqual({ ...DEFAULTS, volume: 0.6 });
+  });
+
+  it("title is never hideable, even from a hand-edited blob", () => {
+    const s = fakeStorage();
+    s.setItem(
+      "otori.prefs",
+      JSON.stringify({ volume: 1, sort: null, hiddenColumns: ["title"] }),
+    );
+    expect(loadPrefs(s).hiddenColumns).toEqual([]);
   });
 });
