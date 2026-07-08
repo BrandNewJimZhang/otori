@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, getLyrics, listTracks, scanLibrary, setDisplayAwake, setLyricsOffset, updateTray, reopenAnalysis } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary, setAnalysisModel, setDisplayAwake, setLyricsOffset, switchAnalysisModel, downloadAnalysisModel, listAnalysisModels, updateTray, reopenAnalysis, type AnalysisModelInfo } from "./ipc";
 import { createEngine } from "./playback";
 import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
@@ -44,6 +44,7 @@ import {
   AutoThemeIcon,
   DensityIcon,
   InfoIcon,
+  MetronomeIcon,
   MoonIcon,
   NextIcon,
   PauseIcon,
@@ -62,7 +63,7 @@ import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
 import { onSweepProgress, startAnalysisSweep } from "./analysissweep";
 import { planTransition } from "./djmix";
-import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
+import { loadPrefs, savePrefs, type AnalysisModel, type Density, type Theme } from "./prefs";
 import type { LyricsDoc, TrackRow } from "./types";
 import "./App.css";
 
@@ -113,6 +114,16 @@ function App() {
   const [mixPopover, setMixPopover] = useState(false);
   const [density, setDensity] = useState<Density>(initialPrefs.density);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(initialPrefs.columnWidths);
+  // Active Beat This! model (small default; switchable to standard). Kept
+  // in sync with the shell so the sweep runs the chosen engine.
+  const [analysisModel, setAnalysisModelState] =
+    useState<AnalysisModel>(initialPrefs.analysisModel);
+  // Registry snapshot for the cycle button: which models exist and which
+  // have their weights present (standard ships unbundled → download).
+  const [analysisModels, setAnalysisModels] = useState<AnalysisModelInfo[]>([]);
+  // True while a model switch (or its prerequisite download) is in flight —
+  // disables the cycle button so a second click can't race the reopen.
+  const [analysisSwitching, setAnalysisSwitching] = useState(false);
   const [muted, setMuted] = useState(false);
   const [showRemaining, setShowRemaining] = useState(false);
   const [query, setQuery] = useState("");
@@ -211,6 +222,77 @@ function App() {
   const [sweepRemaining, setSweepRemaining] = useState<number | null>(null);
   useEffect(() => onSweepProgress(setSweepRemaining), []);
 
+  // Sync the persisted model id into the shell's active-model state at
+  // startup. The sweep reads the active id when it loads the engine, so
+  // a restart resumes under the user's chosen model. No reopen here —
+  // the index already stamps each verdict, and a model switch (the
+  // `analysisModel` effect below) reopens only foreign-model rows.
+  useEffect(() => {
+    void setAnalysisModel(analysisModel).catch((e) => setError(String(e)));
+  }, [analysisModel]);
+
+  // Pull the registry + availability so the cycle button can offer a
+  // download-and-switch for the unbundled standard model. Re-fetch after
+  // a library-changed so a completed download flips `available` live.
+  const refreshAnalysisModels = useCallback(() => {
+    void listAnalysisModels()
+      .then((r) => {
+        setAnalysisModels(r.models);
+        // The shell is the authority for the active id; if the pref and
+        // the shell ever disagree (e.g. a future model removed from the
+        // registry), trust the shell.
+        if (r.activeId !== analysisModel) setAnalysisModelState(r.activeId as AnalysisModel);
+      })
+      .catch(() => {});
+  }, [analysisModel]);
+  useEffect(() => {
+    refreshAnalysisModels();
+    const unlisten = listen("analysis-model-downloaded", () => refreshAnalysisModels());
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, [refreshAnalysisModels]);
+
+  /** Cycle to the next registered model, downloading the standard
+      weights on demand and reopening foreign-model verdicts. Sits next
+      to the theme/density toggles — analysis model is the same class of
+      "how the app runs" switch. */
+  const cycleAnalysisModel = useCallback(() => {
+    if (analysisSwitching || analysisModels.length === 0) return;
+    const idx = analysisModels.findIndex((m) => m.id === analysisModel);
+    const next = analysisModels[(idx + 1) % analysisModels.length];
+    setAnalysisSwitching(true);
+    const go = () =>
+      switchAnalysisModel(next.id)
+        .then(() => {
+          setAnalysisModelState(next.id as AnalysisModel);
+          startAnalysisSweep();
+        })
+        .catch((e) => setError(String(e)))
+        .finally(() => setAnalysisSwitching(false));
+    if (next.available) {
+      void go();
+    } else {
+      // Standard ships unbundled: fetch + verify the weights, then
+      // switch. A checksum/network failure is a toast, not a silent
+      // skip — the user asked for the model and nothing happened.
+      setToasts((ts) =>
+        pushToast(ts, { id: ++toastSeq.current, text: `Downloading ${next.label} model…` }),
+      );
+      void downloadAnalysisModel(next.id)
+        .then(go)
+        .catch((e) => {
+          setToasts((ts) =>
+            pushToast(ts, {
+              id: ++toastSeq.current,
+              text: `${next.label} download failed: ${String(e)}`,
+            }),
+          );
+          setAnalysisSwitching(false);
+        });
+    }
+  }, [analysisSwitching, analysisModels, analysisModel]);
+
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
   // shell emits `library-changed` when an external writer (CLI/agent)
   // commits; re-fetch so the table reflects it within ~1s.
@@ -222,9 +304,7 @@ function App() {
     return () => {
       unlisten.then((off) => off());
     };
-  }, [refresh]);
-
-  // Apply the persisted volume to the engine once it exists.
+  }, [refresh]);  // Apply the persisted volume to the engine once it exists.
   useEffect(() => {
     engine.volume = initialPrefs.volume;
   }, [engine]);
@@ -239,8 +319,9 @@ function App() {
       crossfadeSec,
       density,
       columnWidths,
+      analysisModel,
     });
-  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths]);
+  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths, analysisModel]);
 
   // Theme rides a root attribute so CSS owns the palettes; Stage stays
   // dark regardless (a lit stage is not a stage). "auto" follows the
@@ -1004,6 +1085,24 @@ function App() {
         >
           {theme === "dark" ? <MoonIcon /> : theme === "light" ? <SunIcon /> : <AutoThemeIcon />}
         </button>
+        <button
+          className="icon-btn model-toggle"
+          onClick={cycleAnalysisModel}
+          disabled={analysisSwitching || analysisModels.length < 2}
+          aria-label={`Analysis model: ${analysisModel}`}
+          data-tip={
+            analysisModels.length < 2
+              ? "Analysis model"
+              : `Analysis model: ${analysisModel}${
+                  analysisModels.find((m) => m.id !== analysisModel && !m.available)
+                    ? " · click to download Standard"
+                    : ""
+                }`
+          }
+          aria-pressed={analysisModel !== "small"}
+        >
+          <MetronomeIcon />
+        </button>
       </header>
 
       <main className={`library density-${density} ${inspectorOpen ? "with-inspector" : ""}`}>
@@ -1261,6 +1360,10 @@ function App() {
           analyzed: tracks.filter((t) => t.bpm != null || t.mix_analyzed).length,
           scanning,
           sweepRemaining,
+          // Only name the model when it isn't the default — keeps the
+          // line quiet for the common case and calls out a switch's
+          // re-sweep.
+          modelLabel: analysisModel === "small" ? undefined : "Standard",
         })}
         scanning={scanning}
       />

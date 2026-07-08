@@ -35,4 +35,18 @@ describe("statusLine", () => {
     expect(statusLine({ tracks: 10, analyzed: 9, scanning: false, sweepRemaining: 1 }))
       .toBe("Analyzing · 1 left");
   });
+
+  it("names the active model while a switch's re-sweep runs", () => {
+    // A model switch reopens foreign-model verdicts; naming the model
+    // in the line tells the user *which* engine is grinding, not just
+    // that work is happening.
+    expect(
+      statusLine({ tracks: 10, analyzed: 3, scanning: false, sweepRemaining: 7, modelLabel: "Standard" }),
+    ).toBe("Analyzing (Standard) · 7 left");
+  });
+
+  it("omits the model label when not provided (back-compat)", () => {
+    expect(statusLine({ tracks: 10, analyzed: 3, scanning: false, sweepRemaining: 7 }))
+      .toBe("Analyzing · 7 left");
+  });
 });
