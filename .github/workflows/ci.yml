@@ -39,11 +39,15 @@ jobs:
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
 
-      # The ship gate (autoskill.yml) covers core + tsc + vitest. The
-      # release/CI gate additionally runs the full Rust workspace and the
-      # acceptance test that keeps AGENTS.md honest (CONTRIBUTING.md §
-      # "Reaching 1.0"). The ignored model-gated analysis tests need
-      # downloaded weights and stay out of CI.
+      # The app crate bundles models/*.onnx as Tauri resources, so its
+      # build script fails if that glob matches nothing. The weights are
+      # gitignored artifacts — fetch the bundled small + mel set the same
+      # way a fresh checkout does (scripts/download-models.sh). The
+      # ignored model-gated analysis tests still stay out of CI; only the
+      # build needs the files, not the test suite.
+      - name: Fetch bundled ONNX models
+        run: scripts/download-models.sh
+
       - name: Rust workspace tests
         run: cargo test --workspace --quiet
 
