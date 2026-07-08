@@ -85,6 +85,19 @@ describe("routeKey — global zone", () => {
     expect(routeKey(combo("?"), "input")).toEqual({ kind: "native" });
   });
 
+  it("⌘, opens settings from every zone (macOS preferences chord)", () => {
+    for (const zone of ["global", "input", "button", "slider"] as const) {
+      expect(routeKey(combo(",", { meta: true }), zone)).toEqual({ kind: "show-settings" });
+    }
+    // Settings is app-level chrome, not a table surface — it must stay
+    // reachable from Stage.
+    expect(routeKey(combo(",", { meta: true }), "global", "stage")).toEqual({
+      kind: "show-settings",
+    });
+    // Plain comma stays type-ahead.
+    expect(routeKey(combo(","), "global")).toEqual({ kind: "type-ahead", char: "," });
+  });
+
   it("passes non-printable keys and unmapped ⌘-chords through", () => {
     expect(routeKey(combo("F5"), "global")).toEqual({ kind: "native" });
     expect(routeKey(combo("c", { meta: true }), "global")).toEqual({ kind: "native" });

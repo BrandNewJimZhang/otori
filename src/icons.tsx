@@ -267,3 +267,13 @@ export function MetronomeIcon() {
     </svg>
   );
 }
+
+/** Settings entry: a gear (macOS preferences convention, ⌘,). */
+export function GearIcon() {
+  return (
+    <svg {...P}>
+      <path d="M13.9 3.2 14.3 5a7.2 7.2 0 0 1 1.9 1.1l1.8-.6 1.9 3.3-1.4 1.2a7.3 7.3 0 0 1 0 2.2l1.4 1.2-1.9 3.3-1.8-.6a7.2 7.2 0 0 1-1.9 1.1l-.4 1.8h-3.8l-.4-1.8a7.2 7.2 0 0 1-1.9-1.1l-1.8.6-1.9-3.3 1.4-1.2a7.3 7.3 0 0 1 0-2.2L4.1 8.8 6 5.5l1.8.6A7.2 7.2 0 0 1 9.7 5l.4-1.8h3.8z" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.6" fill="none" />
+    </svg>
+  );
+}
