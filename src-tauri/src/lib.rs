@@ -24,37 +24,6 @@ struct Tray {
     next: MenuItem<tauri::Wry>,
 }
 
-/// Default thread cap for rten (the Beat This! inference backend). rten
-/// defaults to every performance core, so a single BPM inference spike
-/// monopolizes the CPU and can stutter audio decode + the UI — exactly
-/// the player-hogging this app must avoid. Background analysis is
-/// throughput-insensitive (duty-cycle ≤10%), so capping it to a small
-/// fixed count leaves headroom for the realtime path.
-///
-/// Fixed 2: on the minimum supported machine (4 P-cores) this leaves
-/// ≥2 P-cores for audio decode + the WebView. Scale with P-core count
-/// if sweep wall-clock ever matters; rten's own `optimal_core_count`
-/// (P-aware via `hw.perflevel0.physicalcpu`) is the reference for a
-/// dynamic ceiling.
-const RTEN_DEFAULT_THREADS: &str = "2";
-
-/// Decide the rten thread cap given any explicit `RTEN_NUM_THREADS` in
-/// the environment. Returns `Some` only when the user hasn't already
-/// set one — an explicit export wins over our default. Pure so the
-/// rule is testable without mutating the process environment.
-fn rten_thread_cap(existing: Option<&std::ffi::OsStr>) -> Option<&'static str> {
-    (existing.is_none()).then_some(RTEN_DEFAULT_THREADS)
-}
-
-/// Cap rten's inference thread pool before any analysis runs. rten's
-/// pool is a process-global `OnceLock` initialized on first inference,
-/// so this must run before `analyze_track` — i.e. at the top of `run`.
-fn cap_analysis_threads() {
-    if let Some(cap) = rten_thread_cap(std::env::var_os("RTEN_NUM_THREADS").as_deref()) {
-        std::env::set_var("RTEN_NUM_THREADS", cap);
-    }
-}
-
 /// The active analysis model id, shared across the sweep and the UI.
 /// Starts at the registry default; the GUI syncs the user's pref into
 /// it at startup (`set_analysis_model`) and on every switch.
@@ -102,7 +71,7 @@ fn resolve_models(
 struct SleepBlocker(Mutex<Option<std::process::Child>>);
 
 /// Keep the display awake (Stage mode playing) or release it. Idempotent.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_display_awake(state: tauri::State<'_, SleepBlocker>, awake: bool) -> Result<(), String> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     match (awake, guard.as_mut()) {
@@ -123,20 +92,20 @@ fn set_display_awake(state: tauri::State<'_, SleepBlocker>, awake: bool) -> Resu
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn scan_library(state: tauri::State<'_, Library>, dir: String) -> Result<scan::ScanReport, String> {
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
     scan::scan(&mut conn, std::path::Path::new(&dir)).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_tracks(state: tauri::State<'_, Library>) -> Result<Vec<query::TrackRow>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     query::list_tracks(&conn).map_err(|e| e.to_string())
 }
 
 /// Per-field trust state for the inspector's provenance badges.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_tag_provenance(
     state: tauri::State<'_, Library>,
     track_id: i64,
@@ -156,7 +125,7 @@ struct FieldChangeArg {
 /// One call = one journal transaction across all paths (batch undo).
 /// Editing here is the oath — values land `human`-sourced, born
 /// curated. Backup/snapshot/journal all happen inside the core.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_tags(
     app: tauri::AppHandle,
     state: tauri::State<'_, Library>,
@@ -186,7 +155,7 @@ fn set_tags(
 /// (otori-analysis, Beat This!); the GUI only pulls the worklist and
 /// asks for one track at a time. The engine loads models lazily on
 /// the first call and lives for the app's lifetime.
-#[tauri::command]
+#[tauri::command(async)]
 fn list_analysis_pending(
     state: tauri::State<'_, Library>,
 ) -> Result<Vec<analysis::PendingTrack>, String> {
@@ -200,9 +169,10 @@ fn list_analysis_pending(
 struct Analyzer(Mutex<Option<otori_analysis::AnalysisEngine>>);
 
 /// Analyze one pending track (decode + Beat This! + persist verdict
-/// and anchors). Runs on Tauri's blocking pool by virtue of being a
-/// sync command; ~1s per minute of audio.
-#[tauri::command]
+/// and anchors). `(async)` moves it off the main thread — at ~1s per
+/// minute of audio, running it sync would freeze the event loop for
+/// the whole inference.
+#[tauri::command(async)]
 fn analyze_track(
     app: tauri::AppHandle,
     library: tauri::State<'_, Library>,
@@ -241,7 +211,7 @@ fn analyze_track(
 }
 
 /// Reopen analysis (GUI reanalyze entry; scope mirrors the CLI).
-#[tauri::command]
+#[tauri::command(async)]
 fn reopen_analysis(
     state: tauri::State<'_, Library>,
     track_ids: Option<Vec<i64>>,
@@ -277,7 +247,7 @@ fn reopen_analysis(
 /// the user's pref (no reopen); the next `analyze_track` loads the
 /// engine under it. A bogus id fails fast — the pref layer should have
 /// validated, but the registry is the SSOT, never trust a string.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_analysis_model(active: tauri::State<'_, ActiveModel>, id: String) -> Result<(), String> {
     let model = otori_analysis::models::find(&id)
         .ok_or_else(|| format!("unknown analysis model {id:?}"))?;
@@ -290,7 +260,7 @@ fn set_analysis_model(active: tauri::State<'_, ActiveModel>, id: String) -> Resu
 /// cached engine so the next track reloads. Emits `library-changed` so
 /// the table/status bar refresh. Same-model verdicts are kept: a
 /// small→standard→small round trip must not re-run the whole library.
-#[tauri::command]
+#[tauri::command(async)]
 fn switch_analysis_model(
     app: tauri::AppHandle,
     library: tauri::State<'_, Library>,
@@ -333,7 +303,7 @@ struct AnalysisModels {
     models: Vec<AnalysisModelInfo>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_analysis_models(
     app: tauri::AppHandle,
     active: tauri::State<'_, ActiveModel>,
@@ -356,10 +326,11 @@ fn list_analysis_models(
 /// Download a model's weights into the writable models dir, verifying
 /// the SHA-256 from the matching `.sha256` sidecar the upstream release
 /// ships. Pure HTTP + fs — no Tauri in the inner logic, so the
-/// verify-and-write step is unit-testable without the app. Runs on the
-/// blocking pool (sync command); the GUI disables the cycle button
-/// while the `download_analysis_model` promise is in flight.
-#[tauri::command]
+/// verify-and-write step is unit-testable without the app. `(async)`
+/// keeps the multi-MB download off the main thread; the GUI disables
+/// the cycle button while the `download_analysis_model` promise is in
+/// flight.
+#[tauri::command(async)]
 fn download_analysis_model(
     app: tauri::AppHandle,
     id: String,
@@ -440,14 +411,14 @@ fn verify_sha256(data: &[u8], expected: &str) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_lyrics(path: String) -> Result<Option<otori_core::lyrics::LyricsDoc>, String> {
     otori_core::lyrics::resolve(std::path::Path::new(&path)).map_err(|e| e.to_string())
 }
 
 /// Persist the user's per-track lyrics sync nudge (render-time state
 /// in the index; the LRC source is never rewritten).
-#[tauri::command]
+#[tauri::command(async)]
 fn set_lyrics_offset(
     state: tauri::State<'_, Library>,
     track_id: i64,
@@ -470,7 +441,7 @@ struct ArtworkInfo {
 /// Cover art as a data URL, or None. Resolution chain lives in
 /// otori-core (embedded → sidecar image → folder cover) so CLI and
 /// GUI agree on what art a track has.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_artwork(path: String) -> Result<Option<ArtworkInfo>, String> {
     use base64::Engine;
     let art = otori_core::artwork::resolve(std::path::Path::new(&path))
@@ -484,7 +455,7 @@ fn get_artwork(path: String) -> Result<Option<ArtworkInfo>, String> {
 /// Strip the embedded cover (inspector "Remove cover"). Full L2 in the
 /// core; the journal cannot restore picture bytes, so the UI must not
 /// offer `otori undo` for the returned tx (recovery = backups).
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_artwork(
     app: tauri::AppHandle,
     state: tauri::State<'_, Library>,
@@ -511,7 +482,7 @@ struct RawLyrics {
     text: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_lyrics_raw(path: String) -> Result<Option<RawLyrics>, String> {
     otori_core::lyrics::read_raw(std::path::Path::new(&path))
         .map(|r| r.map(|(source, text)| RawLyrics { source, text }))
@@ -521,7 +492,7 @@ fn get_lyrics_raw(path: String) -> Result<Option<RawLyrics>, String> {
 /// Inspector lyrics save: replace the sidecar `.lrc` wholesale — the
 /// human decision the agent path (`write_sidecar`) refuses to make.
 /// No event: no table column shows lyrics; the panel re-reads itself.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_lyrics_raw(path: String, text: String) -> Result<(), String> {
     otori_core::lyrics::overwrite_sidecar(std::path::Path::new(&path), &text)
         .map(|_| ())
@@ -530,6 +501,9 @@ fn set_lyrics_raw(path: String, text: String) -> Result<(), String> {
 
 /// Status-bar menu, frontend contract: the UI mirrors playback state
 /// here on every track/pause change (`title: None` = nothing playing).
+/// Deliberately sync (main thread): set_text/set_enabled dispatch to
+/// the main thread internally, so running here skips that hop — and
+/// the work is a handful of NSMenu mutations, far below frame budget.
 #[tauri::command]
 fn update_tray(state: tauri::State<'_, Tray>, title: Option<String>, paused: bool) -> Result<(), String> {
     let playing = title.is_some();
@@ -671,7 +645,6 @@ fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    cap_analysis_threads();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -779,19 +752,39 @@ fn spawn_library_watcher(app: tauri::AppHandle, db_path: std::path::PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sha256_sidecar, rten_thread_cap, verify_sha256};
+    use super::{parse_sha256_sidecar, verify_sha256};
 
     #[test]
-    fn caps_when_user_has_not_set_rten_threads() {
-        // No existing RTEN_NUM_THREADS → we supply our player-safe default.
-        assert_eq!(rten_thread_cap(None), Some("2"));
-    }
-
-    #[test]
-    fn yields_to_an_explicit_rten_threads_override() {
-        // A power user who exported RTEN_NUM_THREADS wins over our default;
-        // we must not silently clobber their explicit choice.
-        assert_eq!(rten_thread_cap(Some("4".as_ref())), None);
+    fn commands_run_off_the_main_thread() {
+        // Tauri v2 runs sync commands ON THE MAIN THREAD ("Commands
+        // without the async keyword are executed on the main thread
+        // unless defined with #[tauri::command(async)]"). A slow sync
+        // command (decode, inference, big SELECT) freezes the whole
+        // event loop — the 1s UI stalls this app must never have. So:
+        // every command must be `(async)` except update_tray, which
+        // mutates NSMenu items and therefore must stay on main.
+        let src = include_str!("lib.rs");
+        let mut bare_command_fns = Vec::new();
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim() != "#[tauri::command]" {
+                continue;
+            }
+            // The next `fn` line names the offending command.
+            let name = lines[i + 1..]
+                .iter()
+                .find_map(|l| l.trim().strip_prefix("fn ").map(|r| {
+                    r.split('(').next().unwrap_or(r).to_string()
+                }))
+                .unwrap_or_else(|| "<unknown>".into());
+            bare_command_fns.push(name);
+        }
+        assert_eq!(
+            bare_command_fns,
+            vec!["update_tray".to_string()],
+            "sync #[tauri::command] runs on the main thread and stalls the UI; \
+             mark it #[tauri::command(async)] (only update_tray may stay sync)"
+        );
     }
 
     #[test]
