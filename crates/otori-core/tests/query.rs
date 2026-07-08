@@ -105,6 +105,27 @@ fn scan_then_list_roundtrip() {
 }
 
 #[test]
+fn lists_added_and_analyzed_timestamps() {
+    // The GUI's Added / Analyzed columns read these straight off the row:
+    // first_seen is NOT NULL from the first scan; bpm_analyzed_at stays
+    // NULL until the sweep passes (pending, not an error).
+    let conn = db::open_in_memory().unwrap();
+    conn.execute_batch(
+        "INSERT INTO tracks (path, format, first_seen, last_scanned, bpm, bpm_analyzed_at)
+         VALUES ('/lib/a.mp3', 'mp3', '2026-07-01 10:00:00', datetime('now'),
+                 172.0, '2026-07-02 12:00:00'),
+                ('/lib/b.mp3', 'mp3', '2026-07-03 09:00:00', datetime('now'), NULL, NULL);",
+    )
+    .unwrap();
+
+    let tracks = query::list_tracks(&conn).unwrap();
+    assert_eq!(tracks[0].first_seen, "2026-07-01 10:00:00");
+    assert_eq!(tracks[0].bpm_analyzed_at.as_deref(), Some("2026-07-02 12:00:00"));
+    assert_eq!(tracks[1].first_seen, "2026-07-03 09:00:00");
+    assert_eq!(tracks[1].bpm_analyzed_at, None, "unanalyzed = pending, not missing data");
+}
+
+#[test]
 fn tag_provenance_exposes_the_trust_layer() {
     let conn = db::open_in_memory().unwrap();
     conn.execute_batch(

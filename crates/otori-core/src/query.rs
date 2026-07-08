@@ -33,6 +33,11 @@ pub struct TrackRow {
     pub mix_analyzed: bool,
     /// User's per-track lyrics sync nudge in ms; positive = lyrics later.
     pub lyrics_offset_ms: i64,
+    /// When the file first entered the library (SQLite `datetime('now')`,
+    /// UTC "YYYY-MM-DD HH:MM:SS") — the GUI's Added column.
+    pub first_seen: String,
+    /// When beat analysis last ran; NULL = pending — the Analyzed column.
+    pub bpm_analyzed_at: Option<String>,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -46,6 +51,7 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
                 t.bpm, t.bpm_max, t.bpm_confidence, t.bpm_hint,
                 t.mix_head_bpm, t.mix_head_beat_sec, t.mix_tail_bpm, t.mix_tail_beat_sec,
                 t.mix_analyzed_at IS NOT NULL, t.lyrics_offset_ms,
+                t.first_seen, t.bpm_analyzed_at,
                 MAX(CASE WHEN v.field = 'title' THEN v.value END) AS title,
                 MAX(CASE WHEN v.field = 'artist' THEN v.value END) AS artist,
                 MAX(CASE WHEN v.field = 'album' THEN v.value END) AS album
@@ -71,9 +77,11 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
             mix_tail_beat_sec: row.get(12)?,
             mix_analyzed: row.get(13)?,
             lyrics_offset_ms: row.get(14)?,
-            title: row.get(15)?,
-            artist: row.get(16)?,
-            album: row.get(17)?,
+            first_seen: row.get(15)?,
+            bpm_analyzed_at: row.get(16)?,
+            title: row.get(17)?,
+            artist: row.get(18)?,
+            album: row.get(19)?,
         })
     })?;
     rows.collect()
