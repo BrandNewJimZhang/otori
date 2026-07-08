@@ -23,6 +23,8 @@ function track(over: Partial<TrackRow> = {}): TrackRow {
     mix_tail_beat_sec: null,
     mix_analyzed: false,
     lyrics_offset_ms: 0,
+    first_seen: "2026-07-01 00:00:00",
+    bpm_analyzed_at: null,
     title: "Song",
     artist: "Artist",
     album: null,

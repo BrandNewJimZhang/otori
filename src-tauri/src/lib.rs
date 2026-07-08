@@ -189,7 +189,7 @@ fn set_display_awake(state: tauri::State<'_, SleepBlocker>, awake: bool) -> Resu
     // playback failure).
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = state.0.lock().map_err(|e| e.to_string())?;
+        let _guard = state.0.lock().map_err(|e| e.to_string())?;
         let _ = awake;
         Ok(())
     }

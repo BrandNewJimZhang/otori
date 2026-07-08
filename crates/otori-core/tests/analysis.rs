@@ -278,7 +278,12 @@ fn hint_candidates_lists_tracks_worth_a_provider_lookup() {
     let candidates = analysis::list_hint_candidates(&conn, 0.6).unwrap();
     let paths: Vec<&str> = candidates
         .iter()
-        .map(|c| c.path.rsplit('/').next().unwrap())
+        .map(|c| {
+            Path::new(&c.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap()
+        })
         .collect();
     assert!(paths.contains(&"blank.mp3"));
     assert!(paths.contains(&"shaky.mp3"));

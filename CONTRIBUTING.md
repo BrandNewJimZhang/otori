@@ -18,6 +18,10 @@ files, and focused PRs that respect the design constraints below.
 Prerequisites: [Rust](https://rustup.rs/) (stable), Node.js +
 [pnpm](https://pnpm.io/), and the
 [Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/).
+On Linux that is `libwebkit2gtk-4.1-dev libssl-dev
+libayatana-appindicator3-dev librsvg2-dev libxdo-dev` plus
+build-essential; macOS and Windows need nothing beyond the language
+toolchains.
 
 ```bash
 pnpm install
@@ -93,10 +97,11 @@ breaking changes go through a major bump. The bar (all must hold):
   Developer ID signing + notarization so a downloaded `.dmg` opens
   without Gatekeeper intervention (~$99/yr Apple Developer Program,
   deferred from 0.1.0), and Authenticode signing so the Windows build
-  clears SmartScreen (deferred with the macOS signing).
+  clears SmartScreen (deferred with the macOS signing). Linux artifacts
+  (`.deb`/`.AppImage`) stay unsigned, like the macOS pre-alpha.
 - **CI gate on PRs.** The full test suite — `cargo test --workspace`,
   `scripts/acceptance.sh` (the AGENTS.md contract), `tsc --noEmit`,
-  `vitest run` — runs on every PR on both macOS and Windows, not just
+  `vitest run` — runs on every PR on macOS, Linux, and Windows, not just
   the local ship gate.
 - **AGENTS.md contract stable for a release cycle** with no edits.
 
