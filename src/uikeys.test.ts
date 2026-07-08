@@ -3,7 +3,7 @@
 // CapsLock must not disable the mode toggle.
 
 import { describe, expect, it } from "vitest";
-import { escapeIntent, routeKey, type KeyCombo } from "./uikeys";
+import { escapeIntent, routeKey, zoneOf, type KeyCombo } from "./uikeys";
 
 const combo = (key: string, mods: Partial<KeyCombo> = {}): KeyCombo => ({
   key,
@@ -198,6 +198,29 @@ describe("escapeIntent — Esc priority ladder (audit R4)", () => {
 
   it("is inert in Backstage with nothing selected", () => {
     expect(escapeIntent("backstage", false)).toBe("none");
+  });
+});
+
+describe("zoneOf — keydown target classification", () => {
+  it("classifies a textarea as input (lyrics editor: Space must type, not pause)", () => {
+    expect(zoneOf({ tagName: "TEXTAREA" })).toBe("input");
+  });
+
+  it("classifies text inputs as input and range inputs as slider", () => {
+    expect(zoneOf({ tagName: "INPUT", type: "text" })).toBe("input");
+    expect(zoneOf({ tagName: "INPUT", type: "search" })).toBe("input");
+    expect(zoneOf({ tagName: "INPUT", type: "range" })).toBe("slider");
+  });
+
+  it("classifies buttons as button", () => {
+    expect(zoneOf({ tagName: "BUTTON" })).toBe("button");
+  });
+
+  it("everything else is global", () => {
+    expect(zoneOf({ tagName: "DIV" })).toBe("global");
+    expect(zoneOf(null)).toBe("global");
+    expect(zoneOf(undefined)).toBe("global");
+    expect(zoneOf({})).toBe("global");
   });
 });
 
