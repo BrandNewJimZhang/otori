@@ -65,31 +65,134 @@ fn resolve_models(
     otori_analysis::models::resolve_model(&dirs, id).map_err(|e| e.to_string())
 }
 
-/// Display-sleep blocker: a `caffeinate -d` child (macOS-native, no
-/// dependency) held while Stage mode plays. Dropping/killing the child
-/// releases the assertion; if Ōtori dies, the child dies with it.
+/// Display-sleep blocker — keeps the monitor awake while Stage mode
+/// plays and releases it on pause/leave, so a set doesn't dim mid-song.
+///
+/// The held resource is OS-specific but cheap and per-process:
+/// - macOS: a `caffeinate -d` child (macOS-native, no dependency).
+///   Killing the child releases the assertion; if Ōtori dies, the child
+///   dies with it.
+/// - Windows: a `SetThreadExecutionState(ES_CONTINUOUS |
+///   ES_DISPLAY_REQUIRED)` call (kernel32, zero extra dependency —
+///   `windows-sys` is already in the tree via Tauri). Release restores
+///   `ES_CONTINUOUS`. The state is thread-local in Win32, so this lives
+///   on the Tauri command thread that toggles it; an app crash naturally
+///   clears it since the thread is gone.
+/// - other unix: no-op — the platform has no single portable equivalent;
+///   `xdg-screensaver`/D-Bus inhibition is a larger surface than a
+///   pre-alpha port needs, so display sleep is simply not blocked there.
+#[cfg(target_os = "macos")]
 struct SleepBlocker(Mutex<Option<std::process::Child>>);
+
+#[cfg(target_os = "windows")]
+struct SleepBlocker(Mutex<bool>);
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+struct SleepBlocker(Mutex<()>);
+
+impl Default for SleepBlocker {
+    fn default() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            Self(Mutex::new(None))
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Self(Mutex::new(false))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            Self(Mutex::new(()))
+        }
+    }
+}
+
+/// What `sleep_action` decided, so the command can layer the OS side
+/// effect on top without re-deriving the state.
+#[derive(Debug, PartialEq, Eq)]
+enum SleepAction {
+    Acquired,
+    Released,
+    NoOp,
+}
+
+/// Pure state machine over `(awake, currently held)`: decide whether to
+/// acquire, release, or do nothing. Extracted so the idempotency rule
+/// (no double-spawn, no double-tear-down on repeated Stage toggles) is
+/// unit-testable without spawning processes or calling Win32. The caller
+/// owns the actual held resource and mutates it only on Acquired/Released.
+fn sleep_action(awake: bool, held: bool) -> SleepAction {
+    match (awake, held) {
+        (true, false) => SleepAction::Acquired,
+        (false, true) => SleepAction::Released,
+        _ => SleepAction::NoOp,
+    }
+}
 
 /// Keep the display awake (Stage mode playing) or release it. Idempotent.
 #[tauri::command(async)]
 fn set_display_awake(state: tauri::State<'_, SleepBlocker>, awake: bool) -> Result<(), String> {
-    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    match (awake, guard.as_mut()) {
-        (true, None) => {
-            let child = std::process::Command::new("/usr/bin/caffeinate")
-                .arg("-d")
-                .spawn()
-                .map_err(|e| format!("caffeinate: {e}"))?;
-            *guard = Some(child);
+    #[cfg(target_os = "macos")]
+    {
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        match sleep_action(awake, guard.is_some()) {
+            SleepAction::Acquired => {
+                let child = std::process::Command::new("/usr/bin/caffeinate")
+                    .arg("-d")
+                    .spawn()
+                    .map_err(|e| format!("caffeinate: {e}"))?;
+                *guard = Some(child);
+            }
+            SleepAction::Released => {
+                if let Some(mut child) = guard.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+            SleepAction::NoOp => {}
         }
-        (false, Some(child)) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            *guard = None;
-        }
-        _ => {}
+        Ok(())
     }
-    Ok(())
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Power::{
+            SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED,
+        };
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        match sleep_action(awake, *guard) {
+            SleepAction::Acquired => {
+                // SAFETY: SetThreadExecutionState takes only flag bitfields
+                // (compile-time constants here) and reads no pointers. It
+                // sets thread-local execution state; documented reentrant.
+                unsafe {
+                    SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED);
+                }
+                *guard = true;
+            }
+            SleepAction::Released => {
+                // SAFETY: as above; ES_CONTINUOUS alone clears the display
+                // requirement — the conventional release idiom.
+                unsafe {
+                    SetThreadExecutionState(ES_CONTINUOUS);
+                }
+                *guard = false;
+            }
+            SleepAction::NoOp => {}
+        }
+        Ok(())
+    }
+
+    // No display-sleep blocking on other unix: the platform lacks a
+    // single portable primitive, so the command is a successful no-op
+    // rather than a hard error (display dimming is cosmetic, not a
+    // playback failure).
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = state.0.lock().map_err(|e| e.to_string())?;
+        let _ = awake;
+        Ok(())
+    }
 }
 
 #[tauri::command(async)]
@@ -652,7 +755,7 @@ pub fn run() {
             let path = db::default_path()?;
             let conn = db::open(&path)?;
             app.manage(Library(Mutex::new(conn)));
-            app.manage(SleepBlocker(Mutex::new(None)));
+            app.manage(SleepBlocker::default());
             app.manage(Analyzer(Mutex::new(None)));
             app.manage(ActiveModel(Mutex::new(otori_analysis::models::default_id())));
             spawn_library_watcher(app.handle().clone(), path.clone());
@@ -752,7 +855,10 @@ fn spawn_library_watcher(app: tauri::AppHandle, db_path: std::path::PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sha256_sidecar, verify_sha256};
+    // main dropped rten_thread_cap (the thread-cap helper + its tests were
+    // removed); the windows port added sleep_action/SleepAction. Merge =
+    // neither rten_thread_cap, both sleep symbols.
+    use super::{parse_sha256_sidecar, sleep_action, verify_sha256, SleepAction};
 
     #[test]
     fn commands_run_off_the_main_thread() {
@@ -785,6 +891,37 @@ mod tests {
             "sync #[tauri::command] runs on the main thread and stalls the UI; \
              mark it #[tauri::command(async)] (only update_tray may stay sync)"
         );
+    }
+
+    #[test]
+    fn sleep_action_truth_table_is_idempotent() {
+        // The pure decision over (want_awake, currently_held). The two
+        // NoOp cells are the idempotency contract: the frontend toggles
+        // on every Stage transition, so a repeated awake=true while
+        // already held must not re-spawn caffeinate / re-call Win32, and
+        // a repeated awake=false while released must not tear down twice.
+        use SleepAction::*;
+        assert_eq!(sleep_action(true, false), Acquired);
+        assert_eq!(sleep_action(true, true), NoOp);
+        assert_eq!(sleep_action(false, true), Released);
+        assert_eq!(sleep_action(false, false), NoOp);
+    }
+
+    #[test]
+    fn sleep_action_caller_round_trip_does_not_double_acquire() {
+        // Simulate the caller layering the OS side effect on the pure
+        // decision: it only mutates `held` on Acquired/Released. A
+        // burst of identical toggles must leave held set exactly once
+        // (no double-spawn) and clear exactly once (no double-release).
+        let mut held = false;
+        for awake in [true, true, true, false, false, true, false, false] {
+            match sleep_action(awake, held) {
+                SleepAction::Acquired => held = true,
+                SleepAction::Released => held = false,
+                SleepAction::NoOp => {}
+            }
+        }
+        assert!(!held, "final release must clear; no leaked hold");
     }
 
     #[test]

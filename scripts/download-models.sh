@@ -38,9 +38,15 @@ if [[ "$FETCH_STANDARD" -eq 1 ]]; then
   else
     echo "downloading beat_this.onnx (full model, ~83 MB)..."
     curl -fL --retry 3 -o "${DEST}/beat_this.onnx" "${STD_URL}"
-    # Verify against the release's .sha256 sidecar.
+    # Verify against the release's .sha256 sidecar. `shasum -a 256` is
+    # macOS; `sha256sum` is Linux + git-bash on Windows. Pick whichever
+    # is on PATH so this runs on both CI runners.
     expected="$(curl -fsSL "${STD_URL}.sha256" | awk '{print $1}')"
-    got="$(shasum -a 256 "${DEST}/beat_this.onnx" | awk '{print $1}')"
+    if command -v shasum >/dev/null 2>&1; then
+      got="$(shasum -a 256 "${DEST}/beat_this.onnx" | awk '{print $1}')"
+    else
+      got="$(sha256sum "${DEST}/beat_this.onnx" | awk '{print $1}')"
+    fi
     [[ "$expected" == "$got" ]] || { echo "sha256 mismatch: expected $expected, got $got" >&2; exit 1; }
     echo "verified: ${DEST}/beat_this.onnx"
   fi

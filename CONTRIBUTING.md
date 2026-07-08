@@ -89,12 +89,15 @@ breaking changes go through a major bump. The bar (all must hold):
 - **Roadmap #3 lands.** "It performs" reaches ✅, or its remaining
   pieces (smart playlists, watch folders) are explicitly scoped out of
   1.0 and recorded here.
-- **Signed + notarized macOS build.** Developer ID signing and
-  notarization so a downloaded `.dmg` opens without Gatekeeper
-  intervention (~$99/yr Apple Developer Program, deferred from 0.1.0).
+- **Signed + notarized macOS build, and a signed Windows build.**
+  Developer ID signing + notarization so a downloaded `.dmg` opens
+  without Gatekeeper intervention (~$99/yr Apple Developer Program,
+  deferred from 0.1.0), and Authenticode signing so the Windows build
+  clears SmartScreen (deferred with the macOS signing).
 - **CI gate on PRs.** The full test suite — `cargo test --workspace`,
   `scripts/acceptance.sh` (the AGENTS.md contract), `tsc --noEmit`,
-  `vitest run` — runs on every PR, not just the local ship gate.
+  `vitest run` — runs on every PR on both macOS and Windows, not just
+  the local ship gate.
 - **AGENTS.md contract stable for a release cycle** with no edits.
 
 Until then, breaking changes between `0.x` releases are expected and do

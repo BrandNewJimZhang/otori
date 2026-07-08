@@ -46,7 +46,7 @@ only agent surface; anything the GUI can do, you can do here.
 | `otori reanalyze [--low-confidence <t>] [--track <id>...] [--apply] [--json]` | Reopen BPM/mix analysis (whole library by default) | dry-run without `--apply`; values stay visible until re-swept |
 | `otori analyze (--pending \| --track <id>...) [--models-dir <dir>] [--json]` | Run beat analysis headless (Beat This!, same engine as the GUI) | needs the ONNX models (`scripts/download-models.sh`); or set `$OTORI_MODELS_DIR`; exit 2 if any track failed |
 | `otori schema-version` | CLI JSON schema version | breaking JSON changes bump it; additive fields do not — tolerate unknown fields |
-| `--db <path>` (global) | Use a specific library db | default: `~/Library/Application Support/otori/library.db` |
+| `--db <path>` (global) | Use a specific library db | default: the OS data dir — `~/Library/Application Support/otori/library.db` (macOS), `%APPDATA%\otori\library.db` (Windows), `$XDG_DATA_HOME/otori/library.db` or `~/.local/share/otori/library.db` (Linux) |
 
 ## Exit codes
 
