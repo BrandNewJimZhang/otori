@@ -3,7 +3,7 @@
 // lives in LibraryTable, view logic in library.ts — App owns state.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -14,6 +14,7 @@ import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { LibraryTable, type ColumnWidths } from "./LibraryTable";
 import { createArtworkCache } from "./artworkcache";
+import { buildNpState } from "./npstate";
 import { ToastStack } from "./ToastStack";
 import { dismissToast, pushToast, type Toast } from "./toasts";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
@@ -676,6 +677,44 @@ function App() {
   useEffect(() => {
     updateTray(current ? displayTitle(current) : null, paused).catch(() => {});
   }, [current, paused]);
+
+  // Tray mini panel, main-window half: broadcast the now-playing
+  // snapshot on every change and whenever the panel asks (np-refresh,
+  // emitted by the shell on panel open). Positions ride the separate
+  // np-pos event at timeupdate cadence so artwork isn't re-sent per tick.
+  useEffect(() => {
+    // Engine duration once metadata loads; index duration until then
+    // (same fallback as the seek bar below).
+    const durationSecs = Number.isFinite(engine.duration)
+      ? engine.duration
+      : current?.duration_secs ?? NaN;
+    const state = buildNpState(current, paused, artwork, durationSecs);
+    void emit("np-state", state);
+    const unlisten = listen("np-refresh", () => {
+      void emit("np-state", state);
+      void emit("np-pos", engine.currentTime);
+    });
+    return () => {
+      unlisten.then((off) => off());
+    };
+  }, [current, paused, artwork, engine]);
+
+  useEffect(() => {
+    if (current) void emit("np-pos", position);
+  }, [current, position]);
+
+  // Mini panel seek commits arrive as `mini-seek` (one per release,
+  // scrub previews stay local to the panel). seekTo closes over stable
+  // refs only, so a mount-once subscription stays correct.
+  useEffect(() => {
+    const unlisten = listen<number>("mini-seek", (e) => {
+      if (currentRef.current) seekTo(e.payload);
+    });
+    return () => {
+      unlisten.then((off) => off());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Tray menu clicks arrive as a `tray-command` event (shell side:
   // src-tauri). Same handlers as the on-screen transport.
