@@ -24,6 +24,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ["PgUp / PgDn", "Page through the list"],
       ["⌘A", "Select all"],
       ["⌘I", "Tag inspector"],
+      ["⌘,", "Settings"],
       ["a–z …", "Type-ahead jump"],
       ["Esc", "Clear selection"],
     ],

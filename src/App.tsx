@@ -17,6 +17,7 @@ import { createArtworkCache } from "./artworkcache";
 import { ToastStack } from "./ToastStack";
 import { dismissToast, pushToast, type Toast } from "./toasts";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
+import { SettingsOverlay } from "./SettingsOverlay";
 import { formatTime } from "./format";
 import {
   clickSelect,
@@ -45,6 +46,7 @@ import {
   DensityIcon,
   InfoIcon,
   MetronomeIcon,
+  GearIcon,
   MoonIcon,
   NextIcon,
   PauseIcon,
@@ -64,6 +66,7 @@ import { statusLine } from "./statusline";
 import { onSweepProgress, startAnalysisSweep, type SweepProgress } from "./analysissweep";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type AnalysisModel, type Density, type Theme } from "./prefs";
+import { CROSSFADE_SLIDER_MAX, crossfadeFromSlider } from "./settings";
 import type { LyricsDoc, TrackRow } from "./types";
 import "./App.css";
 
@@ -132,6 +135,8 @@ function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Shortcuts overlay (audit r5 P2): "?" reveals the keyboard model.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Settings overlay (⌘,): one home for the scattered pref switches.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Scrub preview (audit P0): thumb position while dragging the seek
   // slider; the decoder seek fires once on release, not per pixel.
   const [scrub, setScrub] = useState<number | null>(null);
@@ -262,45 +267,55 @@ function App() {
     };
   }, [refreshAnalysisModels]);
 
-  /** Cycle to the next registered model, downloading the standard
-      weights on demand and reopening foreign-model verdicts. Sits next
-      to the theme/density toggles — analysis model is the same class of
-      "how the app runs" switch. */
+  /** Switch to a registered model, downloading its weights on demand
+      and reopening foreign-model verdicts. Shared by the status-bar
+      cycle button and the Settings overlay's explicit picker. */
+  const selectAnalysisModel = useCallback(
+    (id: string) => {
+      const next = analysisModels.find((m) => m.id === id);
+      if (analysisSwitching || !next || next.id === analysisModel) return;
+      setAnalysisSwitching(true);
+      const go = () =>
+        switchAnalysisModel(next.id)
+          .then(() => {
+            setAnalysisModelState(next.id as AnalysisModel);
+            startAnalysisSweep();
+          })
+          .catch((e) => setError(String(e)))
+          .finally(() => setAnalysisSwitching(false));
+      if (next.available) {
+        void go();
+      } else {
+        // Standard ships unbundled: fetch + verify the weights, then
+        // switch. A checksum/network failure is a toast, not a silent
+        // skip — the user asked for the model and nothing happened.
+        setToasts((ts) =>
+          pushToast(ts, { id: ++toastSeq.current, text: `Downloading ${next.label} model…` }),
+        );
+        void downloadAnalysisModel(next.id)
+          .then(go)
+          .catch((e) => {
+            setToasts((ts) =>
+              pushToast(ts, {
+                id: ++toastSeq.current,
+                text: `${next.label} download failed: ${String(e)}`,
+              }),
+            );
+            setAnalysisSwitching(false);
+          });
+      }
+    },
+    [analysisSwitching, analysisModels, analysisModel],
+  );
+
+  /** Cycle to the next registered model — the status-bar shortcut. Sits
+      next to the theme/density toggles — analysis model is the same
+      class of "how the app runs" switch. */
   const cycleAnalysisModel = useCallback(() => {
-    if (analysisSwitching || analysisModels.length === 0) return;
+    if (analysisModels.length === 0) return;
     const idx = analysisModels.findIndex((m) => m.id === analysisModel);
-    const next = analysisModels[(idx + 1) % analysisModels.length];
-    setAnalysisSwitching(true);
-    const go = () =>
-      switchAnalysisModel(next.id)
-        .then(() => {
-          setAnalysisModelState(next.id as AnalysisModel);
-          startAnalysisSweep();
-        })
-        .catch((e) => setError(String(e)))
-        .finally(() => setAnalysisSwitching(false));
-    if (next.available) {
-      void go();
-    } else {
-      // Standard ships unbundled: fetch + verify the weights, then
-      // switch. A checksum/network failure is a toast, not a silent
-      // skip — the user asked for the model and nothing happened.
-      setToasts((ts) =>
-        pushToast(ts, { id: ++toastSeq.current, text: `Downloading ${next.label} model…` }),
-      );
-      void downloadAnalysisModel(next.id)
-        .then(go)
-        .catch((e) => {
-          setToasts((ts) =>
-            pushToast(ts, {
-              id: ++toastSeq.current,
-              text: `${next.label} download failed: ${String(e)}`,
-            }),
-          );
-          setAnalysisSwitching(false);
-        });
-    }
-  }, [analysisSwitching, analysisModels, analysisModel]);
+    selectAnalysisModel(analysisModels[(idx + 1) % analysisModels.length].id);
+  }, [analysisModels, analysisModel, selectAnalysisModel]);
 
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
   // shell emits `library-changed` when an external writer (CLI/agent)
@@ -798,6 +813,9 @@ function App() {
         case "show-shortcuts":
           setShortcutsOpen(true);
           break;
+        case "show-settings":
+          setSettingsOpen((o) => !o);
+          break;
         case "toggle-inspector":
           setInspectorOpen((o) => !o);
           break;
@@ -1112,6 +1130,15 @@ function App() {
         >
           <MetronomeIcon />
         </button>
+        <button
+          className="icon-btn settings-toggle"
+          onClick={() => setSettingsOpen((o) => !o)}
+          aria-label="Settings"
+          aria-pressed={settingsOpen}
+          data-tip="Settings (⌘,)"
+        >
+          <GearIcon />
+        </button>
       </header>
 
       <main className={`library density-${density} ${inspectorOpen ? "with-inspector" : ""}`}>
@@ -1324,7 +1351,7 @@ function App() {
             onWheel={(e) => {
               // Wheel adjusts the fade length 2–16s while enabled.
               setCrossfadeSec((s) =>
-                s ? Math.max(2, Math.min(16, s + (e.deltaY < 0 ? 1 : -1))) : s,
+                s ? Math.max(2, Math.min(CROSSFADE_SLIDER_MAX, s + (e.deltaY < 0 ? 1 : -1))) : s,
               );
             }}
             data-tip={
@@ -1343,14 +1370,13 @@ function App() {
                 <input
                   type="range"
                   min={0}
-                  max={16}
+                  max={CROSSFADE_SLIDER_MAX}
                   step={1}
                   value={crossfadeSec}
-                  style={{ "--fill": sliderFill(crossfadeSec, 16) } as React.CSSProperties}
+                  style={{ "--fill": sliderFill(crossfadeSec, CROSSFADE_SLIDER_MAX) } as React.CSSProperties}
                   onChange={(e) => {
                     // 0 disables; 1 rounds up to the 2s floor.
-                    const v = Number(e.target.value);
-                    setCrossfadeSec(v === 1 ? 2 : v);
+                    setCrossfadeSec(crossfadeFromSlider(Number(e.target.value)));
                   }}
                   aria-label="Crossfade length"
                 />
@@ -1412,6 +1438,22 @@ function App() {
       )}
 
       {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
+
+      {settingsOpen && (
+        <SettingsOverlay
+          theme={theme}
+          onTheme={setTheme}
+          density={density}
+          onDensity={setDensity}
+          crossfadeSec={crossfadeSec}
+          onCrossfadeSec={setCrossfadeSec}
+          analysisModel={analysisModel}
+          analysisModels={analysisModels}
+          analysisSwitching={analysisSwitching}
+          onSelectAnalysisModel={selectAnalysisModel}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

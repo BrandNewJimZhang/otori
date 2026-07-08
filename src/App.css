@@ -1143,6 +1143,74 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   align-self: center;
 }
 
+/* ---- settings overlay (⌘,) ---- */
+
+.settings-card {
+  width: min(440px, calc(100vw - 64px));
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.settings-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.settings-value {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-row input[type="range"] {
+  width: 160px;
+}
+
+.settings-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin: 2px 0 4px;
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+
+.segmented button {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.segmented button:first-child {
+  border-left: none;
+}
+
+.segmented button.on {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.segmented button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ---- up-next queue panel (audit r5 P0) ---- */
 
 .queue-toggle {

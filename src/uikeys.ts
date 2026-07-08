@@ -28,6 +28,7 @@ export type KeyAction =
   | { kind: "seek-nudge"; secs: number }
   | { kind: "step-track"; offset: 1 | -1 }
   | { kind: "show-shortcuts" }
+  | { kind: "show-settings" }
   | { kind: "toggle-inspector" }
   | { kind: "escape" };
 
@@ -73,6 +74,9 @@ export function routeKey(combo: KeyCombo, zone: KeyZone, surface: Surface = "bac
 function routeKeyBackstage(combo: KeyCombo, zone: KeyZone): KeyAction {
   // ⌘F reaches search from anywhere, including inside inputs.
   if (combo.meta && combo.key.toLowerCase() === "f") return { kind: "focus-search" };
+  // ⌘, opens Settings from anywhere (macOS preferences convention) —
+  // app-level chrome, so it works inside inputs and in Stage alike.
+  if (combo.meta && combo.key === ",") return { kind: "show-settings" };
   // ⌘←/→ = previous/next track (Music.app convention) — but inside an
   // input those chords are line home/end, which the field keeps.
   if (combo.meta && zone !== "input" && combo.key === "ArrowRight") {
