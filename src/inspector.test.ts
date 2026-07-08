@@ -8,6 +8,7 @@ import {
   canRemoveCover,
   diffEdits,
   lyricsEditorState,
+  lyricsKeyIntent,
   mergeField,
   MULTIPLE,
   type FieldEdits,
@@ -133,5 +134,25 @@ describe("lyricsEditorState", () => {
       kind: "readonly",
       text: "[00:01.00]Hi",
     });
+  });
+});
+
+describe("lyricsKeyIntent — editor keydown intent (⌘S save / Esc revert)", () => {
+  it("meta+S saves a dirty draft (either letter case)", () => {
+    expect(lyricsKeyIntent({ key: "s", meta: true }, true)).toBe("save");
+    expect(lyricsKeyIntent({ key: "S", meta: true }, true)).toBe("save");
+  });
+
+  it("meta+S on a clean editor does nothing (no empty rewrite)", () => {
+    expect(lyricsKeyIntent({ key: "s", meta: true }, false)).toBe("none");
+  });
+
+  it("plain s is typing, not save", () => {
+    expect(lyricsKeyIntent({ key: "s", meta: false }, true)).toBe("none");
+  });
+
+  it("Escape reverts only a dirty draft (clean Esc falls through to blur)", () => {
+    expect(lyricsKeyIntent({ key: "Escape", meta: false }, true)).toBe("revert");
+    expect(lyricsKeyIntent({ key: "Escape", meta: false }, false)).toBe("none");
   });
 });
