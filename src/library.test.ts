@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clickSelect,
+  COLUMNS,
   contextTargets,
   displayTitle,
   edgeSelect,
@@ -13,8 +14,10 @@ import {
   selectAll,
   sortTracks,
   stepSelect,
+  toggleColumn,
   toggleSort,
   typeAheadSelect,
+  visibleColumns,
   type Selection,
 } from "./library";
 import type { TrackRow } from "./types";
@@ -36,12 +39,41 @@ function track(id: number, over: Partial<TrackRow> = {}): TrackRow {
     mix_tail_beat_sec: null,
     mix_analyzed: false,
     lyrics_offset_ms: 0,
+    first_seen: "2026-07-01 00:00:00",
+    bpm_analyzed_at: null,
     title: `Track ${id}`,
     artist: null,
     album: null,
     ...over,
   };
 }
+
+describe("column visibility", () => {
+  it("all columns are visible by default, in registry order", () => {
+    expect(visibleColumns([]).map((c) => c.key)).toEqual(COLUMNS.map((c) => c.key));
+  });
+
+  it("hidden keys are dropped without disturbing the order of the rest", () => {
+    const keys = visibleColumns(["bpm", "format"]).map((c) => c.key);
+    expect(keys).toEqual(COLUMNS.map((c) => c.key).filter((k) => k !== "bpm" && k !== "format"));
+  });
+
+  it("toggling hides a shown column and shows a hidden one", () => {
+    expect(toggleColumn([], "bpm")).toEqual(["bpm"]);
+    expect(toggleColumn(["bpm", "format"], "bpm")).toEqual(["format"]);
+  });
+
+  it("title cannot be hidden — the table needs one identifying column", () => {
+    expect(toggleColumn([], "title")).toEqual([]);
+    expect(COLUMNS.find((c) => c.key === "title")?.hideable).toBe(false);
+  });
+
+  it("the registry includes the added / analyzed date columns", () => {
+    const keys = COLUMNS.map((c) => c.key);
+    expect(keys).toContain("first_seen");
+    expect(keys).toContain("bpm_analyzed_at");
+  });
+});
 
 describe("displayTitle", () => {
   it("prefers the tag title, falls back to the file basename", () => {
@@ -100,6 +132,19 @@ describe("sortTracks", () => {
     ];
     expect(sortTracks(bpmRows, { key: "bpm", dir: 1 }).map((t) => t.id)).toEqual([2, 4, 1, 3]);
     expect(sortTracks(bpmRows, { key: "bpm", dir: -1 }).map((t) => t.id)).toEqual([4, 2, 1, 3]);
+  });
+
+  it("sorts by added / analyzed timestamps (ISO strings compare lexically)", () => {
+    const dated = [
+      track(1, { first_seen: "2026-07-03 08:00:00", bpm_analyzed_at: null }),
+      track(2, { first_seen: "2026-07-01 09:00:00", bpm_analyzed_at: "2026-07-05 10:00:00" }),
+      track(3, { first_seen: "2026-07-02 07:00:00", bpm_analyzed_at: "2026-07-04 11:00:00" }),
+    ];
+    expect(sortTracks(dated, { key: "first_seen", dir: 1 }).map((t) => t.id)).toEqual([2, 3, 1]);
+    expect(sortTracks(dated, { key: "first_seen", dir: -1 }).map((t) => t.id)).toEqual([1, 3, 2]);
+    // Pending analysis (null) sorts last in both directions, like other nulls.
+    expect(sortTracks(dated, { key: "bpm_analyzed_at", dir: 1 }).map((t) => t.id)).toEqual([3, 2, 1]);
+    expect(sortTracks(dated, { key: "bpm_analyzed_at", dir: -1 }).map((t) => t.id)).toEqual([2, 3, 1]);
   });
 });
 

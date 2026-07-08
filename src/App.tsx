@@ -21,6 +21,7 @@ import { SettingsOverlay } from "./SettingsOverlay";
 import { formatTime } from "./format";
 import {
   clickSelect,
+  COLUMNS,
   contextTargets,
   displayTitle,
   edgeSelect,
@@ -29,6 +30,7 @@ import {
   selectAll,
   sortTracks,
   stepSelect,
+  toggleColumn,
   toggleSort,
   typeAheadSelect,
   type Selection,
@@ -117,6 +119,12 @@ function App() {
   const [mixPopover, setMixPopover] = useState(false);
   const [density, setDensity] = useState<Density>(initialPrefs.density);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(initialPrefs.columnWidths);
+  // Columns hidden via the header context menu; persisted like widths.
+  const [hiddenColumns, setHiddenColumns] = useState<readonly SortKey[]>(
+    initialPrefs.hiddenColumns,
+  );
+  // Header right-click: the show/hide column chooser (rows keep `menu`).
+  const [columnMenu, setColumnMenu] = useState<{ x: number; y: number } | null>(null);
   // Active Beat This! model (small default; switchable to standard). Kept
   // in sync with the shell so the sweep runs the chosen engine.
   const [analysisModel, setAnalysisModelState] =
@@ -343,9 +351,10 @@ function App() {
       crossfadeSec,
       density,
       columnWidths,
+      hiddenColumns,
       analysisModel,
     });
-  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths, analysisModel]);
+  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths, hiddenColumns, analysisModel]);
 
   // Theme rides a root attribute so CSS owns the palettes; Stage stays
   // dark regardless (a lit stage is not a stage). "auto" follows the
@@ -977,6 +986,23 @@ function App() {
     ];
   }, [menu, play, queue]);
 
+  // Column chooser: one entry per hideable registry column, checkmark =
+  // currently shown. Hiding the sorted column also clears the sort — a
+  // sort you can no longer see or cycle is a trap.
+  const columnMenuItems: MenuItem[] = useMemo(() => {
+    if (!columnMenu) return [];
+    return COLUMNS.filter((c) => c.hideable).map((c) => {
+      const shown = !hiddenColumns.includes(c.key);
+      return {
+        label: `${shown ? "✓ " : " "}${c.label}`,
+        action: () => {
+          if (shown && sort?.key === c.key) setSort(null);
+          setHiddenColumns((h) => toggleColumn(h, c.key));
+        },
+      };
+    });
+  }, [columnMenu, hiddenColumns, sort]);
+
   function seekTo(secs: number) {
     // Any seek invalidates in-flight and armed transition plans; the
     // position effect re-arms if the new spot still qualifies.
@@ -1164,6 +1190,7 @@ function App() {
             selection={selection}
             sort={sort}
             columnWidths={columnWidths}
+            hiddenColumns={hiddenColumns}
             artwork={artworkCache}
             onColumnWidths={setColumnWidths}
             onSort={onSort}
@@ -1175,6 +1202,10 @@ function App() {
                 y: e.clientY,
                 targets: contextTargets(selection, visible, track.id),
               });
+            }}
+            onHeaderContextMenu={(e) => {
+              e.preventDefault();
+              setColumnMenu({ x: e.clientX, y: e.clientY });
             }}
             onPlay={play}
           />
@@ -1423,6 +1454,15 @@ function App() {
       )}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+
+      {columnMenu && (
+        <ContextMenu
+          x={columnMenu.x}
+          y={columnMenu.y}
+          items={columnMenuItems}
+          onClose={() => setColumnMenu(null)}
+        />
+      )}
 
       <ToastStack
         toasts={toasts}

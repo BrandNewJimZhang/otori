@@ -725,6 +725,15 @@ td.col-format {
   font-size: 11px;
 }
 
+/* Added / Analyzed dates: quiet metadata like duration; tabular so a
+   sorted column scans as an even grid. */
+.col-date {
+  width: 92px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
 /* ---- player bar ---- */
 
 .status-bar {
