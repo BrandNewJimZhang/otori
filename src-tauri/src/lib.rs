@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use otori_core::{analysis, db, query, scan, write};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 
 /// One shared connection guarded by a mutex: single-writer by
@@ -624,9 +624,10 @@ fn update_tray(state: tauri::State<'_, Tray>, title: Option<String>, paused: boo
     Ok(())
 }
 
-/// macOS status-bar menu. Item clicks are forwarded to the frontend as
-/// a `tray-command` event ("playpause" / "next" / "prev") so tray and
-/// on-screen transport share one set of handlers.
+/// macOS status-bar menu. Left click toggles the mini player panel;
+/// right click opens this menu. Item clicks are forwarded to the
+/// frontend as a `tray-command` event ("playpause" / "next" / "prev")
+/// so tray and on-screen transport share one set of handlers.
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let handle = app.handle();
     let now_playing = MenuItem::with_id(handle, "now_playing", "Nothing playing", false, None::<&str>)?;
@@ -649,10 +650,24 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     )?;
 
     TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().expect("bundle has an icon").clone())
+        // Dedicated template mark (transparent bg, alpha-only): the app
+        // icon's dark tile renders as a solid blob in template mode.
+        .icon(tauri::include_image!("icons/tray-icon.png"))
         .icon_as_template(true)
         .menu(&menu)
-        .show_menu_on_left_click(true)
+        // Menu stays on right click only; left click opens the panel.
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                rect,
+                ..
+            } = event
+            {
+                toggle_mini_panel(tray.app_handle(), rect);
+            }
+        })
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
                 if let Some(win) = app.get_webview_window("main") {
@@ -668,6 +683,102 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .build(app)?;
 
     app.manage(Tray { now_playing, playpause, prev, next });
+    Ok(())
+}
+
+/// Mini player panel dimensions (logical px). Width also drives the
+/// centering math; keep in sync with .mini-panel CSS in App.css.
+const MINI_PANEL_SIZE: (f64, f64) = (340.0, 132.0);
+
+/// Where the mini panel opens: centered under the tray icon, clamped
+/// into the monitor's work area. Pure math, unit-tested; all inputs in
+/// the same (physical or logical) coordinate space.
+fn mini_panel_origin(
+    icon_pos: (f64, f64),
+    icon_size: (f64, f64),
+    panel_size: (f64, f64),
+    work_pos: (f64, f64),
+    work_size: (f64, f64),
+) -> (f64, f64) {
+    let x = icon_pos.0 + icon_size.0 / 2.0 - panel_size.0 / 2.0;
+    let x = x.max(work_pos.0).min(work_pos.0 + work_size.0 - panel_size.0);
+    let y = (icon_pos.1 + icon_size.1).max(work_pos.1);
+    (x, y)
+}
+
+/// Left-click on the tray icon: show the mini player under the icon,
+/// or hide it if it's already up. The window is created once at setup
+/// (hidden) and repositioned per click; `#mini` routes the shared
+/// frontend bundle to the panel UI.
+fn toggle_mini_panel(app: &tauri::AppHandle, tray_rect: tauri::Rect) {
+    let Some(win) = app.get_webview_window("mini") else { return };
+    if win.is_visible().unwrap_or(false) {
+        let _ = win.hide();
+        return;
+    }
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let icon_pos = tray_rect.position.to_logical::<f64>(scale);
+    let icon_size = tray_rect.size.to_logical::<f64>(scale);
+    // Work area of the monitor hosting the tray icon (menu bar height
+    // etc. already subtracted); falls back to opening flush below.
+    let (work_pos, work_size) = app
+        .monitor_from_point(icon_pos.x + icon_size.width / 2.0, icon_pos.y + 1.0)
+        .ok()
+        .flatten()
+        .map(|m| {
+            let wa = m.work_area();
+            (
+                wa.position.to_logical::<f64>(scale),
+                wa.size.to_logical::<f64>(scale),
+            )
+        })
+        .map(|(p, s)| ((p.x, p.y), (s.width, s.height)))
+        .unwrap_or(((icon_pos.x - 2000.0, icon_pos.y + icon_size.height), (4000.0, 4000.0)));
+    let (x, y) = mini_panel_origin(
+        (icon_pos.x, icon_pos.y),
+        (icon_size.width, icon_size.height),
+        MINI_PANEL_SIZE,
+        work_pos,
+        work_size,
+    );
+    let _ = win.set_position(tauri::LogicalPosition::new(x, y + MINI_PANEL_GAP));
+    let _ = win.show();
+    let _ = win.set_focus();
+    // Ask the main window for a state snapshot so the panel is fresh
+    // even if it missed earlier np-state broadcasts.
+    let _ = app.emit("np-refresh", ());
+}
+
+/// Gap between the menu bar bottom and the panel, matching NSMenu.
+const MINI_PANEL_GAP: f64 = 6.0;
+
+/// The hidden mini-player window, created once at startup. Frameless,
+/// transparent (rounded corners drawn by CSS), skips the Dock/taskbar,
+/// follows the active Space, and auto-hides on focus loss like NSMenu.
+fn setup_mini_panel(app: &tauri::App) -> tauri::Result<()> {
+    let win = tauri::WebviewWindowBuilder::new(
+        app,
+        "mini",
+        tauri::WebviewUrl::App("index.html#mini".into()),
+    )
+    .inner_size(MINI_PANEL_SIZE.0, MINI_PANEL_SIZE.1)
+    .decorations(false)
+    .transparent(true)
+    .shadow(true)
+    .resizable(false)
+    .always_on_top(true)
+    .visible_on_all_workspaces(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()?;
+
+    // NSMenu behavior: clicking anywhere else dismisses the panel.
+    let handle = win.clone();
+    win.on_window_event(move |event| {
+        if let tauri::WindowEvent::Focused(false) = event {
+            let _ = handle.hide();
+        }
+    });
     Ok(())
 }
 
@@ -767,6 +878,7 @@ pub fn run() {
             spawn_library_watcher(app.handle().clone(), path.clone());
             spawn_launch_rescan(app.handle().clone(), path);
             setup_tray(app)?;
+            setup_mini_panel(app)?;
             setup_app_menu(app)?;
             Ok(())
         })
@@ -864,7 +976,59 @@ mod tests {
     // main dropped rten_thread_cap (the thread-cap helper + its tests were
     // removed); the windows port added sleep_action/SleepAction. Merge =
     // neither rten_thread_cap, both sleep symbols.
-    use super::{parse_sha256_sidecar, sleep_action, verify_sha256, SleepAction};
+    use super::{mini_panel_origin, parse_sha256_sidecar, sleep_action, verify_sha256, SleepAction};
+
+    #[test]
+    fn mini_panel_centers_under_the_tray_icon() {
+        // Icon at x=1000 w=30, panel w=300 → centered: 1000+15-150.
+        let (x, y) = mini_panel_origin(
+            (1000.0, 0.0),
+            (30.0, 24.0),
+            (300.0, 180.0),
+            (0.0, 25.0),
+            (1440.0, 875.0),
+        );
+        assert_eq!((x, y), (865.0, 25.0));
+    }
+
+    #[test]
+    fn mini_panel_clamps_to_the_right_screen_edge() {
+        // Icon near the right edge: panel must not overflow the work area.
+        let (x, _) = mini_panel_origin(
+            (1420.0, 0.0),
+            (30.0, 24.0),
+            (300.0, 180.0),
+            (0.0, 25.0),
+            (1440.0, 875.0),
+        );
+        assert_eq!(x, 1140.0); // work right edge 1440 - panel 300
+    }
+
+    #[test]
+    fn mini_panel_clamps_to_the_left_screen_edge() {
+        let (x, _) = mini_panel_origin(
+            (10.0, 0.0),
+            (30.0, 24.0),
+            (300.0, 180.0),
+            (0.0, 25.0),
+            (1440.0, 875.0),
+        );
+        assert_eq!(x, 0.0);
+    }
+
+    #[test]
+    fn mini_panel_opens_below_the_menu_bar() {
+        // Work area starts under the menu bar (y=25); the tray rect
+        // bottom (0+24) is above it, so the panel lands at the work top.
+        let (_, y) = mini_panel_origin(
+            (700.0, 0.0),
+            (30.0, 24.0),
+            (300.0, 180.0),
+            (0.0, 25.0),
+            (1440.0, 875.0),
+        );
+        assert_eq!(y, 25.0);
+    }
 
     #[test]
     fn commands_run_off_the_main_thread() {
