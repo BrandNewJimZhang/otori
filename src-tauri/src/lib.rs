@@ -673,7 +673,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
 /// macOS menu bar. Items forward to the frontend as `menu-command`
 /// events (same handler set as the tray/transport). The Edit submenu's
-/// predefined clipboard roles are what make ⌘C/⌘V/⌘X work inside the
+/// predefined roles are what make ⌘C/⌘V/⌘X/⌘A work inside the
 /// webview's text fields on macOS — do not remove them. In-app keys
 /// (Space, S, arrows) stay in the webview router; menu items carry
 /// accelerators only where the webview doesn't already own the chord.
@@ -712,6 +712,12 @@ fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
             &PredefinedMenuItem::cut(handle, None)?,
             &PredefinedMenuItem::copy(handle, None)?,
             &PredefinedMenuItem::paste(handle, None)?,
+            // ⌘A in text fields needs this role too (same wry mechanism
+            // as the clipboard trio). The Backstage table keeps its own
+            // ⌘A: the webview router preventDefaults it in the global
+            // zone, so the accelerator only fires where routing is
+            // "native" — i.e. inside inputs/textareas.
+            &PredefinedMenuItem::select_all(handle, None)?,
         ],
     )?;
     let playback = Submenu::with_items(

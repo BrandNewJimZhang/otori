@@ -24,6 +24,7 @@ import {
   canRemoveCover,
   diffEdits,
   lyricsEditorState,
+  lyricsKeyIntent,
   mergeTracks,
   MULTIPLE,
   noEdits,
@@ -292,7 +293,14 @@ export function InspectorPanel({ tracks, onClose, onSaved, onNotice, onError }: 
                   rows={10}
                   onChange={(e) => setLyricsDraft(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Escape" && lyricsDirty) {
+                    const intent = lyricsKeyIntent(
+                      { key: e.key, meta: e.metaKey || e.ctrlKey },
+                      lyricsDirty,
+                    );
+                    if (intent === "save") {
+                      e.preventDefault(); // ⌘S is ours, not the system's
+                      void saveLyrics();
+                    } else if (intent === "revert") {
                       e.stopPropagation(); // first Esc reverts, like tag fields
                       setLyricsDraft(null);
                     }

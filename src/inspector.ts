@@ -92,3 +92,18 @@ export function lyricsEditorState(raw: RawLyrics | null): LyricsEditor {
     ? { kind: "readonly", text: raw.text }
     : { kind: "editable", text: raw.text };
 }
+
+/**
+ * Lyrics editor keydown intent. ⌘S saves, Escape reverts — both only
+ * when the draft is dirty, so a clean editor never rewrites the .lrc
+ * and a clean Esc falls through to the app router's blur.
+ */
+export function lyricsKeyIntent(
+  combo: { key: string; meta: boolean },
+  dirty: boolean,
+): "save" | "revert" | "none" {
+  if (!dirty) return "none";
+  if (combo.meta && combo.key.toLowerCase() === "s") return "save";
+  if (!combo.meta && combo.key === "Escape") return "revert";
+  return "none";
+}
