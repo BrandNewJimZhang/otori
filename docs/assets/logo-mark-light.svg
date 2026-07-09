@@ -1,10 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="84 92 400 400">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="100 119 352 352">
   <!-- Ōtori brand mark, transparent — ink ring, for LIGHT backgrounds.
        Identical geometry to logo-mark-dark.svg; only the ring color flips
-       to the dark tile ink so the mark survives white README/paper. -->
+       to the dark tile ink so the mark survives white README/paper.
+       viewBox is tightened to the content's real bounds (same box as
+       BrandMark in src/icons.tsx) — the old 84 92 400 400 box carried
+       ~15% dead margin from the raw geometry. -->
   <defs>
     <mask id="ring-hole">
-      <rect x="84" y="92" width="400" height="400" fill="white"/>
+      <rect x="100" y="119" width="352" height="352" fill="white"/>
       <circle cx="226" cy="350" r="96" fill="black"/>
     </mask>
   </defs>

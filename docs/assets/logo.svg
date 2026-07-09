@@ -4,14 +4,21 @@
        Four tail feathers sweep up-right for motion: the WxS member colors
        (Tsukasa gold / Emu pink / Nene green / Rui purple), publicly the four
        functional accents in App.css (library / lyrics / playback / spectrum).
-       See docs/design/logo.md for the full rationale + legal boundary. -->
+       See docs/design/logo.md for the full rationale + legal boundary.
+
+       The outer group centers the mark's true bounding box (feather bezier
+       extremes + ring outer edge, 335x347 around bbox center 275.7,294.6)
+       on the 512 tile and scales it to ~73% fill — without it the mark sat
+       up-left with ~15% dead margin baked into the raw geometry. -->
   <rect width="512" height="512" rx="115" fill="#101014"/>
-  <g transform="translate(226 350)">
-    <g transform="rotate(-14)"><path d="M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z" fill="#FFBB00"/></g>
-    <g transform="rotate(16)"><path d="M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z" fill="#FF66BB"/></g>
-    <g transform="rotate(46)"><path d="M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z" fill="#33DD99"/></g>
-    <g transform="rotate(76)"><path d="M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z" fill="#BB88EE"/></g>
+  <g transform="translate(-41.7 -62.2) scale(1.08)">
+    <g transform="translate(226 350)">
+      <g transform="rotate(-14)"><path d="M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z" fill="#FFBB00"/></g>
+      <g transform="rotate(16)"><path d="M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z" fill="#FF66BB"/></g>
+      <g transform="rotate(46)"><path d="M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z" fill="#33DD99"/></g>
+      <g transform="rotate(76)"><path d="M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z" fill="#BB88EE"/></g>
+    </g>
+    <circle cx="226" cy="350" r="74" fill="#101014"/>
+    <circle cx="226" cy="350" r="96" fill="none" stroke="#e8e6e3" stroke-width="44"/>
   </g>
-  <circle cx="226" cy="350" r="74" fill="#101014"/>
-  <circle cx="226" cy="350" r="96" fill="none" stroke="#e8e6e3" stroke-width="44"/>
 </svg>
