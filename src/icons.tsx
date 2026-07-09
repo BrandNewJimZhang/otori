@@ -195,18 +195,20 @@ export function QueueIcon() {
   );
 }
 
-/** Brand mark for the toolbar: same geometry as docs/assets/logo-mark-*.svg.
-    Ring rides currentColor so it flips with the theme (light ring on dark
-    Backstage, ink ring on the light variant); feathers keep the fixed brand
-    palette (docs/design/logo.md). */
+/** Brand mark for the toolbar: same geometry as docs/assets/logo-mark-*.svg,
+    but with the viewBox tightened to the content's real bounds (the asset's
+    512-grid box leaves ~15% dead margin, which made the toolbar mark render
+    small and float up-left in its own box). Ring rides currentColor so it
+    flips with the theme (light ring on dark Backstage, ink ring on the light
+    variant); feathers keep the fixed brand palette (docs/design/logo.md). */
 export function BrandMark() {
   const short = "M 0 0 C 30 -60 30 -166 0 -224 C -30 -166 -30 -60 0 0 Z";
   const long = "M 0 0 C 30 -64 30 -178 0 -238 C -30 -178 -30 -64 0 0 Z";
   return (
-    <svg width="22" height="22" viewBox="84 92 400 400" aria-hidden>
+    <svg width="24" height="24" viewBox="100 119 352 352" aria-hidden>
       <defs>
         <mask id="brand-ring-hole">
-          <rect x="84" y="92" width="400" height="400" fill="white" />
+          <rect x="100" y="119" width="352" height="352" fill="white" />
           <circle cx="226" cy="350" r="96" fill="black" />
         </mask>
       </defs>

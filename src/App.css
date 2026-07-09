@@ -197,10 +197,14 @@ button {
 }
 
 /* The mark's ring rides currentColor; use the text color, not the
-   library accent, so it reads as chrome next to the traffic lights. */
+   library accent, so it reads as chrome next to the traffic lights.
+   The 1px nudge sits the ring (the mark's visual weight, bottom-left)
+   on the wordmark's optical baseline — the feathers sweep above
+   x-height, so centering the full bbox reads as floating high. */
 .brand svg {
   color: var(--text);
   flex-shrink: 0;
+  transform: translateY(1px);
 }
 
 .toolbar button,
