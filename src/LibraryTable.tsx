@@ -153,6 +153,17 @@ export function LibraryTable({
   tracksRef.current = tracks;
   rowHeightRef.current = rh;
 
+  // Programmatic scroll: set scrollTop AND recompute the window in the
+  // same commit. The scroll event only dispatches after paint, so
+  // leaning on the listener alone paints one frame whose row slice was
+  // computed for the old offset — the viewport lands on a spacer row
+  // and the list flashes blank. Called from layout effects, the setWin
+  // flushes before paint; reading scrollTop back picks up clamping.
+  function jumpTo(scroller: HTMLElement, offset: number) {
+    scroller.scrollTop = offset;
+    setWin({ scrollTop: scroller.scrollTop, viewport: scroller.clientHeight });
+  }
+
   // Bind scroll + resize listeners to the parent scroller once mounted.
   useLayoutEffect(() => {
     const scroller = tableRef.current?.parentElement ?? null;
@@ -173,13 +184,16 @@ export function LibraryTable({
         tableRef.current?.querySelector<HTMLTableRowElement>("tbody tr[data-row]")?.offsetHeight ||
         30;
       const headroom = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
-      scroller.scrollTop = centerOffset({
-        index,
-        viewport: scroller.clientHeight,
-        rowHeight: rh,
-        headroom,
-        total: tracksRef.current.length,
-      });
+      jumpTo(
+        scroller,
+        centerOffset({
+          index,
+          viewport: scroller.clientHeight,
+          rowHeight: rh,
+          headroom,
+          total: tracksRef.current.length,
+        }),
+      );
     }
     return () => {
       scroller.removeEventListener("scroll", sync);
@@ -209,19 +223,22 @@ export function LibraryTable({
     if (!scroller) return;
     const anchorId = scrollAnchorId(selection, playingId, tracks);
     if (anchorId == null) {
-      scroller.scrollTop = 0;
+      jumpTo(scroller, 0);
       return;
     }
     const headroom = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
-    scroller.scrollTop = reanchorOffset({
-      oldIndex: prevOrder.findIndex((t) => t.id === anchorId),
-      newIndex: tracks.findIndex((t) => t.id === anchorId),
-      scrollTop: scroller.scrollTop,
-      viewport: scroller.clientHeight,
-      rowHeight: rowHeightRef.current || 30,
-      headroom,
-      total: tracks.length,
-    });
+    jumpTo(
+      scroller,
+      reanchorOffset({
+        oldIndex: prevOrder.findIndex((t) => t.id === anchorId),
+        newIndex: tracks.findIndex((t) => t.id === anchorId),
+        scrollTop: scroller.scrollTop,
+        viewport: scroller.clientHeight,
+        rowHeight: rowHeightRef.current || 30,
+        headroom,
+        total: tracks.length,
+      }),
+    );
   }, [sort, tracks, selection, playingId]);
 
   // A cover landing must repaint its row; the cache lives outside React,
@@ -252,8 +269,9 @@ export function LibraryTable({
   // moves, scroll it into view. With virtualization the anchor row may
   // not be rendered, so we compute the offset from its index instead
   // of relying on a DOM node. null = already visible, so click
-  // selection never causes a jump.
-  useEffect(() => {
+  // selection never causes a jump. Layout effect (not useEffect): the
+  // scroll and the re-windowed rows must land in the same paint.
+  useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (selection.anchor == null || !scroller) return;
     const index = tracksRef.current.findIndex((t) => t.id === selection.anchor);
@@ -266,7 +284,7 @@ export function LibraryTable({
       rowHeight: rowHeightRef.current || 30,
       headroom,
     });
-    if (next != null) scroller.scrollTop = next;
+    if (next != null) jumpTo(scroller, next);
   }, [selection.anchor]);
 
   function beginResize(key: SortKey, e: React.PointerEvent<HTMLSpanElement>) {
