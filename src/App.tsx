@@ -505,9 +505,12 @@ function App() {
     engine.preloadNext(next ? { path: next.path, replaygainDb: next.replaygain_db } : null);
     // Warm mix points for the pair (no-op when the sweeper already
     // persisted anchors — planning then reads the index, zero decode).
+    // Only while MIX is on: with crossfade off the anchors are never
+    // read, and the slow path is a full decode + inference per track.
+    if (!crossfadeSec) return;
     if (current) void tailMixPoint(current);
     if (next) void headMixPoint(next);
-  }, [engine, visible, current, shuffle, repeat, queue]);
+  }, [engine, visible, current, shuffle, repeat, queue, crossfadeSec]);
 
   // DJ crossfade: when enabled and the track nears its end, plan a
   // transition from the persisted mix anchors and hand it to the
@@ -559,9 +562,11 @@ function App() {
       // re-arms if the position still (or again) qualifies.
       if (planEpoch.current !== epoch) return;
       const plan = planTransition(tailOut, headIn, crossfadeSec);
-      // Engine returns false if the preload isn't ready — the track
-      // then ends naturally and the gapless path takes over.
-      engine.beginTransition(plan);
+      // Engine returns false when the plan is stale (the track changed
+      // while anchors were computing — the analysis slow path can take
+      // longer than the track's remaining seconds) or the preload isn't
+      // ready — the track then ends naturally and gapless takes over.
+      engine.beginTransition(plan, current.path);
     })();
   }, [position, crossfadeSec, current, engine]);
 

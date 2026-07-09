@@ -27,9 +27,12 @@ export interface PlaybackEngine {
   /** Preload a track on the idle deck for gapless handoff; null clears. */
   preloadNext(source: TrackSource | null): void;
   /** Execute a planned transition into the preloaded track NOW.
-      Returns false if the preload isn't ready (caller falls back to
-      letting the track end naturally). */
-  beginTransition(plan: TransitionPlan): boolean;
+      `outgoingPath` is the track the plan fades OUT of: if the active
+      deck no longer plays it (planning raced a track change — slow
+      anchor analysis can outlive the track), the plan is stale and is
+      dropped. Returns false if stale or if the preload isn't ready
+      (caller falls back to letting the track end naturally). */
+  beginTransition(plan: TransitionPlan, outgoingPath: string): boolean;
   /** True while a transition is running (UI: both tracks audible). */
   readonly transitioning: boolean;
   togglePause(): void;
@@ -266,9 +269,13 @@ class TwoDeckEngine implements PlaybackEngine {
    * lives on the media element and can't be automated, rides a rAF
    * loop; a wall-clock timer finalizes the handoff.
    */
-  beginTransition(plan: TransitionPlan): boolean {
+  beginTransition(plan: TransitionPlan, outgoingPath: string): boolean {
     const from = this.activeDeck;
     const to = this.idleDeck;
+    // Stale plan: the track it fades out of already ended or was
+    // switched away from while the plan was being computed. Executing
+    // it would crossfade the CURRENT track mid-play into the preload.
+    if (from.source?.path !== outgoingPath) return false;
     if (!this.next || to.source?.path !== this.next.path) return false;
     if (to.audio.readyState < 3 || this.transitionTimer) return false;
 

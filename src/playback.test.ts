@@ -49,6 +49,12 @@ class FakeAudio {
     this.listeners.set(type, list);
   }
 
+  /** Fire a media event as the browser would ("ended" implies paused). */
+  fire(type: string): void {
+    if (type === "ended") this.paused = true;
+    for (const cb of this.listeners.get(type) ?? []) cb();
+  }
+
   play(): Promise<void> {
     this.paused = false;
     return Promise.resolve();
@@ -163,13 +169,29 @@ describe("TwoDeckEngine output latency", () => {
 });
 
 describe("TwoDeckEngine transitions", () => {
+  it("rejects a stale plan whose outgoing track is no longer playing", async () => {
+    const engine = await createEngineWithAB();
+    const deckA = audios[1]; // A plays on deck 1, B preloads on deck 0
+
+    // A ends naturally: gapless advance to B, then C preloads on the
+    // now-idle deck — the exact state a slow anchor analysis races.
+    deckA.fire("ended");
+    engine.preloadNext(track("/c.flac"));
+
+    // The late plan was made for "A's tail into B's head". A is gone:
+    // executing it would fade the playing B into C mid-track.
+    expect(engine.beginTransition(plainPlan(4), "/a.flac")).toBe(false);
+    expect(engine.transitioning).toBe(false);
+    expect(audios[1].paused).toBe(true); // idle deck (holding C) untouched
+  });
+
   it("keeps the outgoing deck audible when a preload lands mid-transition", async () => {
     const engine = await createEngineWithAB();
     // A plays on deck 1 (play() targets the idle deck), B preloads on deck 0.
     const outgoing = audios[1];
     expect(outgoing.src).toBe("asset:///a.flac");
 
-    expect(engine.beginTransition(plainPlan(4))).toBe(true);
+    expect(engine.beginTransition(plainPlan(4), "/a.flac")).toBe(true);
     const writesDuringFade = outgoing.srcWrites.length;
 
     // UI advanced to B and immediately preloads C — while A is fading.
@@ -183,7 +205,7 @@ describe("TwoDeckEngine transitions", () => {
   it("materializes the deferred preload once the transition completes", async () => {
     const engine = await createEngineWithAB();
     const outgoing = audios[1];
-    engine.beginTransition(plainPlan(4));
+    engine.beginTransition(plainPlan(4), "/a.flac");
     engine.preloadNext(track("/c.flac"));
 
     vi.advanceTimersByTime(4000);
@@ -195,7 +217,7 @@ describe("TwoDeckEngine transitions", () => {
 
   it("schedules fades on the audio clock and completes without any rAF frames", async () => {
     const engine = await createEngineWithAB();
-    engine.beginTransition(plainPlan(4));
+    engine.beginTransition(plainPlan(4), "/a.flac");
 
     // Both fades are one-shot audio-clock automations, not per-frame writes.
     const [gainOut, gainIn] = [gains[1], gains[0]];
@@ -222,7 +244,7 @@ describe("TwoDeckEngine transitions", () => {
       gainOut: (t) => 1 - t,
       gainIn: (t) => t,
     };
-    engine.beginTransition(plan);
+    engine.beginTransition(plan, "/a.flac");
     expect(audios[0].currentTime).toBe(2); // incoming enters on its offset
 
     vi.advanceTimersByTime(2000); // halfway
@@ -239,7 +261,7 @@ describe("TwoDeckEngine transitions", () => {
 
   it("cancels scheduled fades when play() interrupts a transition", async () => {
     const engine = await createEngineWithAB();
-    engine.beginTransition(plainPlan(4));
+    engine.beginTransition(plainPlan(4), "/a.flac");
     expect(engine.transitioning).toBe(true);
 
     await engine.play(track("/d.flac"));
@@ -254,7 +276,7 @@ describe("TwoDeckEngine transitions", () => {
     const engine = await createEngineWithAB();
     const outgoing = audios[1];
     const incoming = audios[0];
-    engine.beginTransition(plainPlan(4));
+    engine.beginTransition(plainPlan(4), "/a.flac");
     engine.preloadNext(track("/c.flac")); // deferred behind the fade
 
     engine.seek(30);
@@ -281,7 +303,7 @@ describe("TwoDeckEngine transitions", () => {
 
   it("a finalized-by-seek transition does not re-finalize on its timer", async () => {
     const engine = await createEngineWithAB();
-    engine.beginTransition(plainPlan(4));
+    engine.beginTransition(plainPlan(4), "/a.flac");
     engine.seek(30);
     const pausesBefore = audios[1].paused;
 
