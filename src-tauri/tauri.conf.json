@@ -45,6 +45,9 @@
     ],
     "resources": [
       "models/*.onnx"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }
