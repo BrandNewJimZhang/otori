@@ -105,6 +105,24 @@ export function formatBpm(t: TrackRow): string {
   return "—";
 }
 
+/** Same cutoff as otori-cli's `hint-candidates --min-confidence`
+    default — the UI highlight and the CLI's "worth an external hint"
+    list must agree on what counts as shaky. */
+const SHAKY_CONFIDENCE = 0.6;
+
+/** Should the BPM cell warn? True for a detection the CLI would also
+    call shaky, and for an unverified external hint. Variable-tempo
+    verdicts are stored with confidence halved (derive.rs: "a range is
+    honest, a mean is a lie"), so the cutoff halves with them — a clean
+    soflan range is not shaky. */
+export function isShakyBpm(t: TrackRow): boolean {
+  if (t.bpm != null) {
+    const cutoff = t.bpm_max != null ? SHAKY_CONFIDENCE / 2 : SHAKY_CONFIDENCE;
+    return (t.bpm_confidence ?? 0) < cutoff;
+  }
+  return t.bpm_hint != null;
+}
+
 // ---- filtering ----
 
 /** NFKC + lowercase: fullwidth Ｌａｔｉｎ, katakana width variants, and

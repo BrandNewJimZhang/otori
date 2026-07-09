@@ -5,7 +5,7 @@
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
-import { displayTitle, formatBpm, visibleColumns } from "./library";
+import { displayTitle, formatBpm, isShakyBpm, visibleColumns } from "./library";
 import { formatDate, formatDateTime, formatTime } from "./format";
 import { NoteIcon, PlayIcon, SortArrowIcon } from "./icons";
 import type { ArtworkCache } from "./artworkcache";
@@ -350,12 +350,7 @@ export function LibraryTable({
                     return (
                       <td
                         key={c.key}
-                        className={`col-bpm ${
-                          (t.bpm != null && (t.bpm_confidence ?? 0) < 0.4) ||
-                          (t.bpm == null && t.bpm_hint != null)
-                            ? "low-confidence"
-                            : ""
-                        }`}
+                        className={`col-bpm ${isShakyBpm(t) ? "low-confidence" : ""}`}
                         title={
                           t.bpm != null && t.bpm_confidence != null
                             ? `confidence ${(t.bpm_confidence * 100).toFixed(0)}%`

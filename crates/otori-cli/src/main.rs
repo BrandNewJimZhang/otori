@@ -126,6 +126,8 @@ enum Command {
     /// (no hint yet; blank or low-confidence detection)
     HintCandidates {
         /// Confidence below which a detection counts as shaky
+        /// (default mirrored by SHAKY_CONFIDENCE in src/library.ts —
+        /// the UI highlight uses the same cutoff)
         #[arg(long, default_value_t = 0.6)]
         min_confidence: f64,
         /// Cap the list (0 = everything)
