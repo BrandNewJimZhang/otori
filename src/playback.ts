@@ -30,8 +30,10 @@ export interface PlaybackEngine {
       `outgoingPath` is the track the plan fades OUT of: if the active
       deck no longer plays it (planning raced a track change — slow
       anchor analysis can outlive the track), the plan is stale and is
-      dropped. Returns false if stale or if the preload isn't ready
-      (caller falls back to letting the track end naturally). */
+      dropped. The deck clock is checked too: a plan for a playback
+      that restarted or paused is equally stale even on the same path.
+      Returns false if stale or if the preload isn't ready (caller
+      falls back to letting the track end naturally). */
   beginTransition(plan: TransitionPlan, outgoingPath: string): boolean;
   /** True while a transition is running (UI: both tracks audible). */
   readonly transitioning: boolean;
@@ -66,6 +68,12 @@ interface Deck {
   /** What's loaded (or loading) on this deck. */
   source: TrackSource | null;
 }
+
+/** Extra seconds beyond the fade length the outgoing deck may still
+    have left and count as "ending": covers the caller's 1s arming
+    lead plus bar quantization shortening a beat-matched plan by up
+    to half a bar (~1.7s at 70 BPM). */
+const END_WINDOW_SLACK_SEC = 3;
 
 class TwoDeckEngine implements PlaybackEngine {
   private decks: [Deck, Deck];
@@ -276,6 +284,14 @@ class TwoDeckEngine implements PlaybackEngine {
     // switched away from while the plan was being computed. Executing
     // it would crossfade the CURRENT track mid-play into the preload.
     if (from.source?.path !== outgoingPath) return false;
+    // Same path is not proof either: the user may have restarted or
+    // paused the very track the plan fades out of. The plan's premise
+    // is "this playback is ending NOW" — verify it on the deck clock.
+    if (from.audio.paused) return false;
+    const remaining = from.audio.duration - from.audio.currentTime;
+    if (Number.isFinite(remaining) && remaining > plan.durationSec + END_WINDOW_SLACK_SEC) {
+      return false;
+    }
     if (!this.next || to.source?.path !== this.next.path) return false;
     if (to.audio.readyState < 3 || this.transitionTimer) return false;
 

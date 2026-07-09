@@ -129,6 +129,9 @@ async function createEngineWithAB() {
   const engine = createEngine();
   await engine.play(track("/a.flac"));
   engine.preloadNext(track("/b.flac"));
+  // Park A inside its end window (duration 300): transitions are only
+  // valid there — the engine rejects plans for a mid-play deck.
+  audios[1].currentTime = 297;
   return engine;
 }
 
@@ -183,6 +186,31 @@ describe("TwoDeckEngine transitions", () => {
     expect(engine.beginTransition(plainPlan(4), "/a.flac")).toBe(false);
     expect(engine.transitioning).toBe(false);
     expect(audios[1].paused).toBe(true); // idle deck (holding C) untouched
+  });
+
+  it("rejects a stale plan after the same track restarted from the top", async () => {
+    const engine = await createEngineWithAB();
+    const deckA = audios[1];
+
+    // The user re-clicked A while its plan was still computing anchors:
+    // same path, but the premise ("this playback is ending") is gone.
+    deckA.currentTime = 0;
+
+    expect(engine.beginTransition(plainPlan(4), "/a.flac")).toBe(false);
+    expect(engine.transitioning).toBe(false);
+    expect(audios[0].paused).toBe(true); // B must not start over A's intro
+  });
+
+  it("rejects a stale plan while the outgoing deck is paused", async () => {
+    const engine = await createEngineWithAB();
+
+    // Paused inside the end window: a fade would start the next track
+    // sounding over silence with no user action.
+    engine.togglePause();
+
+    expect(engine.beginTransition(plainPlan(4), "/a.flac")).toBe(false);
+    expect(engine.transitioning).toBe(false);
+    expect(audios[0].paused).toBe(true);
   });
 
   it("keeps the outgoing deck audible when a preload lands mid-transition", async () => {
