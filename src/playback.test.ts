@@ -3,6 +3,10 @@
 //  - preloadNext must never touch the still-audible outgoing deck
 //  - fades ride the audio clock (setValueCurveAtTime), not rAF, so a
 //    hidden window (frozen rAF in WKWebView) can't stall them
+//  - both fades anchor to the moment the incoming deck actually starts
+//    sounding (play() resolves), not to plan-execution time — else the
+//    fade-in's silent head burns off during deck spin-up and the track
+//    enters mid-slope instead of from silence
 //  - the deferred preload materializes once the outgoing deck retires
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +20,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 let audios: FakeAudio[] = [];
 /** Every GainNode created by the engine graph, in deck order. */
 let gains: FakeGainNode[] = [];
+/** The engine's AudioContext (built once per engine, on first play). */
+let ctxs: FakeAudioContext[] = [];
 
 class FakeAudio {
   preload = "";
@@ -88,6 +94,9 @@ class FakeGainNode {
 class FakeAudioContext {
   state = "running";
   currentTime = 0;
+  constructor() {
+    ctxs.push(this);
+  }
   destination = {};
   baseLatency = 0.01;
   outputLatency = 0.05;
@@ -117,6 +126,26 @@ function pumpFrames(): void {
 
 const track = (path: string) => ({ path, replaygainDb: null });
 
+/** Flush the microtask hops that anchor fades once the incoming
+    deck's play() resolves — the fake resolves immediately. */
+async function flushFadeAnchor(): Promise<void> {
+  for (let i = 0; i < 3; i++) await Promise.resolve();
+}
+
+/** Swap a deck's play() for one that resolves only when the test says
+    the deck started sounding (models WKWebView startup latency). */
+function stallPlay(audio: FakeAudio): () => void {
+  let release!: () => void;
+  audio.play = () =>
+    new Promise<void>((resolve) => {
+      release = () => {
+        audio.paused = false;
+        resolve();
+      };
+    });
+  return () => release();
+}
+
 const plainPlan = (durationSec: number): TransitionPlan => ({
   kind: "plain",
   durationSec,
@@ -138,6 +167,7 @@ async function createEngineWithAB() {
 beforeEach(() => {
   audios = [];
   gains = [];
+  ctxs = [];
   rafCallbacks = new Map();
   rafNextId = 1;
   vi.stubGlobal("Audio", FakeAudio);
@@ -235,6 +265,7 @@ describe("TwoDeckEngine transitions", () => {
     const outgoing = audios[1];
     engine.beginTransition(plainPlan(4), "/a.flac");
     engine.preloadNext(track("/c.flac"));
+    await flushFadeAnchor();
 
     vi.advanceTimersByTime(4000);
 
@@ -243,9 +274,71 @@ describe("TwoDeckEngine transitions", () => {
     expect(outgoing.src).toBe("asset:///c.flac"); // ...and reloaded with C
   });
 
+  it("anchors both fades to the moment the incoming deck starts sounding", async () => {
+    const engine = await createEngineWithAB();
+    const releasePlay = stallPlay(audios[0]); // incoming deck spin-up stalls
+
+    expect(engine.beginTransition(plainPlan(4), "/a.flac")).toBe(true);
+    expect(engine.transitioning).toBe(true); // reservation holds while pending
+
+    // Deck spin-up burns 300ms of audio-clock time before sound exists.
+    // Scheduling the curves now would waste the fade-in's silent head
+    // on a deck nobody can hear yet.
+    ctxs[0].currentTime = 0.3;
+    const [gainOut, gainIn] = [gains[1], gains[0]];
+    expect(gainOut.gain.setValueCurveAtTime).not.toHaveBeenCalled();
+    expect(gainIn.gain.setValueCurveAtTime).not.toHaveBeenCalled();
+
+    releasePlay();
+    await flushFadeAnchor();
+
+    // Both curves anchor to the sounding moment — out and in stay
+    // symmetric, and the fade-in starts from true silence.
+    expect(gainOut.gain.setValueCurveAtTime.mock.calls[0][1]).toBe(0.3);
+    expect(gainIn.gain.setValueCurveAtTime.mock.calls[0][1]).toBe(0.3);
+  });
+
+  it("keeps deferring preloads while the incoming deck spins up", async () => {
+    const engine = await createEngineWithAB();
+    const outgoing = audios[1];
+    const releasePlay = stallPlay(audios[0]);
+    engine.beginTransition(plainPlan(4), "/a.flac");
+
+    // A preload landing during spin-up must not touch the still-audible
+    // outgoing deck any more than one landing mid-fade would.
+    engine.preloadNext(track("/c.flac"));
+    expect(outgoing.src).toBe("asset:///a.flac");
+    expect(outgoing.paused).toBe(false);
+
+    releasePlay();
+    await flushFadeAnchor();
+    vi.advanceTimersByTime(4000);
+
+    expect(engine.transitioning).toBe(false);
+    expect(outgoing.src).toBe("asset:///c.flac"); // deferred preload landed
+  });
+
+  it("drops the pending fade when play() interrupts during deck spin-up", async () => {
+    const engine = await createEngineWithAB();
+    const releasePlay = stallPlay(audios[0]);
+    engine.beginTransition(plainPlan(4), "/a.flac");
+
+    await engine.play(track("/d.flac")); // user clicked another track
+
+    releasePlay(); // the stale spin-up settles afterwards
+    await flushFadeAnchor();
+
+    // The dead transition must not schedule fades over D's playback.
+    for (const gain of gains) {
+      expect(gain.gain.setValueCurveAtTime).not.toHaveBeenCalled();
+    }
+    expect(engine.transitioning).toBe(false);
+  });
+
   it("schedules fades on the audio clock and completes without any rAF frames", async () => {
     const engine = await createEngineWithAB();
     engine.beginTransition(plainPlan(4), "/a.flac");
+    await flushFadeAnchor();
 
     // Both fades are one-shot audio-clock automations, not per-frame writes.
     const [gainOut, gainIn] = [gains[1], gains[0]];
@@ -274,6 +367,7 @@ describe("TwoDeckEngine transitions", () => {
     };
     engine.beginTransition(plan, "/a.flac");
     expect(audios[0].currentTime).toBe(2); // incoming enters on its offset
+    await flushFadeAnchor();
 
     vi.advanceTimersByTime(2000); // halfway
     pumpFrames();
@@ -305,6 +399,7 @@ describe("TwoDeckEngine transitions", () => {
     const outgoing = audios[1];
     const incoming = audios[0];
     engine.beginTransition(plainPlan(4), "/a.flac");
+    await flushFadeAnchor(); // fades are live on the audio clock
     engine.preloadNext(track("/c.flac")); // deferred behind the fade
 
     engine.seek(30);
@@ -332,6 +427,7 @@ describe("TwoDeckEngine transitions", () => {
   it("a finalized-by-seek transition does not re-finalize on its timer", async () => {
     const engine = await createEngineWithAB();
     engine.beginTransition(plainPlan(4), "/a.flac");
+    await flushFadeAnchor(); // the finalize timer is armed
     engine.seek(30);
     const pausesBefore = audios[1].paused;
 

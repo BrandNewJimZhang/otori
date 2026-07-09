@@ -89,11 +89,17 @@ class TwoDeckEngine implements PlaybackEngine {
   private timeCb: ((secs: number) => void) | null = null;
   /** rAF id of the beat-matched rate-ramp loop; 0 when idle. */
   private transitionRaf = 0;
-  /** setTimeout id of the transition finalizer; 0 when idle. This — not
-      the rAF — is the source of truth for "a transition is running":
-      fades are scheduled on the audio clock and complete even if
-      WKWebView freezes rAF in a hidden window. */
+  /** setTimeout id of the transition finalizer; 0 when idle. Fades are
+      scheduled on the audio clock and complete even if WKWebView
+      freezes rAF in a hidden window. */
   private transitionTimer = 0;
+  /** True from beginTransition until the incoming deck actually sounds
+      (its play() resolves) and the fades are armed on the audio clock.
+      Together with the timer this backs `transitioning`. */
+  private transitionPending = false;
+  /** Monotonic transition token: bumping it strands an in-flight fade
+      anchor still waiting on the incoming deck's play(). */
+  private transitionEpoch = 0;
   /** Retires the outgoing deck of the running transition; null when
       idle. Runs on the timer normally, or early from seek() — a seek
       mid-fade invalidates the plan's premise (this tail against this
@@ -236,11 +242,13 @@ class TwoDeckEngine implements PlaybackEngine {
   }
 
   get transitioning(): boolean {
-    return this.transitionTimer !== 0;
+    return this.transitionPending || this.transitionTimer !== 0;
   }
 
   private cancelTransition(): void {
-    if (!this.transitionTimer && !this.transitionRaf) return;
+    if (!this.transitioning && !this.transitionRaf) return;
+    this.transitionEpoch++; // strand a pending fade anchor, if any
+    this.transitionPending = false;
     clearTimeout(this.transitionTimer);
     this.transitionTimer = 0;
     cancelAnimationFrame(this.transitionRaf);
@@ -270,12 +278,18 @@ class TwoDeckEngine implements PlaybackEngine {
   /**
    * Execute a transition plan into the preloaded track. The outgoing
    * deck ramps tempo and fades out; the incoming deck enters on its
-   * planned offset, tempo-matched, and settles to unity. Fades are
-   * scheduled once on the audio clock (setValueCurveAtTime) so they
-   * survive a hidden window — WKWebView freezes rAF there, and a
-   * frame-driven fade would stall silent. Only playbackRate, which
-   * lives on the media element and can't be automated, rides a rAF
-   * loop; a wall-clock timer finalizes the handoff.
+   * planned offset, tempo-matched, and settles to unity. Both fades
+   * anchor to the moment the incoming deck actually sounds (play()
+   * resolves) — anchoring at plan-execution time would burn the fade-
+   * in's silent head against deck spin-up latency (WKWebView asset
+   * fetch + decode, worse after the beat-matched entry seek) and the
+   * track would enter mid-slope instead of from silence. From that
+   * anchor the fades are scheduled once on the audio clock
+   * (setValueCurveAtTime) so they survive a hidden window — WKWebView
+   * freezes rAF there, and a frame-driven fade would stall silent.
+   * Only playbackRate, which lives on the media element and can't be
+   * automated, rides a rAF loop; a wall-clock timer finalizes the
+   * handoff.
    */
   beginTransition(plan: TransitionPlan, outgoingPath: string): boolean {
     const from = this.activeDeck;
@@ -293,11 +307,9 @@ class TwoDeckEngine implements PlaybackEngine {
       return false;
     }
     if (!this.next || to.source?.path !== this.next.path) return false;
-    if (to.audio.readyState < 3 || this.transitionTimer) return false;
+    if (to.audio.readyState < 3 || this.transitioning) return false;
 
     const toPath = to.source.path;
-    const baseFrom = effectiveGain(from.source?.replaygainDb ?? null, this.volumeValue);
-    const baseTo = effectiveGain(to.source?.replaygainDb ?? null, this.volumeValue);
 
     if (plan.kind === "beatmatched") {
       to.audio.currentTime = plan.incoming.startOffsetSec;
@@ -306,43 +318,22 @@ class TwoDeckEngine implements PlaybackEngine {
       to.audio.playbackRate = 1;
     }
     if (to.gain) to.gain.gain.value = 0;
-    void to.audio.play().catch((e) => this.errorCb?.(String(e)));
 
-    // Schedule both fades in one shot on the audio clock.
-    const now = this.ctx!.currentTime;
-    from.gain?.gain.setValueCurveAtTime(
-      TwoDeckEngine.sampleCurve(plan.gainOut, baseFrom, plan.durationSec),
-      now,
-      plan.durationSec,
-    );
-    to.gain?.gain.setValueCurveAtTime(
-      TwoDeckEngine.sampleCurve(plan.gainIn, baseTo, plan.durationSec),
-      now,
-      plan.durationSec,
-    );
+    // The reservation opens now (preloads defer, re-plans are barred)
+    // even though the fades arm only once the incoming deck sounds.
+    this.transitionPending = true;
+    const epoch = ++this.transitionEpoch;
 
     // Hand off deck ownership immediately: UI follows the incoming track.
     this.active = 1 - this.active;
     this.next = null;
     this.transitionAdvanceCb?.(toPath);
 
-    const startedAt = performance.now();
-    const durationMs = plan.durationSec * 1000;
-    if (plan.kind === "beatmatched") {
-      // Linear tempo ramps; audible pitch drift stays within ±8%.
-      const tick = () => {
-        const t = Math.min(1, (performance.now() - startedAt) / durationMs);
-        const o = plan.outgoing;
-        const i = plan.incoming;
-        from.audio.playbackRate = o.rateFrom + (o.rateTo - o.rateFrom) * t;
-        to.audio.playbackRate = i.rateFrom + (i.rateTo - i.rateFrom) * t;
-        this.transitionRaf = t < 1 ? requestAnimationFrame(tick) : 0;
-      };
-      this.transitionRaf = requestAnimationFrame(tick);
-    }
     this.finalizeTransition = () => {
       clearTimeout(this.transitionTimer);
       this.transitionTimer = 0;
+      this.transitionPending = false;
+      this.transitionEpoch++; // strand a fade anchor still in spin-up
       this.finalizeTransition = null;
       if (this.transitionRaf) {
         cancelAnimationFrame(this.transitionRaf);
@@ -361,7 +352,55 @@ class TwoDeckEngine implements PlaybackEngine {
       // during the fade (it was deferred to protect this deck's audio).
       this.materializePreload();
     };
-    this.transitionTimer = setTimeout(() => this.finalizeTransition?.(), durationMs);
+
+    void to.audio.play().then(
+      () => {
+        // Interrupted during spin-up (play()/seek()/cancel): the epoch
+        // moved on and these decks belong to someone else now.
+        if (epoch !== this.transitionEpoch) return;
+        this.transitionPending = false;
+
+        // Both curves anchor here, where sound actually exists —
+        // volume/ReplayGain sampled now so a mid-spin-up wheel of the
+        // volume knob still lands in the fade.
+        const baseFrom = effectiveGain(from.source?.replaygainDb ?? null, this.volumeValue);
+        const baseTo = effectiveGain(to.source?.replaygainDb ?? null, this.volumeValue);
+        const now = this.ctx!.currentTime;
+        from.gain?.gain.setValueCurveAtTime(
+          TwoDeckEngine.sampleCurve(plan.gainOut, baseFrom, plan.durationSec),
+          now,
+          plan.durationSec,
+        );
+        to.gain?.gain.setValueCurveAtTime(
+          TwoDeckEngine.sampleCurve(plan.gainIn, baseTo, plan.durationSec),
+          now,
+          plan.durationSec,
+        );
+
+        const startedAt = performance.now();
+        const durationMs = plan.durationSec * 1000;
+        if (plan.kind === "beatmatched") {
+          // Linear tempo ramps; audible pitch drift stays within ±8%.
+          const tick = () => {
+            const t = Math.min(1, (performance.now() - startedAt) / durationMs);
+            const o = plan.outgoing;
+            const i = plan.incoming;
+            from.audio.playbackRate = o.rateFrom + (o.rateTo - o.rateFrom) * t;
+            to.audio.playbackRate = i.rateFrom + (i.rateTo - i.rateFrom) * t;
+            this.transitionRaf = t < 1 ? requestAnimationFrame(tick) : 0;
+          };
+          this.transitionRaf = requestAnimationFrame(tick);
+        }
+        this.transitionTimer = setTimeout(() => this.finalizeTransition?.(), durationMs);
+      },
+      (e) => {
+        if (epoch !== this.transitionEpoch) return;
+        // The incoming deck refused to start: surface it and retire the
+        // outgoing side anyway — the UI already advanced at handoff.
+        this.errorCb?.(String(e));
+        this.finalizeTransition?.();
+      },
+    );
     return true;
   }
 

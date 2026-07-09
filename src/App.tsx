@@ -565,8 +565,14 @@ function App() {
       // Engine returns false when the plan is stale (the track changed
       // while anchors were computing — the analysis slow path can take
       // longer than the track's remaining seconds) or the preload isn't
-      // ready — the track then ends naturally and gapless takes over.
-      engine.beginTransition(plan, current.path);
+      // ready. Some of those states are transient (buffering catches
+      // up within the end window), so void the reservation and let the
+      // next position tick retry — cheap, anchors come from the index.
+      // If the rejection is permanent the retries keep failing and the
+      // track ends naturally: gapless takes over, same as before.
+      if (!engine.beginTransition(plan, current.path)) {
+        transitionArmed.current = null;
+      }
     })();
   }, [position, crossfadeSec, current, engine]);
 
