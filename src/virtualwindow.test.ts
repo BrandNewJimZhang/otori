@@ -71,7 +71,8 @@ describe("revealOffset", () => {
   const HEAD = 34;
 
   it("returns null when the row is already fully visible", () => {
-    // Row 5 sits at 150..180, viewport (minus header) is 34..300.
+    // Row 5 sits at 184..214 (below the header's flow slot); the
+    // usable viewport is 34..300.
     expect(
       revealOffset({ index: 5, scrollTop: 0, viewport: 300, rowHeight: ROW, headroom: HEAD }),
     ).toBeNull();
@@ -79,14 +80,23 @@ describe("revealOffset", () => {
 
   it("scrolls up so a row above the fold clears the sticky header", () => {
     const off = revealOffset({ index: 100, scrollTop: 5000, viewport: 300, rowHeight: ROW, headroom: HEAD });
-    // Row top 3000; must land headroom below the container top.
-    expect(off).toBe(3000 - HEAD);
+    // Row top HEAD + 3000; scrolling to 3000 parks it right below the
+    // sticky header (the header's flow slot supplies the headroom).
+    expect(off).toBe(3000);
   });
 
   it("scrolls down just enough to reveal a row below the fold", () => {
     const off = revealOffset({ index: 20, scrollTop: 0, viewport: 300, rowHeight: ROW, headroom: HEAD });
-    // Row bottom 630; align it to the viewport bottom.
-    expect(off).toBe(630 - 300);
+    // Row bottom HEAD + 630; align it to the viewport bottom.
+    expect(off).toBe(HEAD + 630 - 300);
+  });
+
+  it("reveals a row the header's flow slot pushed just off screen", () => {
+    // Row 9 spans 304..334 in content coordinates — entirely below the
+    // 300px viewport. Header-blind math places it at 270..300 and calls
+    // it visible, so locate strands the viewport on the previous track.
+    const off = revealOffset({ index: 9, scrollTop: 0, viewport: 300, rowHeight: ROW, headroom: HEAD });
+    expect(off).toBe(HEAD + 300 - 300);
   });
 
   it("never returns a negative offset for the very first row", () => {
@@ -100,8 +110,9 @@ describe("centerOffset", () => {
 
   it("centers a deep row in the usable viewport below the header", () => {
     const off = centerOffset({ index: 500, viewport: 300, rowHeight: ROW, headroom: HEAD, total: 1000 });
-    // Row top 15000; usable viewport 266 → (266-30)/2 = 118 above the row.
-    expect(off).toBe(15000 - HEAD - 118);
+    // Row top HEAD + 15000; usable viewport 266 → (266-30)/2 = 118
+    // above the row; the header's flow slot cancels the sticky cover.
+    expect(off).toBe(15000 - 118);
   });
 
   it("clamps to the top for rows near the start", () => {
@@ -110,7 +121,8 @@ describe("centerOffset", () => {
 
   it("clamps to the max scroll near the end", () => {
     const off = centerOffset({ index: 999, viewport: 300, rowHeight: ROW, headroom: HEAD, total: 1000 });
-    expect(off).toBe(1000 * ROW - 300);
+    // Content height includes the header's flow slot.
+    expect(off).toBe(HEAD + 1000 * ROW - 300);
   });
 });
 

@@ -30,8 +30,11 @@ export interface RowWindow {
 /**
  * New scrollTop that brings row `index` fully into view, or null when
  * it is already visible (so callers skip a no-op scroll that would
- * fight click selection). `headroom` is the sticky-header height that
- * covers the top of the scroll container.
+ * fight click selection). `headroom` is the sticky-header height: the
+ * header occupies a flow slot at the top of the scroll content (row
+ * `index` starts at `headroom + index * rowHeight`) AND covers the top
+ * of the viewport (only `[scrollTop + headroom, scrollTop + viewport]`
+ * is truly visible).
  */
 export function revealOffset(args: {
   index: number;
@@ -41,7 +44,7 @@ export function revealOffset(args: {
   headroom: number;
 }): number | null {
   const { index, scrollTop, viewport, rowHeight, headroom } = args;
-  const top = index * rowHeight;
+  const top = headroom + index * rowHeight;
   const bottom = top + rowHeight;
   const viewTop = scrollTop + headroom;
   const viewBottom = scrollTop + viewport;
@@ -66,9 +69,13 @@ export function rowWindow({ scrollTop, viewport, rowHeight, total, overscan }: W
   };
 }
 
-/** Clamp a scroll offset to the container's real range. */
-function clampScroll(offset: number, args: { viewport: number; rowHeight: number; total: number }): number {
-  return Math.max(0, Math.min(offset, args.total * args.rowHeight - args.viewport));
+/** Clamp a scroll offset to the container's real range (content =
+    header flow slot + all rows). */
+function clampScroll(
+  offset: number,
+  args: { viewport: number; rowHeight: number; headroom: number; total: number },
+): number {
+  return Math.max(0, Math.min(offset, args.headroom + args.total * args.rowHeight - args.viewport));
 }
 
 /**
@@ -86,7 +93,9 @@ export function centerOffset(args: {
   const { index, viewport, rowHeight, headroom } = args;
   const usable = viewport - headroom;
   const lead = Math.max(0, Math.floor((usable - rowHeight) / 2));
-  return clampScroll(index * rowHeight - headroom - lead, args);
+  // Row top is headroom + index*rowHeight; the header's flow slot and
+  // its viewport cover cancel, leaving index*rowHeight - lead.
+  return clampScroll(index * rowHeight - lead, args);
 }
 
 /**
@@ -105,11 +114,11 @@ export function reanchorOffset(args: {
   total: number;
 }): number {
   const { oldIndex, newIndex, scrollTop, viewport, rowHeight, headroom } = args;
-  const oldTop = oldIndex * rowHeight;
+  const oldTop = headroom + oldIndex * rowHeight;
   const wasVisible =
     oldIndex >= 0 &&
     oldTop >= scrollTop + headroom &&
     oldTop + rowHeight <= scrollTop + viewport;
   if (!wasVisible) return centerOffset({ index: newIndex, ...args });
-  return clampScroll(newIndex * rowHeight - (oldTop - scrollTop), args);
+  return clampScroll(headroom + newIndex * rowHeight - (oldTop - scrollTop), args);
 }
