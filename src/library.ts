@@ -175,6 +175,22 @@ export interface Selection {
 
 export const emptySelection: Selection = { ids: new Set(), anchor: null };
 
+/**
+ * Which track a scroll re-anchor should target: the selection anchor
+ * (the user's focus) when it survived the reorder/filter, else the
+ * playing track, else null (caller falls back to the top). Drives both
+ * the sort re-anchor and the Stage-exit scroll.
+ */
+export function scrollAnchorId(
+  sel: Selection,
+  playingId: number | null,
+  visible: TrackRow[],
+): number | null {
+  if (sel.anchor != null && visible.some((t) => t.id === sel.anchor)) return sel.anchor;
+  if (playingId != null && visible.some((t) => t.id === playingId)) return playingId;
+  return null;
+}
+
 export function clickSelect(
   sel: Selection,
   visible: TrackRow[],

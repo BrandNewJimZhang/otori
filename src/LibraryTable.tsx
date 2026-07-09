@@ -5,12 +5,12 @@
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { Selection, SortKey, SortSpec } from "./library";
-import { displayTitle, formatBpm, isShakyBpm, visibleColumns } from "./library";
+import { displayTitle, formatBpm, isShakyBpm, scrollAnchorId, visibleColumns } from "./library";
 import { formatDate, formatDateTime, formatTime } from "./format";
 import { NoteIcon, PlayIcon, SortArrowIcon } from "./icons";
 import type { ArtworkCache } from "./artworkcache";
 import type { TrackRow } from "./types";
-import { revealOffset, rowWindow } from "./virtualwindow";
+import { centerOffset, reanchorOffset, revealOffset, rowWindow } from "./virtualwindow";
 
 export type ColumnWidths = Partial<Record<SortKey, number>>;
 
@@ -163,11 +163,66 @@ export function LibraryTable({
     scroller.addEventListener("scroll", sync, { passive: true });
     const ro = new ResizeObserver(sync);
     ro.observe(scroller);
+    // Stage exit remounts this table (App keys the mode subtrees), so
+    // the fresh scroller starts at 0. Land on the playing track instead
+    // of the top — after minutes in Stage the old position is stale and
+    // the user's context is the current song. No-op when nothing plays.
+    const index = tracksRef.current.findIndex((t) => t.id === playingId);
+    if (index >= 0) {
+      const rh =
+        tableRef.current?.querySelector<HTMLTableRowElement>("tbody tr[data-row]")?.offsetHeight ||
+        30;
+      const headroom = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+      scroller.scrollTop = centerOffset({
+        index,
+        viewport: scroller.clientHeight,
+        rowHeight: rh,
+        headroom,
+        total: tracksRef.current.length,
+      });
+    }
     return () => {
       scroller.removeEventListener("scroll", sync);
       ro.disconnect();
     };
+    // Mount-only by design: playingId later changing must not yank the
+    // scroll while the user browses (locate stays a manual action).
   }, []);
+
+  // Sort re-anchor: a header click reorders the rows under a retained
+  // pixel scrollTop, which strands the viewport on whatever now sits at
+  // that offset. Re-anchor on the selection anchor (the user's focus),
+  // else the playing track, keeping the anchor row at its previous
+  // viewport position (centered when it was off screen). No anchor →
+  // top, never a stale pixel offset.
+  const prevOrderRef = useRef(tracks);
+  const prevSortRef = useRef(sort);
+  useLayoutEffect(() => {
+    const prevOrder = prevOrderRef.current;
+    const prevSort = prevSortRef.current;
+    prevOrderRef.current = tracks;
+    prevSortRef.current = sort;
+    // Only a sort change re-anchors; background refreshes and filter
+    // edits keep the scroll untouched (same rule as the reveal effect).
+    if (sort === prevSort) return;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const anchorId = scrollAnchorId(selection, playingId, tracks);
+    if (anchorId == null) {
+      scroller.scrollTop = 0;
+      return;
+    }
+    const headroom = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+    scroller.scrollTop = reanchorOffset({
+      oldIndex: prevOrder.findIndex((t) => t.id === anchorId),
+      newIndex: tracks.findIndex((t) => t.id === anchorId),
+      scrollTop: scroller.scrollTop,
+      viewport: scroller.clientHeight,
+      rowHeight: rowHeightRef.current || 30,
+      headroom,
+      total: tracks.length,
+    });
+  }, [sort, tracks, selection, playingId]);
 
   // A cover landing must repaint its row; the cache lives outside React,
   // so a settle callback bumps this tick to pull the resolved data URL.

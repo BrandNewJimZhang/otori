@@ -65,3 +65,51 @@ export function rowWindow({ scrollTop, viewport, rowHeight, total, overscan }: W
     padBottom: Math.max(0, (total - end) * rowHeight),
   };
 }
+
+/** Clamp a scroll offset to the container's real range. */
+function clampScroll(offset: number, args: { viewport: number; rowHeight: number; total: number }): number {
+  return Math.max(0, Math.min(offset, args.total * args.rowHeight - args.viewport));
+}
+
+/**
+ * scrollTop that centers row `index` in the usable viewport (the part
+ * below the sticky header), clamped to the scroll range. Used when the
+ * anchor row's previous on-screen position is unknown or off screen.
+ */
+export function centerOffset(args: {
+  index: number;
+  viewport: number;
+  rowHeight: number;
+  headroom: number;
+  total: number;
+}): number {
+  const { index, viewport, rowHeight, headroom } = args;
+  const usable = viewport - headroom;
+  const lead = Math.max(0, Math.floor((usable - rowHeight) / 2));
+  return clampScroll(index * rowHeight - headroom - lead, args);
+}
+
+/**
+ * scrollTop after a reorder (sort change) that keeps the anchor row
+ * visually still: if it was on screen at `oldIndex`, it stays at the
+ * same viewport offset at `newIndex`; if it was off screen (or
+ * oldIndex < 0 = unknown), it is centered instead.
+ */
+export function reanchorOffset(args: {
+  oldIndex: number;
+  newIndex: number;
+  scrollTop: number;
+  viewport: number;
+  rowHeight: number;
+  headroom: number;
+  total: number;
+}): number {
+  const { oldIndex, newIndex, scrollTop, viewport, rowHeight, headroom } = args;
+  const oldTop = oldIndex * rowHeight;
+  const wasVisible =
+    oldIndex >= 0 &&
+    oldTop >= scrollTop + headroom &&
+    oldTop + rowHeight <= scrollTop + viewport;
+  if (!wasVisible) return centerOffset({ index: newIndex, ...args });
+  return clampScroll(newIndex * rowHeight - (oldTop - scrollTop), args);
+}

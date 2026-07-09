@@ -13,6 +13,7 @@ import {
   formatBpm,
   isShakyBpm,
   selectAll,
+  scrollAnchorId,
   sortTracks,
   stepSelect,
   toggleColumn,
@@ -365,5 +366,29 @@ describe("typeAheadSelect", () => {
   it("no match leaves the selection unchanged", () => {
     const sel = typeAheadSelect(emptySelection, rows, "zzz");
     expect(sel).toEqual(emptySelection);
+  });
+});
+
+describe("scrollAnchorId", () => {
+  const rows = [track(1), track(2), track(3)];
+
+  it("prefers the selection anchor when it is still visible", () => {
+    const sel: Selection = { ids: new Set([2]), anchor: 2 };
+    expect(scrollAnchorId(sel, 3, rows)).toBe(2);
+  });
+
+  it("falls back to the playing track when the selection anchor is filtered out", () => {
+    const sel: Selection = { ids: new Set([99]), anchor: 99 };
+    expect(scrollAnchorId(sel, 3, rows)).toBe(3);
+  });
+
+  it("uses the playing track when nothing is selected", () => {
+    expect(scrollAnchorId(emptySelection, 1, rows)).toBe(1);
+  });
+
+  it("returns null when neither candidate is in the visible list", () => {
+    const sel: Selection = { ids: new Set([99]), anchor: 99 };
+    expect(scrollAnchorId(sel, 88, rows)).toBeNull();
+    expect(scrollAnchorId(emptySelection, null, rows)).toBeNull();
   });
 });
