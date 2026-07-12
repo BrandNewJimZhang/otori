@@ -68,6 +68,26 @@ export function setLyricsRaw(path: string, text: string): Promise<void> {
   return invoke<void>("set_lyrics_raw", { path, text });
 }
 
+/** Online lyrics fetch result. `provider` selects the source:
+ *  omitted / "lrclib" → in-core LRCLIB; any other name → an external
+ *  provider script in the app data `providers/` folder (grey-area). */
+export interface FetchLyricsResult {
+  matched: boolean;
+  synced: boolean;
+  lines: number;
+  applied: boolean;
+  sidecar: string | null;
+  provenance: string;
+}
+
+export function fetchLyrics(
+  path: string,
+  provider: string | null,
+  apply: boolean,
+): Promise<FetchLyricsResult> {
+  return invoke<FetchLyricsResult>("fetch_lyrics", { path, provider, apply });
+}
+
 /** Embedded cover art as a data URL + which source resolved. */
 export interface ArtworkInfo {
   dataUrl: string;

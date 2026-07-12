@@ -13,6 +13,7 @@ pub mod backup;
 pub mod db;
 pub mod lrclib;
 pub mod lyrics;
+pub mod lyrics_fetch;
 mod provider;
 pub mod query;
 pub mod scan;
@@ -54,4 +55,19 @@ pub fn read_track_tags(path: &std::path::Path) -> Result<TrackTags, lofty::error
 pub fn read_duration_secs(path: &std::path::Path) -> Result<f64, lofty::error::LoftyError> {
     use lofty::prelude::*;
     Ok(lofty::read_from_path(path)?.properties().duration().as_secs_f64())
+}
+
+/// Strip leading `[Category, ...]` markers from a title before searching
+/// online providers: rhythm-game rips and doujin tags carry prefixes like
+/// `[Rhythm Game, Phigros]` that no provider indexes by. One rule, shared
+/// by the CLI and GUI fetch paths so they search identically.
+pub fn strip_category_markers(title: &str) -> String {
+    let mut rest = title.trim();
+    while rest.starts_with('[') {
+        match rest.split_once(']') {
+            Some((_, tail)) => rest = tail.trim_start(),
+            None => break,
+        }
+    }
+    rest.to_string()
 }

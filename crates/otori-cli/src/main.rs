@@ -472,7 +472,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let title = tags
                 .title
                 .as_deref()
-                .map(strip_category_markers)
+                .map(otori_core::strip_category_markers)
                 .ok_or_else(|| CliError::bad_input("track has no title tag to search by"))?;
             let artist = tags
                 .artist
@@ -480,23 +480,13 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
                 .ok_or_else(|| CliError::bad_input("track has no artist tag to search by"))?;
             let duration = otori_core::read_duration_secs(&path).ok();
 
-            let response =
-                otori_core::lrclib::get_lyrics(&title, artist, tags.album.as_deref(), duration)
-                    .map_err(CliError::library)?;
-            let mut fetched = match response {
-                Some(body) => {
-                    otori_core::lrclib::pick_lyrics(&body).map_err(CliError::library)?
-                }
-                None => None,
-            };
-            // Signature miss → title search. Doujin artist tags rarely
-            // match LRCLIB's; duration (a file property) disambiguates.
-            if fetched.is_none() {
-                let search =
-                    otori_core::lrclib::search_lyrics(&title).map_err(CliError::library)?;
-                fetched = otori_core::lrclib::pick_search_hit(&search, &title, duration)
-                    .map_err(CliError::library)?;
-            }
+            let fetched = otori_core::lyrics_fetch::lrclib_ladder(
+                &title,
+                artist,
+                tags.album.as_deref(),
+                duration,
+            )
+            .map_err(CliError::library)?;
             let Some(fetched) = fetched else {
                 if json {
                     println!("{}", serde_json::json!({ "matched": false, "title": title }));
@@ -623,7 +613,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let title = tags
                 .title
                 .as_deref()
-                .map(strip_category_markers)
+                .map(otori_core::strip_category_markers)
                 .ok_or_else(|| CliError::bad_input("track has no title tag to search by"))?;
             let search =
                 otori_core::vocadb::search_song(&title).map_err(CliError::library)?;
@@ -713,7 +703,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             let title = tags
                 .title
                 .as_deref()
-                .map(strip_category_markers)
+                .map(otori_core::strip_category_markers)
                 .ok_or_else(|| CliError::bad_input("track has no title tag to search by"))?;
             let search =
                 otori_core::vocadb::search_song(&title).map_err(CliError::library)?;
@@ -1208,19 +1198,3 @@ fn open_library(db: Option<PathBuf>) -> Result<otori_core::Connection, CliError>
     };
     otori_core::db::open(&path).map_err(CliError::library)
 }
-
-/// Strip the owner's leading category markers from a title before
-/// searching external databases: "[Vocaloid] アマツキツネ" → "アマツキツネ".
-/// The scheme is personal curation, not part of the song's name.
-fn strip_category_markers(title: &str) -> String {
-    let mut rest = title.trim();
-    while rest.starts_with('[') {
-        match rest.split_once(']') {
-            Some((_, tail)) => rest = tail.trim_start(),
-            None => break,
-        }
-    }
-    rest.to_string()
-}
-
-

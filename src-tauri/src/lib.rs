@@ -602,6 +602,102 @@ fn set_lyrics_raw(path: String, text: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Online lyrics fetch result: enough for the UI to preview a match before
+/// applying, then write the sidecar. `provenance` is the `[by:]` tag the
+/// sidecar will carry (`agent:lrclib`, `agent:lyricsify`, ...).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchLyricsResult {
+    matched: bool,
+    synced: bool,
+    lines: usize,
+    applied: bool,
+    sidecar: Option<String>,
+    provenance: String,
+}
+
+/// Fetch lyrics online for a track. `provider` selects the source:
+/// `None` / `"lrclib"` → the in-core LRCLIB ladder; any other name → an
+/// external script under the app data `providers/` folder (grey-area,
+/// never tracked). Refuses to overwrite existing lyrics (same rule as the
+/// CLI `fetch-lyrics`); pass `apply` to write the sidecar.
+///
+/// Async because providers hit the network; must not block the UI thread
+/// (see `[[tauri::command(async)]]` / Tauri sync-commands-on-main-thread).
+#[tauri::command(async)]
+fn fetch_lyrics(
+    path: String,
+    provider: Option<String>,
+    apply: bool,
+) -> Result<FetchLyricsResult, String> {
+    let audio = std::path::Path::new(&path);
+    if !audio.is_file() {
+        return Err(format!("not a file: {}", audio.display()));
+    }
+    // Refuse when lyrics already exist — replacing is a human decision
+    // (delete the sidecar / clear the tag first).
+    if otori_core::lyrics::resolve(audio)
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err("track already has lyrics; remove them first to refetch".into());
+    }
+    let tags = otori_core::read_track_tags(audio).map_err(|e| e.to_string())?;
+    let title = tags
+        .title
+        .as_deref()
+        .map(otori_core::strip_category_markers)
+        .ok_or_else(|| "track has no title tag to search by".to_string())?;
+    let artist = tags
+        .artist
+        .as_deref()
+        .ok_or_else(|| "track has no artist tag to search by".to_string())?;
+    let duration = otori_core::read_duration_secs(audio).ok();
+
+    let provider = provider.as_deref().unwrap_or("lrclib");
+    let provenance = otori_core::lyrics_fetch::provenance_for(provider);
+    let fetched = if provider == "lrclib" {
+        otori_core::lyrics_fetch::lrclib_ladder(&title, artist, tags.album.as_deref(), duration)
+            .map_err(|e| e.to_string())?
+    } else {
+        let bin = otori_core::lyrics_fetch::external_provider_path(provider)
+            .ok_or_else(|| format!("no provider script installed for '{provider}'"))?;
+        otori_core::lyrics_fetch::run_external(provider, &bin, &title, artist, duration)
+    };
+
+    let Some(fetched) = fetched else {
+        return Ok(FetchLyricsResult {
+            matched: false,
+            synced: false,
+            lines: 0,
+            applied: false,
+            sidecar: None,
+            provenance,
+        });
+    };
+    let lines = fetched.text.lines().count();
+    if !apply {
+        return Ok(FetchLyricsResult {
+            matched: true,
+            synced: fetched.synced,
+            lines,
+            applied: false,
+            sidecar: None,
+            provenance,
+        });
+    }
+    let sidecar = otori_core::lyrics::write_sidecar(audio, &fetched.text, &provenance)
+        .map_err(|e| format!("write sidecar: {e}"))?;
+    Ok(FetchLyricsResult {
+        matched: true,
+        synced: fetched.synced,
+        lines,
+        applied: true,
+        sidecar: Some(sidecar.to_string_lossy().into_owned()),
+        provenance,
+    })
+}
+
 /// Status-bar menu, frontend contract: the UI mirrors playback state
 /// here on every track/pause change (`title: None` = nothing playing).
 /// Deliberately sync (main thread): set_text/set_enabled dispatch to
@@ -891,6 +987,7 @@ pub fn run() {
             get_lyrics_raw,
             set_lyrics_raw,
             set_lyrics_offset,
+            fetch_lyrics,
             get_artwork,
             remove_artwork,
             update_tray,
