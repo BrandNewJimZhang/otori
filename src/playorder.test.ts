@@ -3,7 +3,7 @@
 // skip always moves.
 
 import { describe, expect, it } from "vitest";
-import { cycleRepeat, effectiveOrder, nextId, shuffledIds } from "./playorder";
+import { cycleRepeat, effectiveOrder, nextId, resolveAdvance, shuffledIds } from "./playorder";
 
 describe("cycleRepeat", () => {
   it("cycles off → all → one → off", () => {
@@ -78,5 +78,54 @@ describe("nextId", () => {
     expect(nextId(order, null, 1, "all", false)).toBeNull();
     expect(nextId(order, 99, 1, "all", false)).toBeNull();
     expect(nextId([], null, 1, "all", false)).toBeNull();
+  });
+});
+
+describe("resolveAdvance", () => {
+  const visible = [1, 2, 3, 4, 5];
+
+  it("consumes the queue head on a forward step", () => {
+    const r = resolveAdvance(visible, [4, 2], 1, null, "off", 1, true);
+    expect(r).toEqual({ id: 4, queue: [2], fromQueue: true });
+  });
+
+  it("skips queued ids that left the library, pruning them", () => {
+    const r = resolveAdvance(visible, [99, 4], 1, null, "off", 1, true);
+    expect(r).toEqual({ id: 4, queue: [], fromQueue: true });
+  });
+
+  it("falls through an exhausted queue to the play order, pruned", () => {
+    const r = resolveAdvance(visible, [99, 98], 1, null, "off", 1, true);
+    expect(r).toEqual({ id: 2, queue: [], fromQueue: false });
+  });
+
+  it("never touches the queue stepping backwards", () => {
+    const r = resolveAdvance(visible, [4], 2, null, "off", -1, true);
+    expect(r).toEqual({ id: 1, queue: [4], fromQueue: false });
+  });
+
+  it("repeat-one natural end replays the current track over the queue", () => {
+    const r = resolveAdvance(visible, [4], 2, null, "one", 1, false);
+    expect(r).toEqual({ id: 2, queue: [4], fromQueue: false });
+  });
+
+  it("repeat-one manual skip still consumes the queue", () => {
+    const r = resolveAdvance(visible, [4], 2, null, "one", 1, true);
+    expect(r).toEqual({ id: 4, queue: [], fromQueue: true });
+  });
+
+  it("walks the frozen shuffle permutation when one is given", () => {
+    const r = resolveAdvance(visible, [], 3, [3, 1, 5, 2, 4], "off", 1, true);
+    expect(r).toEqual({ id: 1, queue: [], fromQueue: false });
+  });
+
+  it("stops (null) at the order edge with repeat off", () => {
+    const r = resolveAdvance(visible, [], 5, null, "off", 1, false);
+    expect(r).toEqual({ id: null, queue: [], fromQueue: false });
+  });
+
+  it("wraps with repeat all", () => {
+    const r = resolveAdvance(visible, [], 5, null, "all", 1, false);
+    expect(r).toEqual({ id: 1, queue: [], fromQueue: false });
   });
 });

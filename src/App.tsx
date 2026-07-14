@@ -38,8 +38,8 @@ import {
   type SortKey,
   type SortSpec,
 } from "./library";
-import { cycleRepeat, effectiveOrder, nextId, shuffledIds, type RepeatMode } from "./playorder";
-import { dequeue, enqueueNext, queueMove, queueRemove } from "./queue";
+import { cycleRepeat, effectiveOrder, nextId, resolveAdvance, shuffledIds, type RepeatMode } from "./playorder";
+import { enqueueNext, queueMove, queueRemove } from "./queue";
 import { QueuePanel } from "./QueuePanel";
 import { InspectorPanel } from "./InspectorPanel";
 import { escapeIntent, routeKey, zoneOf, type KeyZone } from "./uikeys";
@@ -429,34 +429,22 @@ function App() {
   // Step through the play order (visible listing, or the frozen
   // shuffle permutation). `manual` distinguishes a user skip from a
   // natural track end — repeat-one only replays on natural ends.
-  // A forward step consumes the play-next queue first (audit P1);
-  // repeat-one natural replays still win over the queue.
+  // resolveAdvance owns the queue-vs-order precedence and pruning.
   const step = useCallback(
     (offset: 1 | -1, manual = true) => {
       const list = visibleRef.current;
       const cur = currentRef.current;
-      if (offset === 1 && !(repeatRef.current === "one" && !manual)) {
-        let popped = queueRef.current;
-        // Skip queued ids that left the library since queuing.
-        for (;;) {
-          const { id, rest } = dequeue(popped);
-          if (id == null) break;
-          popped = rest;
-          const queued = list.find((t) => t.id === id);
-          if (queued) {
-            setQueue(rest);
-            void play(queued);
-            return true;
-          }
-        }
-        if (popped !== queueRef.current) setQueue(popped);
-      }
-      const visibleIds = list.map((t) => t.id);
-      const order = shuffleRef.current
-        ? effectiveOrder(visibleIds, shuffleOrderRef.current)
-        : visibleIds;
-      const id = nextId(order, cur?.id ?? null, offset, repeatRef.current, manual);
-      const next = id != null ? list.find((t) => t.id === id) : undefined;
+      const adv = resolveAdvance(
+        list.map((t) => t.id),
+        queueRef.current,
+        cur?.id ?? null,
+        shuffleRef.current ? shuffleOrderRef.current : null,
+        repeatRef.current,
+        offset,
+        manual,
+      );
+      if (adv.queue !== queueRef.current) setQueue(adv.queue);
+      const next = adv.id != null ? list.find((t) => t.id === adv.id) : undefined;
       if (next) {
         if (next.id === cur?.id) {
           // Repeat-one replay: restart instead of reloading the file.
@@ -496,12 +484,17 @@ function App() {
   // grids for the current/next pair warm here too (crossfade planning
   // needs both).
   useEffect(() => {
-    const visibleIds = visible.map((t) => t.id);
-    const order = shuffle ? effectiveOrder(visibleIds, shuffleOrderRef.current) : visibleIds;
-    const queuedId =
-      repeat === "one" ? null : (queue.find((qid) => visibleIds.includes(qid)) ?? null);
-    const id = queuedId ?? nextId(order, current?.id ?? null, 1, repeat, false);
-    const next = id != null ? visible.find((t) => t.id === id) : undefined;
+    // Peek (not consume): same resolver as step(), queue changes ignored.
+    const adv = resolveAdvance(
+      visible.map((t) => t.id),
+      queue,
+      current?.id ?? null,
+      shuffle ? shuffleOrderRef.current : null,
+      repeat,
+      1,
+      false,
+    );
+    const next = adv.id != null ? visible.find((t) => t.id === adv.id) : undefined;
     engine.preloadNext(next ? { path: next.path, replaygainDb: next.replaygain_db } : null);
     // Warm mix points for the pair (no-op when the sweeper already
     // persisted anchors — planning then reads the index, zero decode).
@@ -534,19 +527,22 @@ function App() {
     transitionArmed.current = current.path;
     const epoch = planEpoch.current;
 
-    // "Next" follows the queue then the play order, same as preload.
+    // "Next" resolves exactly like preload (same resolver, peek only).
     // Repeat-one replays the same file — a crossfade into itself is
     // meaningless, so let the gapless path handle it.
-    const visibleIds = visibleRef.current.map((t) => t.id);
-    const order = shuffleRef.current
-      ? effectiveOrder(visibleIds, shuffleOrderRef.current)
-      : visibleIds;
-    const queuedId =
-      repeatRef.current === "one"
-        ? null
-        : (queueRef.current.find((qid) => visibleIds.includes(qid)) ?? null);
-    const id = queuedId ?? nextId(order, current.id, 1, repeatRef.current, false);
-    const next = id != null && id !== current.id ? visibleRef.current.find((t) => t.id === id) : undefined;
+    const adv = resolveAdvance(
+      visibleRef.current.map((t) => t.id),
+      queueRef.current,
+      current.id,
+      shuffleRef.current ? shuffleOrderRef.current : null,
+      repeatRef.current,
+      1,
+      false,
+    );
+    const next =
+      adv.id != null && adv.id !== current.id
+        ? visibleRef.current.find((t) => t.id === adv.id)
+        : undefined;
     if (!next) return;
     void (async () => {
       // Role-correct grids: the outgoing track leaves through its TAIL,

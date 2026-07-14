@@ -2,6 +2,8 @@
 // the interaction rules (repeat-one vs manual skip, shuffle freezing)
 // are testable without an <audio> element. App.tsx owns the state.
 
+import { dequeue } from "./queue";
+
 export type RepeatMode = "off" | "all" | "one";
 
 /** Transport button cycle: off → all → one → off. */
@@ -61,4 +63,47 @@ export function nextId(
     return order[(next + order.length) % order.length];
   }
   return null;
+}
+
+/** Where an advance lands: the id to play (null = stop), the queue
+    after consuming/pruning, and whether the id came from the queue. */
+export interface Advance {
+  id: number | null;
+  queue: number[];
+  fromQueue: boolean;
+}
+
+/**
+ * Resolve one advance through the full precedence stack — play-next
+ * queue first (forward steps only; repeat-one natural replays win over
+ * the queue), then the play order (frozen shuffle permutation when
+ * given, visible order otherwise). Queued ids that left the library
+ * are pruned in passing. The ONE authority for "what plays next":
+ * manual steps, gapless preload, and crossfade targeting all resolve
+ * here — three copies of this walk is how preload and step once drifted
+ * apart on queue pruning.
+ */
+export function resolveAdvance(
+  visibleIds: number[],
+  queue: number[],
+  currentId: number | null,
+  shuffleOrder: number[] | null,
+  repeat: RepeatMode,
+  offset: 1 | -1,
+  manual: boolean,
+): Advance {
+  let rest = queue;
+  if (offset === 1 && !(repeat === "one" && !manual)) {
+    const visible = new Set(visibleIds);
+    for (;;) {
+      const popped = dequeue(rest);
+      if (popped.id == null) break;
+      if (visible.has(popped.id)) {
+        return { id: popped.id, queue: popped.rest, fromQueue: true };
+      }
+      rest = popped.rest; // pruned: the id left the library since queuing
+    }
+  }
+  const order = shuffleOrder ? effectiveOrder(visibleIds, shuffleOrder) : visibleIds;
+  return { id: nextId(order, currentId, offset, repeat, manual), queue: rest, fromQueue: false };
 }
