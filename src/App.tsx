@@ -9,7 +9,6 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getArtwork, getLyrics, listTracks, scanLibrary, setAnalysisModel, setDisplayAwake, setLyricsOffset, switchAnalysisModel, downloadAnalysisModel, listAnalysisModels, updateTray, reopenAnalysis, type AnalysisModelInfo } from "./ipc";
 import { createEngine } from "./playback";
-import { Spectrum } from "./Spectrum";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { LibraryTable, type ColumnWidths } from "./LibraryTable";
@@ -19,7 +18,6 @@ import { ToastStack } from "./ToastStack";
 import { dismissToast, pushToast, type Toast } from "./toasts";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { SettingsOverlay } from "./SettingsOverlay";
-import { formatTime } from "./format";
 import {
   clickSelect,
   contextTargets,
@@ -43,18 +41,8 @@ import { enqueueNext, queueMove, queueRemove } from "./queue";
 import { QueuePanel } from "./QueuePanel";
 import { InspectorPanel } from "./InspectorPanel";
 import { escapeIntent, routeKey, zoneOf, type KeyZone } from "./uikeys";
-import { seekMax, seekShown, sliderFill } from "./seekbar";
-import {
-  NextIcon,
-  PauseIcon,
-  PlayIcon,
-  PrevIcon,
-  QueueIcon,
-  RepeatIcon,
-  ShuffleIcon,
-  StageIcon,
-  VolumeIcon,
-} from "./icons";
+import { StageIcon } from "./icons";
+import { PlayerBar } from "./PlayerBar";
 import { Toolbar } from "./Toolbar";
 import { headMixPoint, tailMixPoint } from "./mixpoints";
 import { StatusBar } from "./StatusBar";
@@ -63,7 +51,6 @@ import { onSweepProgress, startAnalysisSweep, type SweepProgress } from "./analy
 import { nextModelId, performModelSelect } from "./analysismodel";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type AnalysisModel, type Density, type Theme } from "./prefs";
-import { CROSSFADE_SLIDER_MAX, crossfadeFromSlider } from "./settings";
 import type { LyricsDoc, TrackRow } from "./types";
 import "./App.css";
 
@@ -109,9 +96,6 @@ function App() {
   const [theme, setTheme] = useState<Theme>(initialPrefs.theme);
   const [fullscreen, setFullscreen] = useState(false);
   const [crossfadeSec, setCrossfadeSec] = useState(initialPrefs.crossfadeSec);
-  // MIX popover (audit r5 P1): the wheel-to-adjust gesture was
-  // undiscoverable; right-click opens an explicit slider.
-  const [mixPopover, setMixPopover] = useState(false);
   const [density, setDensity] = useState<Density>(initialPrefs.density);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(initialPrefs.columnWidths);
   // Columns hidden via the header context menu; persisted like widths.
@@ -130,8 +114,6 @@ function App() {
   // True while a model switch (or its prerequisite download) is in flight —
   // disables the cycle button so a second click can't race the reopen.
   const [analysisSwitching, setAnalysisSwitching] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [showRemaining, setShowRemaining] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -140,9 +122,6 @@ function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // Settings overlay (⌘,): one home for the scattered pref switches.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Scrub preview (audit P0): thumb position while dragging the seek
-  // slider; the decoder seek fires once on release, not per pixel.
-  const [scrub, setScrub] = useState<number | null>(null);
   // Play-next queue (audit P1): explicit picks preempt the play order.
   const [queue, setQueue] = useState<number[]>([]);
   // Up-next panel (audit r5 P0): queue + order preview, toggled from
@@ -857,23 +836,6 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [togglePause, play, step, engine, mode, nudgeLyrics]);
 
-  // MIX popover dismissal: any click outside the cluster, or Escape.
-  useEffect(() => {
-    if (!mixPopover) return;
-    const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest(".mix-cluster")) setMixPopover(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMixPopover(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [mixPopover]);
-
   async function pickAndScan() {
     const dir = await openDialog({ directory: true });
     if (typeof dir !== "string") return;
@@ -961,14 +923,6 @@ function App() {
     setPosition(secs);
   }
 
-  /** Commit a scrub drag: one decoder seek on release (audit P0). */
-  function commitScrub() {
-    if (scrub != null) {
-      seekTo(scrub);
-      setScrub(null);
-    }
-  }
-
   // Engine duration once metadata loads; index duration until then.
   const duration = Number.isFinite(engine.duration)
     ? engine.duration
@@ -1011,19 +965,6 @@ function App() {
   function changeVolume(v: number) {
     engine.volume = v;
     setVolume(v);
-    if (v > 0 && muted) setMuted(false);
-  }
-
-  function toggleMute() {
-    const next = !muted;
-    setMuted(next);
-    engine.volume = next ? 0 : volume;
-  }
-
-  /** Scroll wheel over the volume cluster nudges ±2%. */
-  function wheelVolume(e: React.WheelEvent) {
-    const v = Math.max(0, Math.min(1, volume + (e.deltaY < 0 ? 0.02 : -0.02)));
-    changeVolume(v);
   }
 
   function onSort(key: SortKey) {
@@ -1123,192 +1064,33 @@ function App() {
         )}
       </main>
 
-      <footer className="player-bar">
-        <div className="transport">
-          <button
-            className={`mode-btn ${shuffle ? "on" : ""}`}
-            onClick={toggleShuffle}
-            aria-label="Shuffle"
-            aria-pressed={shuffle}
-            data-tip={shuffle ? "Shuffle on" : "Shuffle off"}
-          >
-            <ShuffleIcon />
-          </button>
-          <button
-            className="step-btn"
-            onClick={() => step(-1)}
-            disabled={!current}
-            aria-label="Previous track"
-          >
-            <PrevIcon />
-          </button>
-          <button
-            className="play-btn"
-            onClick={togglePause}
-            disabled={!current}
-            aria-label={paused ? "Play" : "Pause"}
-          >
-            {paused ? <PlayIcon /> : <PauseIcon />}
-          </button>
-          <button
-            className="step-btn"
-            onClick={() => step(1)}
-            disabled={!current}
-            aria-label="Next track"
-          >
-            <NextIcon />
-          </button>
-          <button
-            className={`mode-btn ${repeat !== "off" ? "on" : ""}`}
-            onClick={() => setRepeat(cycleRepeat)}
-            aria-label={`Repeat: ${repeat}`}
-            data-tip={`Repeat: ${repeat}`}
-          >
-            <RepeatIcon one={repeat === "one"} />
-          </button>
-        </div>
-
-        <div className="now-playing">
-          {current && artwork && (
-            <button
-              className="np-art-btn"
-              onClick={() => setMode("stage")}
-              aria-label="Enter Stage mode"
-              data-tip="Stage (S)"
-            >
-              <img className="np-art" src={artwork} alt="" />
-              <span className="np-art-overlay" aria-hidden>
-                <StageIcon />
-              </span>
-            </button>
-          )}
-          {current ? (
-            <button
-              className="np-text"
-              onClick={() => setSelection({ ids: new Set([current.id]), anchor: current.id })}
-              data-tip="Locate in library"
-            >
-              <div className="np-title">{displayTitle(current)}</div>
-              <div className="np-artist">{current.artist ?? "—"}</div>
-            </button>
-          ) : (
-            <div className="np-title idle">Double-click a track to play</div>
-          )}
-        </div>
-
-        <div className="seek">
-          <span className="time">{formatTime(current ? (scrub ?? position) : null)}</span>
-          <input
-            type="range"
-            min={0}
-            max={seekMax(duration)}
-            step={0.1}
-            value={seekShown(scrub, position, seekMax(duration))}
-            style={
-              {
-                "--fill": sliderFill(seekShown(scrub, position, seekMax(duration)), seekMax(duration)),
-              } as React.CSSProperties
-            }
-            disabled={!current || !Number.isFinite(duration)}
-            onChange={(e) => setScrub(Number(e.target.value))}
-            onPointerUp={commitScrub}
-            onKeyUp={commitScrub}
-            onBlur={commitScrub}
-            aria-label="Seek"
-          />
-          <button
-            className="time time-toggle"
-            onClick={() => setShowRemaining((r) => !r)}
-            aria-label={showRemaining ? "Show total duration" : "Show time remaining"}
-            data-tip={showRemaining ? "Show total duration" : "Show time remaining"}
-          >
-            {current && showRemaining && Number.isFinite(duration)
-              ? `-${formatTime(Math.max(0, duration - position))}`
-              : formatTime(current ? duration : null)}
-          </button>
-        </div>
-
-        <div className="volume" onWheel={wheelVolume}>
-          <button
-            className={`icon-btn mute-btn ${muted ? "muted" : ""}`}
-            onClick={toggleMute}
-            aria-label={muted ? "Unmute" : "Mute"}
-            aria-pressed={muted}
-            data-tip={muted ? "Unmute" : "Mute"}
-          >
-            <VolumeIcon />
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={muted ? 0 : volume}
-            style={{ "--fill": sliderFill(muted ? 0 : volume, 1) } as React.CSSProperties}
-            onChange={(e) => changeVolume(Number(e.target.value))}
-            aria-label="Volume"
-          />
-        </div>
-
-        <button
-          className={`icon-btn queue-toggle ${queueOpen ? "on" : ""}`}
-          onClick={() => setQueueOpen((v) => !v)}
-          aria-label="Play queue"
-          aria-pressed={queueOpen}
-          data-tip={queue.length > 0 ? `Up next (${queue.length} queued)` : "Up next"}
-        >
-          <QueueIcon />
-          {queue.length > 0 && <span className="queue-count">{queue.length}</span>}
-        </button>
-
-        <div className="mix-cluster">
-          <button
-            className={`crossfade-toggle ${crossfadeSec ? "on" : ""}`}
-            onClick={() => setCrossfadeSec((s) => (s ? 0 : 8))}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMixPopover((v) => !v);
-            }}
-            onWheel={(e) => {
-              // Wheel adjusts the fade length 2–16s while enabled.
-              setCrossfadeSec((s) =>
-                s ? Math.max(2, Math.min(CROSSFADE_SLIDER_MAX, s + (e.deltaY < 0 ? 1 : -1))) : s,
-              );
-            }}
-            data-tip={
-              crossfadeSec
-                ? `DJ crossfade: ${crossfadeSec}s · right-click / scroll to adjust`
-                : "DJ crossfade: off (gapless) · right-click to configure"
-            }
-            aria-pressed={crossfadeSec > 0}
-          >
-            MIX{crossfadeSec ? ` ${crossfadeSec}s` : ""}
-          </button>
-          {mixPopover && (
-            <div className="mix-popover">
-              <label>
-                Crossfade {crossfadeSec ? `${crossfadeSec}s` : "off"}
-                <input
-                  type="range"
-                  min={0}
-                  max={CROSSFADE_SLIDER_MAX}
-                  step={1}
-                  value={crossfadeSec}
-                  style={{ "--fill": sliderFill(crossfadeSec, CROSSFADE_SLIDER_MAX) } as React.CSSProperties}
-                  onChange={(e) => {
-                    // 0 disables; 1 rounds up to the 2s floor.
-                    setCrossfadeSec(crossfadeFromSlider(Number(e.target.value)));
-                  }}
-                  aria-label="Crossfade length"
-                />
-              </label>
-              <span className="mix-popover-hint">beat-matched when tempos allow</span>
-            </div>
-          )}
-        </div>
-
-        <Spectrum analyser={engine.analyser} paused={paused} />
-      </footer>
+      <PlayerBar
+        current={current}
+        artwork={artwork}
+        paused={paused}
+        position={position}
+        duration={duration}
+        shuffle={shuffle}
+        repeat={repeat}
+        volume={volume}
+        queueCount={queue.length}
+        queueOpen={queueOpen}
+        crossfadeSec={crossfadeSec}
+        analyser={engine.analyser}
+        onToggleShuffle={toggleShuffle}
+        onStep={step}
+        onTogglePause={togglePause}
+        onCycleRepeat={() => setRepeat(cycleRepeat)}
+        onEnterStage={() => setMode("stage")}
+        onLocate={(t) => setSelection({ ids: new Set([t.id]), anchor: t.id })}
+        onSeek={seekTo}
+        onVolume={changeVolume}
+        onMuteVolume={(v) => {
+          engine.volume = v;
+        }}
+        onToggleQueue={() => setQueueOpen((v) => !v)}
+        onCrossfadeSec={setCrossfadeSec}
+      />
 
       <StatusBar
         line={statusLine({
