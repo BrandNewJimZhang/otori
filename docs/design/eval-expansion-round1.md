@@ -1,8 +1,8 @@
 # Design: Eval-expansion engine, round 1
 
 Date: 2026-07-15
-Status: round complete — see execution record; 6 reds pending gold
-adjudication
+Status: closed — 26 silver locked, 6 reds gold-confirmed and fed back
+(all green)
 
 The third GAE engine — the one entirely absent from this repo (case
 study §3.3): cases generated adversarially from the model's prior of
@@ -130,3 +130,34 @@ round 1 added 26 locked cases + 6 candidate constraints from ~0 bits
 of human input (generation ran entirely from contracts + PRODUCT.md
 anchors). The human's gold ruling on the 6 reds is the next
 preference-bit injection.
+
+## Gold adjudication + constraint feedback (2026-07-15)
+
+The human ruled on all six reds: **all confirmed real**, including
+XF-4 ("暂时不考虑" was offered and withdrawn — fixed together with
+XF-5 as two halves of one arming check). PO-2b direction: **wrap**
+(transport obeys the panel's promise). Preference bits injected: ~2
+(the blanket confirmation, and the PO-2b direction choice).
+
+All six constraints fed back in one round (worktree
+`gae-gold-fixes-r1`), each red-first where it was still red:
+
+| Red | Fix | Site |
+| --- | --- | --- |
+| XF-1 | pausing finalizes an in-flight transition first (joins seek's idiom), then pauses — the mix silences as one unit | `playback.ts togglePause` |
+| XF-5 | fade duration clamps to the outgoing remainder at arming | `playback.ts beginTransition` |
+| XF-4 | …and to the incoming remainder (one clamp, two premises) | same |
+| PO-2b | repeat-one manual skip wraps at the order edge like repeat-all | `playorder.ts nextId` |
+| PO-15b | the input batch dedups inside `enqueueNext` | `queue.ts` |
+| LC-9 | out-of-order word stamps clamp monotone at the parser (SSOT), zero-span degradation | `otori-core lyrics.rs` |
+
+The three skipped crossfade cases are unskipped and green; the three
+uncommitted reds are locked (PO-2b in the silver file, PO-15b/LC-9 in
+their domain suites — LC-9 in Rust, where the document is made).
+Suite after feedback: 336 frontend green (zero skips) + core's lyrics
+tests 22 green.
+
+Round 1 is fully closed: generate → adjudicate → gold ruling →
+constraint feedback → all green. The loop the case study calls
+"评测扩张喂约束回灌" ran end to end for the first time, with the
+correct driving direction (tests failed first, then the code moved).
