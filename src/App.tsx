@@ -5,9 +5,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, listTracks, scanLibrary, setDisplayAwake, setLyricsOffset, reopenAnalysis } from "./ipc";
+import { getArtwork, listTracks, setDisplayAwake, setLyricsOffset, reopenAnalysis } from "./ipc";
 import { createEngine } from "./playback";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -49,6 +48,7 @@ import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
 import { onSweepProgress, startAnalysisSweep, type SweepProgress } from "./analysissweep";
 import { useAnalysisModelShell } from "./analysismodelshell";
+import { useScan } from "./scanshell";
 import { loadPrefs } from "./prefs";
 import { usePrefs, useSavePrefs } from "./prefsshell";
 import type { TrackRow } from "./types";
@@ -77,13 +77,10 @@ function App() {
   const artworkCache = useRef(
     createArtworkCache((path) => getArtwork(path).then((a) => a?.dataUrl ?? null)),
   ).current;
-  const [scanning, setScanning] = useState(false);
   // Toast stack (audit r5 P1): scan reports and transient info; the
   // error keeps its own slot (persistent until dismissed).
   const toast = useToasts();
   const [error, setError] = useState<string | null>(null);
-  // Drag-over scan affordance (audit r5 P1): full-window drop zone.
-  const [dragOver, setDragOver] = useState(false);
   // Persisted preference state (prefsshell.ts): volume/theme/crossfade/
   // density/columns/sort. The save effect (useSavePrefs) runs below,
   // after playbackshell hands back shuffle/repeat.
@@ -204,6 +201,10 @@ function App() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  // Folder-pick + drag-drop scans (scanshell.ts): scanning flag, the
+  // drop-zone affordance, and the native drag-drop listener.
+  const { scanning, dragOver, pickAndScan } = useScan(toast.push, setError, refresh);
 
   // Background analysis sweep: fill the index's pending list (BPM +
   // mix anchors) this session. Kicks on mount and again on library
@@ -374,7 +375,7 @@ function App() {
     return () => {
       unlisten.then((off) => off());
     };
-    // pickAndScan is stable in practice (closes over setters only).
+    // pickAndScan is a stable scanshell callback (ref-backed inside).
   }, [togglePause, step]);
 
   // Keyboard, routed through the uikeys decision table (audit P0): a
@@ -484,51 +485,6 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [togglePause, play, step, engine, mode, nudgeLyrics]);
-
-  async function pickAndScan() {
-    const dir = await openDialog({ directory: true });
-    if (typeof dir !== "string") return;
-    await scanDir(dir);
-  }
-
-  async function scanDir(dir: string) {
-    setScanning(true);
-    setError(null);
-    try {
-      const report = await scanLibrary(dir);
-      const parts = [`Added ${report.added}, updated ${report.updated}`];
-      if (report.skipped_icloud.length > 0) parts.push(`${report.skipped_icloud.length} in iCloud`);
-      if (report.unreadable.length > 0) parts.push(`${report.unreadable.length} unreadable`);
-      toast.push(parts.join(" · "));
-      refresh();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setScanning(false);
-    }
-  }
-
-  // Drag a folder anywhere onto the window to scan it (audit P1).
-  // Tauri delivers native file drops as events (webview drag data has
-  // no paths); scanning is idempotent, so over-triggering is safe.
-  // enter/over light the drop-zone overlay (audit r5 P1: the feature
-  // was invisible without an affordance).
-  useEffect(() => {
-    const win = getCurrentWindow();
-    const unlisten = win.onDragDropEvent((e) => {
-      if (e.payload.type === "drop") {
-        setDragOver(false);
-        if (e.payload.paths.length > 0) void scanDir(e.payload.paths[0]);
-      } else if (e.payload.type === "leave") {
-        setDragOver(false);
-      } else {
-        setDragOver(true); // enter + over
-      }
-    });
-    return () => {
-      unlisten.then((off) => off());
-    };
-  }, []);
 
   // Row context menu + header column chooser: menus.ts decides the
   // items (pure, tested); App supplies the doers and owns the state.
