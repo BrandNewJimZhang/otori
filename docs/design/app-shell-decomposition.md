@@ -1,7 +1,8 @@
 # Design: App shell decomposition
 
 Date: 2026-07-14
-Status: in progress (worktree `gae-step3-app-split`)
+Status: commits 1–6 landed (worktree `gae-step3-app-split`); see
+execution record below
 
 App.tsx has grown to 1,521 lines / 33 state hooks / 29 effects. Every
 feature since the first night (tray, settings, queue panel, analysis
@@ -56,3 +57,23 @@ LibraryTable/Stage today).
 Keyboard routing stays in App: it fans out to selection, mode, search,
 and playback at once — it *is* composition-root logic, and its decision
 table already lives in `uikeys.ts` (pure, tested).
+
+## Execution record (2026-07-14)
+
+All six commits landed, each independently green (typecheck + 303
+frontend tests + production build; no Rust changes).
+
+| Metric | Before | Target | After |
+| --- | --- | --- | --- |
+| App.tsx lines | 1,521 | ≤ 500 | 806 |
+| App.tsx `useState` calls | 33 | ≤ 12 | 24 |
+| App.tsx `useEffect` calls | 29 | ≤ 8 | 13 |
+| Frontend tests | 290 | ≥ 290 green | 303 (+13 menus) |
+
+Targets not fully met — the remaining state is genuinely
+cross-cutting (mode, selection, sort/query/columns, overlays, toasts,
+prefs) plus a few candidates deliberately left for a follow-up round
+rather than stretched into this one: scan/drop (scanning, dragOver,
+scanDir), the lyrics-offset nudge (belongs in playbackshell), toasts,
+and the prefs-persistence effect. Each is small and independent; none
+blocks the next GAE step.
