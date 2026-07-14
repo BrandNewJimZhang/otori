@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, getLyrics, listTracks, scanLibrary, setAnalysisModel, setDisplayAwake, setLyricsOffset, switchAnalysisModel, downloadAnalysisModel, listAnalysisModels, reopenAnalysis, type AnalysisModelInfo } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary, setDisplayAwake, setLyricsOffset, reopenAnalysis } from "./ipc";
 import { createEngine } from "./playback";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -49,9 +49,9 @@ import { headMixPoint, tailMixPoint } from "./mixpoints";
 import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
 import { onSweepProgress, startAnalysisSweep, type SweepProgress } from "./analysissweep";
-import { nextModelId, performModelSelect } from "./analysismodel";
+import { useAnalysisModelShell } from "./analysismodelshell";
 import { planTransition } from "./djmix";
-import { loadPrefs, savePrefs, type AnalysisModel, type Density, type Theme } from "./prefs";
+import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
 import type { LyricsDoc, TrackRow } from "./types";
 import "./App.css";
 
@@ -105,16 +105,6 @@ function App() {
   );
   // Header right-click: the show/hide column chooser (rows keep `menu`).
   const [columnMenu, setColumnMenu] = useState<{ x: number; y: number } | null>(null);
-  // Active Beat This! model (small default; switchable to standard). Kept
-  // in sync with the shell so the sweep runs the chosen engine.
-  const [analysisModel, setAnalysisModelState] =
-    useState<AnalysisModel>(initialPrefs.analysisModel);
-  // Registry snapshot for the cycle button: which models exist and which
-  // have their weights present (standard ships unbundled → download).
-  const [analysisModels, setAnalysisModels] = useState<AnalysisModelInfo[]>([]);
-  // True while a model switch (or its prerequisite download) is in flight —
-  // disables the cycle button so a second click can't race the reopen.
-  const [analysisSwitching, setAnalysisSwitching] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -214,71 +204,13 @@ function App() {
     return t ? { title: displayTitle(t), artist: t.artist } : null;
   }, [sweep?.currentId, tracks]);
 
-  // Sync the persisted model id into the shell's active-model state at
-  // startup. The sweep reads the active id when it loads the engine, so
-  // a restart resumes under the user's chosen model. No reopen here —
-  // the index already stamps each verdict, and a model switch (the
-  // `analysisModel` effect below) reopens only foreign-model rows.
-  useEffect(() => {
-    void setAnalysisModel(analysisModel).catch((e) => setError(String(e)));
-  }, [analysisModel]);
-
-  // Pull the registry + availability so the cycle button can offer a
-  // download-and-switch for the unbundled standard model. Re-fetch after
-  // a library-changed so a completed download flips `available` live.
-  const refreshAnalysisModels = useCallback(() => {
-    void listAnalysisModels()
-      .then((r) => {
-        setAnalysisModels(r.models);
-        // The shell is the authority for the active id; if the pref and
-        // the shell ever disagree (e.g. a future model removed from the
-        // registry), trust the shell.
-        if (r.activeId !== analysisModel) setAnalysisModelState(r.activeId as AnalysisModel);
-      })
-      .catch(() => {});
-  }, [analysisModel]);
-  useEffect(() => {
-    refreshAnalysisModels();
-    const unlisten = listen("analysis-model-downloaded", () => refreshAnalysisModels());
-    return () => {
-      unlisten.then((off) => off());
-    };
-  }, [refreshAnalysisModels]);
-
-  /** Switch to a registered model, downloading its weights on demand
-      and reopening foreign-model verdicts. Shared by the status-bar
-      cycle button and the Settings overlay's explicit picker; the
-      decision paths live in analysismodel.ts (pure, tested). */
-  const selectAnalysisModel = useCallback(
-    (id: string) => {
-      setAnalysisSwitching(true);
-      void performModelSelect(
-        {
-          switchModel: switchAnalysisModel,
-          downloadModel: downloadAnalysisModel,
-          onSwitched: (switched) => {
-            setAnalysisModelState(switched as AnalysisModel);
-            startAnalysisSweep();
-          },
-          onError: (m) => setError(m),
-          toast: (text) => setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text })),
-        },
-        id,
-        analysisModels,
-        analysisModel,
-        analysisSwitching,
-      ).finally(() => setAnalysisSwitching(false));
-    },
-    [analysisSwitching, analysisModels, analysisModel],
+  // Analysis-model shell state (registry, active id, select/cycle):
+  // wiring in analysismodelshell.ts, decision paths in analysismodel.ts.
+  const pushErrorToast = useCallback(
+    (text: string) => setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text })),
+    [],
   );
-
-  /** Cycle to the next registered model — the status-bar shortcut. Sits
-      next to the theme/density toggles — analysis model is the same
-      class of "how the app runs" switch. */
-  const cycleAnalysisModel = useCallback(() => {
-    const id = nextModelId(analysisModels, analysisModel);
-    if (id != null) selectAnalysisModel(id);
-  }, [analysisModels, analysisModel, selectAnalysisModel]);
+  const analysis = useAnalysisModelShell(initialPrefs.analysisModel, setError, pushErrorToast);
 
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
   // shell emits `library-changed` when an external writer (CLI/agent)
@@ -307,9 +239,9 @@ function App() {
       density,
       columnWidths,
       hiddenColumns,
-      analysisModel,
+      analysisModel: analysis.model,
     });
-  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths, hiddenColumns, analysisModel]);
+  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths, hiddenColumns, analysis.model]);
 
   // Theme rides a root attribute so CSS owns the palettes; Stage stays
   // dark regardless (a lit stage is not a stage). "auto" follows the
@@ -909,9 +841,9 @@ function App() {
         inspectorOpen={inspectorOpen}
         density={density}
         theme={theme}
-        analysisModel={analysisModel}
-        analysisModels={analysisModels}
-        analysisSwitching={analysisSwitching}
+        analysisModel={analysis.model}
+        analysisModels={analysis.models}
+        analysisSwitching={analysis.switching}
         settingsOpen={settingsOpen}
         onScan={() => void pickAndScan()}
         onQuery={setQuery}
@@ -919,7 +851,7 @@ function App() {
         onToggleInspector={() => setInspectorOpen((o) => !o)}
         onToggleDensity={() => setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"))}
         onCycleTheme={() => setTheme((t) => (t === "dark" ? "light" : t === "light" ? "auto" : "dark"))}
-        onCycleAnalysisModel={cycleAnalysisModel}
+        onCycleAnalysisModel={analysis.cycle}
         onToggleSettings={() => setSettingsOpen((o) => !o)}
       />
 
@@ -1030,7 +962,7 @@ function App() {
           // Only name the model when it isn't the default — keeps the
           // line quiet for the common case and calls out a switch's
           // re-sweep.
-          modelLabel: analysisModel === "small" ? undefined : "Standard",
+          modelLabel: analysis.model === "small" ? undefined : "Standard",
         })}
         scanning={scanning}
       />
@@ -1084,10 +1016,10 @@ function App() {
           onDensity={setDensity}
           crossfadeSec={crossfadeSec}
           onCrossfadeSec={setCrossfadeSec}
-          analysisModel={analysisModel}
-          analysisModels={analysisModels}
-          analysisSwitching={analysisSwitching}
-          onSelectAnalysisModel={selectAnalysisModel}
+          analysisModel={analysis.model}
+          analysisModels={analysis.models}
+          analysisSwitching={analysis.switching}
+          onSelectAnalysisModel={analysis.select}
           onClose={() => setSettingsOpen(false)}
         />
       )}
