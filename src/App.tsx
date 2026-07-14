@@ -11,7 +11,7 @@ import { getArtwork, listTracks, scanLibrary, setDisplayAwake, setLyricsOffset, 
 import { createEngine } from "./playback";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { LibraryTable, type ColumnWidths } from "./LibraryTable";
+import { LibraryTable } from "./LibraryTable";
 import { createArtworkCache } from "./artworkcache";
 import { ToastStack } from "./ToastStack";
 import { useToasts } from "./toastshell";
@@ -32,7 +32,6 @@ import {
   typeAheadSelect,
   type Selection,
   type SortKey,
-  type SortSpec,
 } from "./library";
 import { columnMenuItems, trackMenuItems } from "./menus";
 import { cycleRepeat, upcomingPreview } from "./playorder";
@@ -50,7 +49,8 @@ import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
 import { onSweepProgress, startAnalysisSweep, type SweepProgress } from "./analysissweep";
 import { useAnalysisModelShell } from "./analysismodelshell";
-import { loadPrefs, savePrefs, type Density, type Theme } from "./prefs";
+import { loadPrefs } from "./prefs";
+import { usePrefs, useSavePrefs } from "./prefsshell";
 import type { TrackRow } from "./types";
 import "./App.css";
 
@@ -84,20 +84,29 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   // Drag-over scan affordance (audit r5 P1): full-window drop zone.
   const [dragOver, setDragOver] = useState(false);
-  const [volume, setVolume] = useState(initialPrefs.volume);
-  const [theme, setTheme] = useState<Theme>(initialPrefs.theme);
+  // Persisted preference state (prefsshell.ts): volume/theme/crossfade/
+  // density/columns/sort. The save effect (useSavePrefs) runs below,
+  // after playbackshell hands back shuffle/repeat.
+  const {
+    volume,
+    setVolume,
+    theme,
+    setTheme,
+    crossfadeSec,
+    setCrossfadeSec,
+    density,
+    setDensity,
+    columnWidths,
+    setColumnWidths,
+    hiddenColumns,
+    setHiddenColumns,
+    sort,
+    setSort,
+  } = usePrefs(initialPrefs);
   const [fullscreen, setFullscreen] = useState(false);
-  const [crossfadeSec, setCrossfadeSec] = useState(initialPrefs.crossfadeSec);
-  const [density, setDensity] = useState<Density>(initialPrefs.density);
-  const [columnWidths, setColumnWidths] = useState<ColumnWidths>(initialPrefs.columnWidths);
-  // Columns hidden via the header context menu; persisted like widths.
-  const [hiddenColumns, setHiddenColumns] = useState<readonly SortKey[]>(
-    initialPrefs.hiddenColumns,
-  );
   // Header right-click: the show/hide column chooser (rows keep `menu`).
   const [columnMenu, setColumnMenu] = useState<{ x: number; y: number } | null>(null);
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortSpec | null>(initialPrefs.sort);
   const [selection, setSelection] = useState<Selection>(emptySelection);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Shortcuts overlay (audit r5 P2): "?" reveals the keyboard model.
@@ -233,20 +242,18 @@ function App() {
     engine.volume = initialPrefs.volume;
   }, [engine]);
 
-  useEffect(() => {
-    savePrefs(localStorage, {
-      volume,
-      sort,
-      shuffle,
-      repeat,
-      theme,
-      crossfadeSec,
-      density,
-      columnWidths,
-      hiddenColumns,
-      analysisModel: analysis.model,
-    });
-  }, [volume, sort, shuffle, repeat, theme, crossfadeSec, density, columnWidths, hiddenColumns, analysis.model]);
+  useSavePrefs({
+    volume,
+    sort,
+    shuffle,
+    repeat,
+    theme,
+    crossfadeSec,
+    density,
+    columnWidths,
+    hiddenColumns,
+    analysisModel: analysis.model,
+  });
 
   // Theme rides a root attribute so CSS owns the palettes; Stage stays
   // dark regardless (a lit stage is not a stage). "auto" follows the
