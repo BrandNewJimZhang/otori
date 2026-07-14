@@ -14,7 +14,7 @@ import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { LibraryTable, type ColumnWidths } from "./LibraryTable";
 import { createArtworkCache } from "./artworkcache";
 import { ToastStack } from "./ToastStack";
-import { dismissToast, pushToast, type Toast } from "./toasts";
+import { useToasts } from "./toastshell";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { SettingsOverlay } from "./SettingsOverlay";
 import {
@@ -80,8 +80,7 @@ function App() {
   const [scanning, setScanning] = useState(false);
   // Toast stack (audit r5 P1): scan reports and transient info; the
   // error keeps its own slot (persistent until dismissed).
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const toastSeq = useRef(0);
+  const toast = useToasts();
   const [error, setError] = useState<string | null>(null);
   // Drag-over scan affordance (audit r5 P1): full-window drop zone.
   const [dragOver, setDragOver] = useState(false);
@@ -216,11 +215,7 @@ function App() {
 
   // Analysis-model shell state (registry, active id, select/cycle):
   // wiring in analysismodelshell.ts, decision paths in analysismodel.ts.
-  const pushErrorToast = useCallback(
-    (text: string) => setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text })),
-    [],
-  );
-  const analysis = useAnalysisModelShell(initialPrefs.analysisModel, setError, pushErrorToast);
+  const analysis = useAnalysisModelShell(initialPrefs.analysisModel, setError, toast.push);
 
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
   // shell emits `library-changed` when an external writer (CLI/agent)
@@ -497,7 +492,7 @@ function App() {
       const parts = [`Added ${report.added}, updated ${report.updated}`];
       if (report.skipped_icloud.length > 0) parts.push(`${report.skipped_icloud.length} in iCloud`);
       if (report.unreadable.length > 0) parts.push(`${report.unreadable.length} unreadable`);
-      setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text: parts.join(" · ") }));
+      toast.push(parts.join(" · "));
       refresh();
     } catch (e) {
       setError(String(e));
@@ -586,9 +581,9 @@ function App() {
           onCycleRepeat={() => setRepeat(cycleRepeat)}
         />
         <ToastStack
-          toasts={toasts}
+          toasts={toast.toasts}
           error={error}
-          onDismiss={(id) => setToasts((ts) => dismissToast(ts, id))}
+          onDismiss={toast.dismiss}
           onDismissError={() => setError(null)}
         />
       </div>
@@ -681,17 +676,9 @@ function App() {
             onSaved={(txId) => {
               // The save already emitted library-changed; toast the
               // undo handle so a batch mistake is one command away.
-              setToasts((ts) =>
-                pushToast(ts, {
-                  id: ++toastSeq.current,
-                  text: `Saved — otori undo ${txId}`,
-                }),
-              );
+              toast.push(`Saved — otori undo ${txId}`);
             }}
-            onNotice={(text) => {
-              // Non-undoable changes (cover removal, lyrics): no handle.
-              setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text }));
-            }}
+            onNotice={toast.push}
             onError={(message) => setError(message)}
           />
         )}
@@ -770,9 +757,9 @@ function App() {
       )}
 
       <ToastStack
-        toasts={toasts}
+        toasts={toast.toasts}
         error={error}
-        onDismiss={(id) => setToasts((ts) => dismissToast(ts, id))}
+        onDismiss={toast.dismiss}
         onDismissError={() => setError(null)}
       />
 
