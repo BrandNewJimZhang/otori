@@ -13,6 +13,14 @@ describe("enqueueNext", () => {
   it("re-queuing an id moves it instead of duplicating", () => {
     expect(enqueueNext([1, 2, 3], [2])).toEqual([2, 1, 3]);
   });
+
+  it("self-dedups a duplicated input batch (silver PO-15b, gold-adjudicated)", () => {
+    // The no-dup invariant is the function's to hold, not the
+    // caller's: a future entry point passing raw ids must not be able
+    // to break the queue from inside.
+    expect(enqueueNext([], [3, 3])).toEqual([3]);
+    expect(enqueueNext([1], [2, 2, 1, 1])).toEqual([2, 1]);
+  });
 });
 
 describe("dequeue", () => {

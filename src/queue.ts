@@ -3,10 +3,12 @@
 // manual forward step before falling back to playorder's nextId.
 
 /** Queue `ids` to play next (front of queue), before older picks.
-    Re-queuing moves a track instead of duplicating it. */
+    Re-queuing moves a track instead of duplicating it; a duplicated
+    input batch is deduped here — the no-dup invariant is this
+    function's to hold, whatever a caller passes. */
 export function enqueueNext(queue: number[], ids: number[]): number[] {
   const picked = new Set(ids);
-  return [...ids, ...queue.filter((id) => !picked.has(id))];
+  return [...new Set(ids), ...queue.filter((id) => !picked.has(id))];
 }
 
 /** Pop the next queued id; null when the queue is empty. */
