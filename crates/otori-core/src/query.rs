@@ -4,6 +4,8 @@
 use rusqlite::Connection;
 use serde::Serialize;
 
+use crate::analysis;
+
 /// One track as consumers see it: identity + the display tag trio.
 /// Grows only when a consumer needs a field (minimal public surface).
 #[derive(Debug, Clone, Serialize)]
@@ -22,6 +24,11 @@ pub struct TrackRow {
     pub bpm_confidence: Option<f64>,
     /// External anchor awaiting/used in verification (tag/provider).
     pub bpm_hint: Option<f64>,
+    /// Should the BPM warn in a listing? Computed here from the shaky
+    /// authority (analysis::is_shaky_bpm) so every projection — GUI
+    /// badge, future consumers — agrees with the CLI without keeping
+    /// its own cutoff (the 7aa83ea drift).
+    pub bpm_shaky: bool,
     /// Mix-in anchor: local tempo + a measured beat at the track head.
     /// NULL with mix_analyzed = that end is unstable — no beat-match.
     pub mix_head_bpm: Option<f64>,
@@ -61,16 +68,21 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
          ORDER BY artist IS NULL, artist, title IS NULL, title, t.path",
     )?;
     let rows = stmt.query_map([], |row| {
+        let bpm: Option<f64> = row.get(5)?;
+        let bpm_max: Option<f64> = row.get(6)?;
+        let bpm_confidence: Option<f64> = row.get(7)?;
+        let bpm_hint: Option<f64> = row.get(8)?;
         Ok(TrackRow {
             id: row.get(0)?,
             path: row.get(1)?,
             format: row.get(2)?,
             duration_secs: row.get(3)?,
             replaygain_db: row.get(4)?,
-            bpm: row.get(5)?,
-            bpm_max: row.get(6)?,
-            bpm_confidence: row.get(7)?,
-            bpm_hint: row.get(8)?,
+            bpm,
+            bpm_max,
+            bpm_confidence,
+            bpm_hint,
+            bpm_shaky: analysis::is_shaky_bpm(bpm, bpm_max, bpm_confidence, bpm_hint),
             mix_head_bpm: row.get(9)?,
             mix_head_beat_sec: row.get(10)?,
             mix_tail_bpm: row.get(11)?,

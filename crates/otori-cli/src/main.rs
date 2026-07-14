@@ -126,9 +126,9 @@ enum Command {
     /// (no hint yet; blank or low-confidence detection)
     HintCandidates {
         /// Confidence below which a detection counts as shaky
-        /// (default mirrored by SHAKY_CONFIDENCE in src/library.ts —
-        /// the UI highlight uses the same cutoff)
-        #[arg(long, default_value_t = 0.6)]
+        /// (the authority is otori-core's SHAKY_CONFIDENCE — the GUI
+        /// badge computes from the same constant)
+        #[arg(long, default_value_t = otori_core::analysis::SHAKY_CONFIDENCE)]
         min_confidence: f64,
         /// Cap the list (0 = everything)
         #[arg(long, default_value_t = 0)]

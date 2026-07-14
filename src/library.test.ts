@@ -11,7 +11,6 @@ import {
   emptySelection,
   filterTracks,
   formatBpm,
-  isShakyBpm,
   selectAll,
   scrollAnchorId,
   sortTracks,
@@ -35,6 +34,7 @@ function track(id: number, over: Partial<TrackRow> = {}): TrackRow {
     bpm_max: null,
     bpm_confidence: null,
     bpm_hint: null,
+    bpm_shaky: false,
     mix_head_bpm: null,
     mix_head_beat_sec: null,
     mix_tail_bpm: null,
@@ -49,30 +49,6 @@ function track(id: number, over: Partial<TrackRow> = {}): TrackRow {
     ...over,
   };
 }
-
-describe("isShakyBpm", () => {
-  it("flags steady detections below the hint-candidates cutoff (0.6)", () => {
-    expect(isShakyBpm(track(1, { bpm: 128, bpm_confidence: 0.5 }))).toBe(true);
-    expect(isShakyBpm(track(1, { bpm: 128, bpm_confidence: 0.6 }))).toBe(false);
-  });
-
-  it("halves the cutoff for variable tempo — storage already halved its confidence", () => {
-    // A clean soflan measurement (0.9 consistency) lands at 0.45 after
-    // the ×0.5 range penalty; it must not read as shaky.
-    expect(isShakyBpm(track(1, { bpm: 140, bpm_max: 200, bpm_confidence: 0.45 }))).toBe(false);
-    expect(isShakyBpm(track(1, { bpm: 140, bpm_max: 200, bpm_confidence: 0.25 }))).toBe(true);
-    expect(isShakyBpm(track(1, { bpm: 140, bpm_max: 200, bpm_confidence: 0.3 }))).toBe(false);
-  });
-
-  it("treats a missing confidence on a detected bpm as shaky", () => {
-    expect(isShakyBpm(track(1, { bpm: 128, bpm_confidence: null }))).toBe(true);
-  });
-
-  it("flags an unverified external hint, but not a plain blank", () => {
-    expect(isShakyBpm(track(1, { bpm: null, bpm_hint: 185 }))).toBe(true);
-    expect(isShakyBpm(track(1))).toBe(false);
-  });
-});
 
 describe("column visibility", () => {
   it("all columns are visible by default, in registry order", () => {

@@ -450,3 +450,37 @@ fn reopen_model_treats_null_analysis_model_as_foreign() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, b);
 }
+
+#[test]
+fn hint_candidates_fold_the_cutoff_for_variable_tempo_verdicts() {
+    let lib = tempfile::tempdir().unwrap();
+    write_minimal_mp3(&lib.path().join("soflan-solid.mp3"));
+    write_minimal_mp3(&lib.path().join("steady-shaky.mp3"));
+    let mut conn = db::open_in_memory().unwrap();
+    scan::scan(&mut conn, lib.path()).unwrap();
+    let id_of = |name: &str| -> i64 {
+        conn.query_row(
+            "SELECT id FROM tracks WHERE path LIKE ?1",
+            [format!("%{name}")],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+
+    // Both store confidence 0.45 — but the soflan verdict's confidence
+    // already carries the x0.5 range penalty (derive.rs), so against
+    // the folded cutoff (0.3) it is a CLEAN detection, not a candidate.
+    // The UI badge (query::TrackRow::bpm_shaky) folds the same way;
+    // before this predicate was shared, the raw SQL comparison listed
+    // soflan tracks the badge called clean (the 7aa83ea drift class).
+    analysis::set_bpm(&conn, id_of("soflan-solid.mp3"), Some(analysis::DetectedBpm { bpm: 140.0, bpm_max: Some(200.0), confidence: 0.45 }), "small").unwrap();
+    analysis::set_bpm(&conn, id_of("steady-shaky.mp3"), Some(analysis::DetectedBpm { bpm: 128.0, bpm_max: None, confidence: 0.45 }), "small").unwrap();
+
+    let candidates = analysis::list_hint_candidates(&conn, analysis::SHAKY_CONFIDENCE).unwrap();
+    let names: Vec<&str> = candidates
+        .iter()
+        .map(|c| Path::new(&c.path).file_name().and_then(|n| n.to_str()).unwrap())
+        .collect();
+    assert!(names.contains(&"steady-shaky.mp3"));
+    assert!(!names.contains(&"soflan-solid.mp3"));
+}

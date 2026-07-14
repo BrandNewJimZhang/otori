@@ -157,3 +157,38 @@ fn tag_provenance_unknown_track_is_empty() {
     let rows = query::tag_provenance(&conn, 999).unwrap();
     assert!(rows.is_empty(), "no rows is a valid initial state, not corruption");
 }
+
+#[test]
+fn bpm_shaky_is_computed_in_the_index_not_the_projection() {
+    let conn = db::open_in_memory().unwrap();
+    conn.execute_batch(
+        "INSERT INTO tracks (path, format, first_seen, last_scanned, bpm, bpm_max, bpm_confidence, bpm_hint) VALUES
+         ('/lib/steady-shaky.mp3',  'mp3', datetime('now'), datetime('now'), 128, NULL, 0.5,  NULL),
+         ('/lib/steady-solid.mp3',  'mp3', datetime('now'), datetime('now'), 128, NULL, 0.6,  NULL),
+         ('/lib/soflan-solid.mp3',  'mp3', datetime('now'), datetime('now'), 140, 200,  0.45, NULL),
+         ('/lib/soflan-shaky.mp3',  'mp3', datetime('now'), datetime('now'), 140, 200,  0.25, NULL),
+         ('/lib/no-confidence.mp3', 'mp3', datetime('now'), datetime('now'), 128, NULL, NULL, NULL),
+         ('/lib/hint-only.mp3',     'mp3', datetime('now'), datetime('now'), NULL, NULL, NULL, 185),
+         ('/lib/blank.mp3',         'mp3', datetime('now'), datetime('now'), NULL, NULL, NULL, NULL);",
+    )
+    .unwrap();
+
+    let tracks = query::list_tracks(&conn).unwrap();
+    let shaky_of = |name: &str| -> bool {
+        tracks.iter().find(|t| t.path.ends_with(name)).unwrap().bpm_shaky
+    };
+    // Steady detections warn below the cutoff.
+    assert!(shaky_of("steady-shaky.mp3"));
+    assert!(!shaky_of("steady-solid.mp3"));
+    // Variable-tempo verdicts store confidence with the x0.5 range
+    // penalty (derive.rs) — the cutoff folds with it, so a clean
+    // soflan range is not shaky.
+    assert!(!shaky_of("soflan-solid.mp3"));
+    assert!(shaky_of("soflan-shaky.mp3"));
+    // A detection with no recorded confidence is shaky by definition.
+    assert!(shaky_of("no-confidence.mp3"));
+    // An unverified external hint warns; a truly blank row has nothing
+    // to warn about.
+    assert!(shaky_of("hint-only.mp3"));
+    assert!(!shaky_of("blank.mp3"));
+}

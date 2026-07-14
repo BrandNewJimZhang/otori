@@ -17,6 +17,42 @@
 use rusqlite::Connection;
 use serde::Serialize;
 
+/// Confidence below which a steady detection counts as shaky. The ONE
+/// authority for "shaky" — the GUI badge (query::TrackRow::bpm_shaky),
+/// the CLI's hint-candidates/reanalyze defaults, and any future
+/// consumer all fold from here. Before this existed, the UI kept its
+/// own inline cutoff and drifted from the CLI (fixed in 7aa83ea);
+/// keeping two copies re-opens that class of bug.
+pub const SHAKY_CONFIDENCE: f64 = 0.6;
+
+/// Is a detection shaky against `min_confidence`? Variable-tempo
+/// (soflan) verdicts store confidence with the x0.5 range penalty
+/// already applied (derive.rs: "a range is honest, a mean is a lie"),
+/// so the cutoff folds with them — a clean soflan range is not shaky.
+/// A detection with no recorded confidence is shaky by definition.
+pub fn is_shaky_detection(
+    bpm_max: Option<f64>,
+    confidence: Option<f64>,
+    min_confidence: f64,
+) -> bool {
+    let cutoff = if bpm_max.is_some() { min_confidence / 2.0 } else { min_confidence };
+    confidence.unwrap_or(0.0) < cutoff
+}
+
+/// Should a BPM value warn in a listing? Shaky detections and
+/// unverified external hints do; a blank row has nothing to warn about.
+pub fn is_shaky_bpm(
+    bpm: Option<f64>,
+    bpm_max: Option<f64>,
+    confidence: Option<f64>,
+    hint: Option<f64>,
+) -> bool {
+    if bpm.is_some() {
+        return is_shaky_detection(bpm_max, confidence, SHAKY_CONFIDENCE);
+    }
+    hint.is_some()
+}
+
 /// A track with analysis still missing. `needs_bpm` distinguishes
 /// "detect the column tempo too" from "mix anchors only".
 #[derive(Debug, Serialize)]
@@ -178,34 +214,49 @@ pub struct HintCandidate {
 }
 
 /// Tracks worth a provider BPM lookup: no hint yet, and either never
-/// produced a value or detected below `min_confidence`. Ordered
-/// blank-first (a missing number hurts more than a shaky one).
+/// produced a value or shaky against `min_confidence` (folded for
+/// variable-tempo verdicts — `is_shaky_detection` is the authority).
+/// Ordered blank-first (a missing number hurts more than a shaky one).
 pub fn list_hint_candidates(
     conn: &Connection,
     min_confidence: f64,
 ) -> rusqlite::Result<Vec<HintCandidate>> {
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.path, t.bpm, t.bpm_confidence,
+        "SELECT t.id, t.path, t.bpm, t.bpm_confidence, t.bpm_max,
                 MAX(CASE WHEN v.field = 'title' THEN v.value END) AS title,
                 MAX(CASE WHEN v.field = 'artist' THEN v.value END) AS artist
          FROM tracks t
          LEFT JOIN tag_values v ON v.track_id = t.id
          WHERE t.bpm_hint IS NULL
-           AND (t.bpm IS NULL OR t.bpm_confidence < ?1)
          GROUP BY t.id
          ORDER BY t.bpm IS NOT NULL, t.id",
     )?;
-    let rows = stmt.query_map([min_confidence], |row| {
-        Ok(HintCandidate {
-            id: row.get(0)?,
-            path: row.get(1)?,
-            bpm: row.get(2)?,
-            bpm_confidence: row.get(3)?,
-            title: row.get(4)?,
-            artist: row.get(5)?,
-        })
+    let rows = stmt.query_map([], |row| {
+        let bpm_max: Option<f64> = row.get(4)?;
+        Ok((
+            HintCandidate {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                bpm: row.get(2)?,
+                bpm_confidence: row.get(3)?,
+                title: row.get(5)?,
+                artist: row.get(6)?,
+            },
+            bpm_max,
+        ))
     })?;
-    rows.collect()
+    // The shaky predicate lives in Rust, not SQL: one authority for
+    // the fold, shared with the GUI badge.
+    let mut out = Vec::new();
+    for row in rows {
+        let (candidate, bpm_max) = row?;
+        if candidate.bpm.is_none()
+            || is_shaky_detection(bpm_max, candidate.bpm_confidence, min_confidence)
+        {
+            out.push(candidate);
+        }
+    }
+    Ok(out)
 }
 
 /// A TBPM-style tag value, sanity-checked. Rejects zero/negative and

@@ -12,6 +12,10 @@ export interface TrackRow {
   bpm_max: number | null;
   bpm_confidence: number | null;
   bpm_hint: number | null;
+  /** Whether the BPM cell should warn — computed by otori-core from
+      the one shaky authority (analysis::is_shaky_bpm); the UI renders
+      it without owning a cutoff. */
+  bpm_shaky: boolean;
   /** Mix anchors: local tempo + a measured beat per end. null with
       mix_analyzed = that end is unstable — plan a plain fade. */
   mix_head_bpm: number | null;
