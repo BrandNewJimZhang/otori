@@ -38,7 +38,7 @@ import {
   type SortKey,
   type SortSpec,
 } from "./library";
-import { cycleRepeat, effectiveOrder, nextId, resolveAdvance, shuffledIds, type RepeatMode } from "./playorder";
+import { cycleRepeat, resolveAdvance, shuffledIds, upcomingPreview, type RepeatMode } from "./playorder";
 import { enqueueNext, queueMove, queueRemove } from "./queue";
 import { QueuePanel } from "./QueuePanel";
 import { InspectorPanel } from "./InspectorPanel";
@@ -188,22 +188,17 @@ function App() {
   }, [inspectorOpen, visible, selection]);
   const upcoming = useMemo(() => {
     if (!queueOpen) return []; // panel closed: skip the walk
-    const visibleIds = visible.map((t) => t.id);
-    const order = shuffle ? effectiveOrder(visibleIds, shuffleOrderRef.current) : visibleIds;
-    const queued = new Set(queue);
-    const out: TrackRow[] = [];
-    let cursor = current?.id ?? null;
-    for (let i = 0; i < 5; i++) {
-      const id = nextId(order, cursor, 1, repeat === "one" ? "all" : repeat, true);
-      if (id == null || id === current?.id) break;
-      cursor = id;
-      if (queued.has(id)) continue; // already shown in the queue section
-      const track = visible.find((t) => t.id === id);
-      if (!track) break;
-      if (out.some((t) => t.id === id)) break; // repeat-all wrapped around
-      out.push(track);
-    }
-    return out;
+    const byId = new Map(visible.map((t) => [t.id, t]));
+    return upcomingPreview(
+      visible.map((t) => t.id),
+      queue,
+      current?.id ?? null,
+      shuffle ? shuffleOrderRef.current : null,
+      repeat,
+      5,
+    )
+      .map((id) => byId.get(id))
+      .filter((t): t is TrackRow => t != null);
   }, [queueOpen, visible, current, shuffle, repeat, queue]);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;

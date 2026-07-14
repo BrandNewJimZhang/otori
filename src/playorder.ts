@@ -107,3 +107,34 @@ export function resolveAdvance(
   const order = shuffleOrder ? effectiveOrder(visibleIds, shuffleOrder) : visibleIds;
   return { id: nextId(order, currentId, offset, repeat, manual), queue: rest, fromQueue: false };
 }
+
+/**
+ * The next `count` ids the play order will visit after `currentId`,
+ * for the up-next panel: queued ids are skipped (the panel's queue
+ * section already shows them), repeat-one previews as repeat-all (the
+ * panel answers "where do skips go"), and the walk stops at the order
+ * edge, on a repeat-all wraparound, or at `count`.
+ */
+export function upcomingPreview(
+  visibleIds: number[],
+  queue: number[],
+  currentId: number | null,
+  shuffleOrder: number[] | null,
+  repeat: RepeatMode,
+  count: number,
+): number[] {
+  const order = shuffleOrder ? effectiveOrder(visibleIds, shuffleOrder) : visibleIds;
+  const queued = new Set(queue);
+  const out: number[] = [];
+  const seen = new Set<number>();
+  let cursor = currentId;
+  for (let i = 0; i < count; i++) {
+    const id = nextId(order, cursor, 1, repeat === "one" ? "all" : repeat, true);
+    if (id == null || id === currentId || seen.has(id)) break; // edge or wrapped
+    cursor = id;
+    seen.add(id);
+    if (queued.has(id)) continue;
+    out.push(id);
+  }
+  return out;
+}

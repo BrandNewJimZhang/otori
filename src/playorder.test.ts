@@ -3,7 +3,7 @@
 // skip always moves.
 
 import { describe, expect, it } from "vitest";
-import { cycleRepeat, effectiveOrder, nextId, resolveAdvance, shuffledIds } from "./playorder";
+import { cycleRepeat, effectiveOrder, nextId, resolveAdvance, shuffledIds, upcomingPreview } from "./playorder";
 
 describe("cycleRepeat", () => {
   it("cycles off → all → one → off", () => {
@@ -127,5 +127,37 @@ describe("resolveAdvance", () => {
   it("wraps with repeat all", () => {
     const r = resolveAdvance(visible, [], 5, null, "all", 1, false);
     expect(r).toEqual({ id: 1, queue: [], fromQueue: false });
+  });
+});
+
+describe("upcomingPreview", () => {
+  const visible = [1, 2, 3, 4, 5];
+
+  it("walks the order from the current track, skipping queued ids", () => {
+    expect(upcomingPreview(visible, [3], 1, null, "off", 5)).toEqual([2, 4, 5]);
+  });
+
+  it("previews repeat-one as repeat-all — the panel shows where skips go", () => {
+    expect(upcomingPreview(visible, [], 4, null, "one", 5)).toEqual([5, 1, 2, 3]);
+  });
+
+  it("stops at the edge with repeat off", () => {
+    expect(upcomingPreview(visible, [], 4, null, "off", 5)).toEqual([5]);
+  });
+
+  it("stops after wrapping once under repeat all", () => {
+    expect(upcomingPreview(visible, [], 3, null, "all", 99).length).toBeLessThanOrEqual(5);
+  });
+
+  it("caps the walk at count entries", () => {
+    expect(upcomingPreview(visible, [], 1, null, "off", 2)).toEqual([2, 3]);
+  });
+
+  it("follows the frozen shuffle permutation", () => {
+    expect(upcomingPreview(visible, [], 3, [3, 1, 5, 2, 4], "off", 3)).toEqual([1, 5, 2]);
+  });
+
+  it("is empty when nothing is playing", () => {
+    expect(upcomingPreview(visible, [], null, null, "off", 5)).toEqual([]);
   });
 });
