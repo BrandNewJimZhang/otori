@@ -11,140 +11,22 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TransitionPlan } from "./djmix";
+import {
+  audios,
+  createEngineWithAB,
+  ctxs,
+  flushFadeAnchor,
+  gains,
+  installAudioFakes,
+  pumpFrames,
+  stallPlay,
+  track,
+  uninstallAudioFakes,
+} from "./playback.fakes";
 
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
 }));
-
-/** Every Audio constructed by the engine, in creation order (deck 0, 1). */
-let audios: FakeAudio[] = [];
-/** Every GainNode created by the engine graph, in deck order. */
-let gains: FakeGainNode[] = [];
-/** The engine's AudioContext (built once per engine, on first play). */
-let ctxs: FakeAudioContext[] = [];
-
-class FakeAudio {
-  preload = "";
-  playbackRate = 1;
-  currentTime = 0;
-  paused = true;
-  readyState = 4; // HAVE_ENOUGH_DATA: preloads are always "ready" here
-  duration = 300;
-  error: MediaError | null = null;
-  /** Every src assignment — the clobbering regression asserts on this. */
-  srcWrites: string[] = [];
-  private srcValue = "";
-  private listeners = new Map<string, Array<() => void>>();
-
-  constructor() {
-    audios.push(this);
-  }
-
-  get src(): string {
-    return this.srcValue;
-  }
-
-  set src(value: string) {
-    this.srcValue = value;
-    this.srcWrites.push(value);
-  }
-
-  addEventListener(type: string, cb: () => void): void {
-    const list = this.listeners.get(type) ?? [];
-    list.push(cb);
-    this.listeners.set(type, list);
-  }
-
-  /** Fire a media event as the browser would ("ended" implies paused). */
-  fire(type: string): void {
-    if (type === "ended") this.paused = true;
-    for (const cb of this.listeners.get(type) ?? []) cb();
-  }
-
-  play(): Promise<void> {
-    this.paused = false;
-    return Promise.resolve();
-  }
-
-  pause(): void {
-    this.paused = true;
-  }
-
-  load(): void {}
-
-  removeAttribute(name: string): void {
-    if (name === "src") this.srcValue = "";
-  }
-}
-
-class FakeAudioParam {
-  value = 1;
-  setValueCurveAtTime = vi.fn();
-  cancelScheduledValues = vi.fn();
-}
-
-class FakeGainNode {
-  gain = new FakeAudioParam();
-  constructor() {
-    gains.push(this);
-  }
-  connect(): void {}
-}
-
-class FakeAudioContext {
-  state = "running";
-  currentTime = 0;
-  constructor() {
-    ctxs.push(this);
-  }
-  destination = {};
-  baseLatency = 0.01;
-  outputLatency = 0.05;
-  resume(): Promise<void> {
-    return Promise.resolve();
-  }
-  createAnalyser() {
-    return { fftSize: 0, smoothingTimeConstant: 0, connect: () => {} };
-  }
-  createMediaElementSource() {
-    return { connect: () => {} };
-  }
-  createGain(): FakeGainNode {
-    return new FakeGainNode();
-  }
-}
-
-/** Manually pumped rAF: frames only advance when a test says so. */
-let rafCallbacks = new Map<number, FrameRequestCallback>();
-let rafNextId = 1;
-
-function pumpFrames(): void {
-  const pending = [...rafCallbacks.values()];
-  rafCallbacks.clear();
-  for (const cb of pending) cb(performance.now());
-}
-
-const track = (path: string) => ({ path, replaygainDb: null });
-
-/** Flush the microtask hops that anchor fades once the incoming
-    deck's play() resolves — the fake resolves immediately. */
-async function flushFadeAnchor(): Promise<void> {
-  for (let i = 0; i < 3; i++) await Promise.resolve();
-}
-
-/** Swap a deck's play() for one that resolves only when the test says
-    the deck started sounding (models WKWebView startup latency). */
-function stallPlay(audio: FakeAudio): () => void {
-  let release!: () => void;
-  audio.play = () =>
-    new Promise<void>((resolve) => {
-      release = () => {
-        audio.paused = false;
-        resolve();
-      };
-    });
-  return () => release();
-}
 
 const plainPlan = (durationSec: number): TransitionPlan => ({
   kind: "plain",
@@ -153,41 +35,9 @@ const plainPlan = (durationSec: number): TransitionPlan => ({
   gainIn: (t) => t,
 });
 
-async function createEngineWithAB() {
-  const { createEngine } = await import("./playback");
-  const engine = createEngine();
-  await engine.play(track("/a.flac"));
-  engine.preloadNext(track("/b.flac"));
-  // Park A inside its end window (duration 300): transitions are only
-  // valid there — the engine rejects plans for a mid-play deck.
-  audios[1].currentTime = 297;
-  return engine;
-}
+beforeEach(installAudioFakes);
 
-beforeEach(() => {
-  audios = [];
-  gains = [];
-  ctxs = [];
-  rafCallbacks = new Map();
-  rafNextId = 1;
-  vi.stubGlobal("Audio", FakeAudio);
-  vi.stubGlobal("AudioContext", FakeAudioContext);
-  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-    const id = rafNextId++;
-    rafCallbacks.set(id, cb);
-    return id;
-  });
-  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
-    rafCallbacks.delete(id);
-  });
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-  vi.resetModules();
-});
+afterEach(uninstallAudioFakes);
 
 describe("TwoDeckEngine output latency", () => {
   it("reports the graph's output+base latency in ms", async () => {
