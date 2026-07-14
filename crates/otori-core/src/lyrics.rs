@@ -267,7 +267,12 @@ fn parse_word_tags(rest: &str) -> Option<Vec<Word>> {
     let mut words = Vec::new();
     for segment in rest.trim_start().split('<').filter(|s| !s.is_empty()) {
         let (stamp, text) = segment.split_once('>')?;
-        words.push(Word { time_ms: parse_timestamp(stamp)?, text: text.to_string() });
+        // Wild files carry out-of-order word tags; text order IS the
+        // display order, so clamp a backwards stamp up to its
+        // predecessor (a zero-span word renders as an instant snap)
+        // rather than letting the karaoke wipe run backwards.
+        let floor = words.last().map_or(0, |w: &Word| w.time_ms);
+        words.push(Word { time_ms: parse_timestamp(stamp)?.max(floor), text: text.to_string() });
     }
     if words.is_empty() {
         None

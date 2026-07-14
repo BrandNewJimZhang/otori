@@ -66,6 +66,24 @@ fn enhanced_lrc_yields_word_level() {
 }
 
 #[test]
+fn out_of_order_word_timestamps_are_clamped_monotone() {
+    // Wild enhanced LRC: a word tag earlier than its predecessor
+    // (hand-authored files do this). Text order IS the display order,
+    // so it must survive untouched; the offending timestamp is clamped
+    // up to its predecessor, degrading to a zero-span word (renderers
+    // snap those to full once reached) instead of a backwards wipe.
+    let lrc = "[00:10.00]<00:12.00>out <00:11.00>of <00:13.00>order";
+    let doc = lyrics::parse_lrc(lrc);
+    let words = doc.lines[0].words.as_ref().unwrap();
+    assert_eq!(words[0].text, "out ");
+    assert_eq!(words[1].text, "of ");
+    assert_eq!(words[2].text, "order");
+    assert_eq!(words[0].time_ms, 12_000);
+    assert_eq!(words[1].time_ms, 12_000); // clamped up from 11_000
+    assert_eq!(words[2].time_ms, 13_000);
+}
+
+#[test]
 fn mixed_word_and_line_stays_word_synced_overall() {
     let lrc = "\
 [00:10.00]<00:10.00>Word <00:10.40>synced
