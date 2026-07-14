@@ -22,7 +22,6 @@ import { SettingsOverlay } from "./SettingsOverlay";
 import { formatTime } from "./format";
 import {
   clickSelect,
-  COLUMNS,
   contextTargets,
   displayTitle,
   edgeSelect,
@@ -38,6 +37,7 @@ import {
   type SortKey,
   type SortSpec,
 } from "./library";
+import { columnMenuItems, trackMenuItems } from "./menus";
 import { cycleRepeat, resolveAdvance, shuffledIds, upcomingPreview, type RepeatMode } from "./playorder";
 import { enqueueNext, queueMove, queueRemove } from "./queue";
 import { QueuePanel } from "./QueuePanel";
@@ -926,100 +926,36 @@ function App() {
     };
   }, []);
 
+  // Row context menu + header column chooser: menus.ts decides the
+  // items (pure, tested); App supplies the doers and owns the state.
   const menuItems: MenuItem[] = useMemo(() => {
-    if (!menu || menu.targets.length === 0) return [];
-    const [first] = menu.targets;
-    const ids = menu.targets.map((t) => t.id);
-    const inQueue = ids.every((id) => queue.includes(id));
-    const queueItem: MenuItem = inQueue
-      ? {
-          label: ids.length === 1 ? "Remove from queue" : `Remove ${ids.length} from queue`,
-          action: () => setQueue((q) => q.filter((id) => !ids.includes(id))),
+    if (!menu) return [];
+    return trackMenuItems(menu.targets, queue, {
+      play: (t) => void play(t),
+      getInfo: (targets) => {
+        // Single row: focus the selection on it (design r2). Multi:
+        // the targets already are the selection.
+        if (targets.length === 1) {
+          setSelection({ ids: new Set([targets[0].id]), anchor: targets[0].id });
         }
-      : {
-          label: ids.length === 1 ? "Play next" : `Play ${ids.length} next`,
-          action: () => setQueue((q) => enqueueNext(q, ids)),
-        };
-    if (menu.targets.length === 1) {
-      return [
-        { label: "Play", action: () => void play(first) },
-        {
-          // The context menu is the natural "act on this row" surface;
-          // ⌘I alone left the inspector undiscoverable (design r2).
-          label: "Get Info",
-          action: () => {
-            setSelection({ ids: new Set([first.id]), anchor: first.id });
-            setInspectorOpen(true);
-          },
-        },
-        queueItem,
-        {
-          label: "Reveal in Finder",
-          separator: true,
-          action: () => void revealItemInDir(first.path).catch((e) => setError(String(e))),
-        },
-        {
-          // user-select:none is deliberate app chrome (P3): copying
-          // metadata goes through the menu instead of text selection.
-          label: "Copy title – artist",
-          separator: true,
-          action: () =>
-            void navigator.clipboard
-              .writeText(`${displayTitle(first)} – ${first.artist ?? ""}`.trim())
-              .catch(() => {}),
-        },
-        {
-          label: "Copy path",
-          action: () => void navigator.clipboard.writeText(first.path).catch(() => {}),
-        },
-        {
-          label: "Reanalyze BPM",
-          separator: true,
-          action: () =>
-            void reopenAnalysis({ trackIds: ids })
-              .then(() => startAnalysisSweep())
-              .catch((e) => setError(String(e))),
-        },
-      ];
-    }
-    // Multi-selection: batch actions only (play is inherently single).
-    const paths = menu.targets.map((t) => t.path).join("\n");
-    return [
-      {
-        label: `Get Info on ${menu.targets.length} tracks`,
-        action: () => setInspectorOpen(true), // targets are the selection already
+        setInspectorOpen(true);
       },
-      queueItem,
-      {
-        label: `Copy ${menu.targets.length} paths`,
-        separator: true,
-        action: () => void navigator.clipboard.writeText(paths).catch(() => {}),
-      },
-      {
-        label: `Reanalyze BPM (${menu.targets.length})`,
-        separator: true,
-        action: () =>
-          void reopenAnalysis({ trackIds: ids })
-            .then(() => startAnalysisSweep())
-            .catch((e) => setError(String(e))),
-      },
-    ];
+      queueAdd: (ids) => setQueue((q) => enqueueNext(q, ids)),
+      queueRemove: (ids) => setQueue((q) => q.filter((id) => !ids.includes(id))),
+      revealInFinder: (path) => void revealItemInDir(path).catch((e) => setError(String(e))),
+      copyText: (text) => void navigator.clipboard.writeText(text).catch(() => {}),
+      reanalyze: (ids) =>
+        void reopenAnalysis({ trackIds: ids })
+          .then(() => startAnalysisSweep())
+          .catch((e) => setError(String(e))),
+    });
   }, [menu, play, queue]);
 
-  // Column chooser: one entry per hideable registry column, checkmark =
-  // currently shown. Hiding the sorted column also clears the sort — a
-  // sort you can no longer see or cycle is a trap.
-  const columnMenuItems: MenuItem[] = useMemo(() => {
+  const columnMenuEntries: MenuItem[] = useMemo(() => {
     if (!columnMenu) return [];
-    return COLUMNS.filter((c) => c.hideable).map((c) => {
-      const shown = !hiddenColumns.includes(c.key);
-      return {
-        label: `${shown ? "✓ " : " "}${c.label}`,
-        action: () => {
-          if (shown && sort?.key === c.key) setSort(null);
-          setHiddenColumns((h) => toggleColumn(h, c.key));
-        },
-      };
+    return columnMenuItems(hiddenColumns, sort, {
+      toggle: (key) => setHiddenColumns((h) => toggleColumn(h, key)),
+      clearSort: () => setSort(null),
     });
   }, [columnMenu, hiddenColumns, sort]);
 
@@ -1479,7 +1415,7 @@ function App() {
         <ContextMenu
           x={columnMenu.x}
           y={columnMenu.y}
-          items={columnMenuItems}
+          items={columnMenuEntries}
           onClose={() => setColumnMenu(null)}
         />
       )}
