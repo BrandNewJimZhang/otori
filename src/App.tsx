@@ -67,6 +67,7 @@ import { headMixPoint, tailMixPoint } from "./mixpoints";
 import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
 import { onSweepProgress, startAnalysisSweep, type SweepProgress } from "./analysissweep";
+import { nextModelId, performModelSelect } from "./analysismodel";
 import { planTransition } from "./djmix";
 import { loadPrefs, savePrefs, type AnalysisModel, type Density, type Theme } from "./prefs";
 import { CROSSFADE_SLIDER_MAX, crossfadeFromSlider } from "./settings";
@@ -273,41 +274,27 @@ function App() {
 
   /** Switch to a registered model, downloading its weights on demand
       and reopening foreign-model verdicts. Shared by the status-bar
-      cycle button and the Settings overlay's explicit picker. */
+      cycle button and the Settings overlay's explicit picker; the
+      decision paths live in analysismodel.ts (pure, tested). */
   const selectAnalysisModel = useCallback(
     (id: string) => {
-      const next = analysisModels.find((m) => m.id === id);
-      if (analysisSwitching || !next || next.id === analysisModel) return;
       setAnalysisSwitching(true);
-      const go = () =>
-        switchAnalysisModel(next.id)
-          .then(() => {
-            setAnalysisModelState(next.id as AnalysisModel);
+      void performModelSelect(
+        {
+          switchModel: switchAnalysisModel,
+          downloadModel: downloadAnalysisModel,
+          onSwitched: (switched) => {
+            setAnalysisModelState(switched as AnalysisModel);
             startAnalysisSweep();
-          })
-          .catch((e) => setError(String(e)))
-          .finally(() => setAnalysisSwitching(false));
-      if (next.available) {
-        void go();
-      } else {
-        // Standard ships unbundled: fetch + verify the weights, then
-        // switch. A checksum/network failure is a toast, not a silent
-        // skip — the user asked for the model and nothing happened.
-        setToasts((ts) =>
-          pushToast(ts, { id: ++toastSeq.current, text: `Downloading ${next.label} model…` }),
-        );
-        void downloadAnalysisModel(next.id)
-          .then(go)
-          .catch((e) => {
-            setToasts((ts) =>
-              pushToast(ts, {
-                id: ++toastSeq.current,
-                text: `${next.label} download failed: ${String(e)}`,
-              }),
-            );
-            setAnalysisSwitching(false);
-          });
-      }
+          },
+          onError: (m) => setError(m),
+          toast: (text) => setToasts((ts) => pushToast(ts, { id: ++toastSeq.current, text })),
+        },
+        id,
+        analysisModels,
+        analysisModel,
+        analysisSwitching,
+      ).finally(() => setAnalysisSwitching(false));
     },
     [analysisSwitching, analysisModels, analysisModel],
   );
@@ -316,9 +303,8 @@ function App() {
       next to the theme/density toggles — analysis model is the same
       class of "how the app runs" switch. */
   const cycleAnalysisModel = useCallback(() => {
-    if (analysisModels.length === 0) return;
-    const idx = analysisModels.findIndex((m) => m.id === analysisModel);
-    selectAnalysisModel(analysisModels[(idx + 1) % analysisModels.length].id);
+    const id = nextModelId(analysisModels, analysisModel);
+    if (id != null) selectAnalysisModel(id);
   }, [analysisModels, analysisModel, selectAnalysisModel]);
 
   // L5 coexistence, UI half (AGENTS.md "Coexistence with the GUI"): the
