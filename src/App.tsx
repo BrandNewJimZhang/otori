@@ -3,17 +3,16 @@
 // lives in LibraryTable, view logic in library.ts — App owns state.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, getLyrics, listTracks, scanLibrary, setAnalysisModel, setDisplayAwake, setLyricsOffset, switchAnalysisModel, downloadAnalysisModel, listAnalysisModels, updateTray, reopenAnalysis, type AnalysisModelInfo } from "./ipc";
+import { getArtwork, getLyrics, listTracks, scanLibrary, setAnalysisModel, setDisplayAwake, setLyricsOffset, switchAnalysisModel, downloadAnalysisModel, listAnalysisModels, reopenAnalysis, type AnalysisModelInfo } from "./ipc";
 import { createEngine } from "./playback";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { LibraryTable, type ColumnWidths } from "./LibraryTable";
 import { createArtworkCache } from "./artworkcache";
-import { buildNpState } from "./npstate";
 import { ToastStack } from "./ToastStack";
 import { dismissToast, pushToast, type Toast } from "./toasts";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
@@ -44,6 +43,8 @@ import { escapeIntent, routeKey, zoneOf, type KeyZone } from "./uikeys";
 import { StageIcon } from "./icons";
 import { PlayerBar } from "./PlayerBar";
 import { Toolbar } from "./Toolbar";
+import { useMediaSession } from "./mediasession";
+import { useShellBridge } from "./shellbridge";
 import { headMixPoint, tailMixPoint } from "./mixpoints";
 import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
@@ -582,113 +583,46 @@ function App() {
   // whole Stage tree at 60fps through a positionMs state).
   const getPositionMs = useCallback(() => engine.positionMs, [engine]);
 
+  const seekTo = useCallback(
+    (secs: number) => {
+      // Any seek invalidates in-flight and armed transition plans; the
+      // position effect re-arms if the new spot still qualifies.
+      planEpoch.current++;
+      transitionArmed.current = null;
+      engine.seek(secs);
+      setPosition(secs);
+    },
+    [engine],
+  );
+
   const togglePause = useCallback(() => {
     engine.togglePause();
     setPaused(engine.paused);
   }, [engine]);
 
-  // System Now Playing / media keys via MediaSession; no-op where the
-  // WebView doesn't expose it.
-  useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
-    const ms = navigator.mediaSession;
-    ms.metadata = current
-      ? new MediaMetadata({
-          title: displayTitle(current),
-          artist: current.artist ?? undefined,
-          album: current.album ?? undefined,
-          artwork: artwork ? [{ src: artwork }] : [],
-        })
-      : null;
-    // Idempotent per system semantics: "play" only resumes, "pause" only pauses.
-    ms.setActionHandler("play", () => {
-      if (engine.paused) togglePause();
-    });
-    ms.setActionHandler("pause", () => {
-      if (!engine.paused) togglePause();
-    });
-    ms.setActionHandler("previoustrack", () => step(-1));
-    ms.setActionHandler("nexttrack", () => step(1));
-    ms.setActionHandler("seekto", (d) => {
-      if (d.seekTime != null) seekTo(d.seekTime);
-    });
-    return () => {
-      ms.setActionHandler("play", null);
-      ms.setActionHandler("pause", null);
-      ms.setActionHandler("previoustrack", null);
-      ms.setActionHandler("nexttrack", null);
-      ms.setActionHandler("seekto", null);
-    };
-  }, [current, artwork, togglePause, step, engine]);
-
-  // Control Center progress: position/duration at timeupdate cadence.
-  useEffect(() => {
-    if (!("mediaSession" in navigator) || !current) return;
-    if (!Number.isFinite(engine.duration)) return;
-    navigator.mediaSession.setPositionState({
-      duration: engine.duration,
-      position: Math.min(position, engine.duration),
-      playbackRate: 1,
-    });
-  }, [current, position, engine]);
-
-  // Status-bar (tray) menu, UI half: mirror playback state into the
-  // menu labels; failures are cosmetic and must not touch playback.
-  useEffect(() => {
-    updateTray(current ? displayTitle(current) : null, paused).catch(() => {});
-  }, [current, paused]);
-
-  // Tray mini panel, main-window half: broadcast the now-playing
-  // snapshot on every change and whenever the panel asks (np-refresh,
-  // emitted by the shell on panel open). Positions ride the separate
-  // np-pos event at timeupdate cadence so artwork isn't re-sent per tick.
-  useEffect(() => {
-    // Engine duration once metadata loads; index duration until then
-    // (same fallback as the seek bar below).
-    const durationSecs = Number.isFinite(engine.duration)
-      ? engine.duration
-      : current?.duration_secs ?? NaN;
-    const state = buildNpState(current, paused, artwork, durationSecs);
-    void emit("np-state", state);
-    const unlisten = listen("np-refresh", () => {
-      void emit("np-state", state);
-      void emit("np-pos", engine.currentTime);
-    });
-    return () => {
-      unlisten.then((off) => off());
-    };
-  }, [current, paused, artwork, engine]);
-
-  useEffect(() => {
-    if (current) void emit("np-pos", position);
-  }, [current, position]);
-
-  // Mini panel seek commits arrive as `mini-seek` (one per release,
-  // scrub previews stay local to the panel). seekTo closes over stable
-  // refs only, so a mount-once subscription stays correct.
-  useEffect(() => {
-    const unlisten = listen<number>("mini-seek", (e) => {
-      if (currentRef.current) seekTo(e.payload);
-    });
-    return () => {
-      unlisten.then((off) => off());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Tray menu clicks arrive as a `tray-command` event (shell side:
-  // src-tauri). Same handlers as the on-screen transport.
-  useEffect(() => {
-    const unlisten = listen<string>("tray-command", (e) => {
-      if (e.payload === "playpause") {
+  // System Now Playing / media keys (mediasession.ts) and the shell
+  // bridges: tray labels, mini-panel np-state/np-pos broadcast, and
+  // inbound mini-seek / tray-command events (shellbridge.ts).
+  useMediaSession(engine, current, artwork, position, togglePause, step, seekTo);
+  const onMiniSeek = useCallback(
+    (secs: number) => {
+      if (currentRef.current) seekTo(secs);
+    },
+    [seekTo],
+  );
+  const onTrayCommand = useCallback(
+    (cmd: string) => {
+      if (cmd === "playpause") {
         if (currentRef.current) togglePause();
-      } else if (e.payload === "next") step(1);
-      else if (e.payload === "prev") step(-1);
-    });
-    return () => {
-      unlisten.then((off) => off());
-    };
-  }, [togglePause, step]);
+      } else if (cmd === "next") step(1);
+      else if (cmd === "prev") step(-1);
+    },
+    [togglePause, step],
+  );
+  useShellBridge(engine, current, paused, artwork, position, {
+    onMiniSeek,
+    onTrayCommand,
+  });
 
   // Native menu-bar items (src-tauri setup_app_menu) arrive as
   // `menu-command` events — the third front-end for the same handlers.
@@ -913,15 +847,6 @@ function App() {
       clearSort: () => setSort(null),
     });
   }, [columnMenu, hiddenColumns, sort]);
-
-  function seekTo(secs: number) {
-    // Any seek invalidates in-flight and armed transition plans; the
-    // position effect re-arms if the new spot still qualifies.
-    planEpoch.current++;
-    transitionArmed.current = null;
-    engine.seek(secs);
-    setPosition(secs);
-  }
 
   // Engine duration once metadata loads; index duration until then.
   const duration = Number.isFinite(engine.duration)
