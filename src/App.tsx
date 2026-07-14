@@ -45,12 +45,6 @@ import { InspectorPanel } from "./InspectorPanel";
 import { escapeIntent, routeKey, zoneOf, type KeyZone } from "./uikeys";
 import { seekMax, seekShown, sliderFill } from "./seekbar";
 import {
-  AutoThemeIcon,
-  DensityIcon,
-  InfoIcon,
-  MetronomeIcon,
-  GearIcon,
-  MoonIcon,
   NextIcon,
   PauseIcon,
   PlayIcon,
@@ -58,11 +52,10 @@ import {
   QueueIcon,
   RepeatIcon,
   ShuffleIcon,
-  BrandMark,
   StageIcon,
-  SunIcon,
   VolumeIcon,
 } from "./icons";
+import { Toolbar } from "./Toolbar";
 import { headMixPoint, tailMixPoint } from "./mixpoints";
 import { StatusBar } from "./StatusBar";
 import { statusLine } from "./statusline";
@@ -1039,89 +1032,30 @@ function App() {
 
   return (
     <div key="backstage" className="app">
-      <header className={`toolbar ${fullscreen ? "fullscreen" : ""}`} data-tauri-drag-region>
-        <h1 className="brand">
-          <BrandMark />
-          Ōtori
-        </h1>
-        <button onClick={pickAndScan} disabled={scanning}>
-          {scanning ? "Scanning…" : "Scan folder…"}
-        </button>
-        <input
-          ref={searchRef}
-          className="search"
-          type="search"
-          placeholder="Filter (⌘F)"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <span className="track-count">
-          {query ? `${visible.length} / ${tracks.length} tracks` : `${tracks.length} tracks`}
-        </span>
-        <button
-          className="icon-btn stage-toggle"
-          onClick={() => setMode("stage")}
-          disabled={!current}
-          aria-label="Enter Stage mode"
-          data-tip={current ? "Stage (S)" : "Play a track to enter Stage"}
-        >
-          <StageIcon />
-        </button>
-        <button
-          className="icon-btn inspector-toggle"
-          onClick={() => setInspectorOpen((o) => !o)}
-          aria-label="Toggle inspector"
-          aria-pressed={inspectorOpen}
-          data-tip="Inspector (⌘I)"
-        >
-          <InfoIcon />
-        </button>
-        <button
-          className="icon-btn density-toggle"
-          onClick={() => setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"))}
-          aria-label={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
-          data-tip={density === "comfortable" ? "Compact rows" : "Comfortable rows"}
-        >
-          <DensityIcon compact={density === "compact"} />
-        </button>
-        <button
-          className="icon-btn theme-toggle"
-          onClick={() => setTheme((t) => (t === "dark" ? "light" : t === "light" ? "auto" : "dark"))}
-          aria-label={`Theme: ${theme}`}
-          data-tip={
-            theme === "dark" ? "Theme: dark" : theme === "light" ? "Theme: light" : "Theme: auto"
-          }
-        >
-          {theme === "dark" ? <MoonIcon /> : theme === "light" ? <SunIcon /> : <AutoThemeIcon />}
-        </button>
-        <button
-          className="icon-btn model-toggle"
-          onClick={cycleAnalysisModel}
-          disabled={analysisSwitching || analysisModels.length < 2}
-          aria-label={`Analysis model: ${analysisModel}`}
-          data-tip={
-            analysisModels.length < 2
-              ? "Analysis model"
-              : `Analysis model: ${analysisModel}${
-                  analysisModels.find((m) => m.id !== analysisModel && !m.available)
-                    ? " · click to download Standard"
-                    : ""
-                }`
-          }
-          aria-pressed={analysisModel !== "small"}
-        >
-          <MetronomeIcon />
-        </button>
-        <button
-          className="icon-btn settings-toggle"
-          onClick={() => setSettingsOpen((o) => !o)}
-          aria-label="Settings"
-          aria-pressed={settingsOpen}
-          data-tip="Settings (⌘,)"
-        >
-          <GearIcon />
-        </button>
-      </header>
+      <Toolbar
+        fullscreen={fullscreen}
+        scanning={scanning}
+        query={query}
+        visibleCount={visible.length}
+        trackCount={tracks.length}
+        searchRef={searchRef}
+        canStage={current != null}
+        inspectorOpen={inspectorOpen}
+        density={density}
+        theme={theme}
+        analysisModel={analysisModel}
+        analysisModels={analysisModels}
+        analysisSwitching={analysisSwitching}
+        settingsOpen={settingsOpen}
+        onScan={() => void pickAndScan()}
+        onQuery={setQuery}
+        onEnterStage={() => setMode("stage")}
+        onToggleInspector={() => setInspectorOpen((o) => !o)}
+        onToggleDensity={() => setDensity((d) => (d === "comfortable" ? "compact" : "comfortable"))}
+        onCycleTheme={() => setTheme((t) => (t === "dark" ? "light" : t === "light" ? "auto" : "dark"))}
+        onCycleAnalysisModel={cycleAnalysisModel}
+        onToggleSettings={() => setSettingsOpen((o) => !o)}
+      />
 
       <main className={`library density-${density} ${inspectorOpen ? "with-inspector" : ""}`}>
         {tracks.length === 0 ? (
