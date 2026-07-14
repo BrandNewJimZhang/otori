@@ -311,6 +311,18 @@ class TwoDeckEngine implements PlaybackEngine {
 
     const toPath = to.source.path;
 
+    // The fade can only last as long as both decks have media to fill
+    // it. Clamp to the outgoing remainder (a deck dying mid-ramp is a
+    // loudness cliff — the end window admits remaining < durationSec)
+    // and to the incoming remainder (a short incoming ends mid-fade,
+    // leaving dead air under a still-armed transition). The curve
+    // shapes compress; equal power is pointwise, so I1 survives.
+    let durationSec = plan.durationSec;
+    if (Number.isFinite(remaining)) durationSec = Math.min(durationSec, remaining);
+    const startOffsetSec = plan.kind === "beatmatched" ? plan.incoming.startOffsetSec : 0;
+    const incomingRemaining = to.audio.duration - startOffsetSec;
+    if (Number.isFinite(incomingRemaining)) durationSec = Math.min(durationSec, incomingRemaining);
+
     if (plan.kind === "beatmatched") {
       to.audio.currentTime = plan.incoming.startOffsetSec;
       to.audio.playbackRate = plan.incoming.rateFrom;
@@ -367,18 +379,18 @@ class TwoDeckEngine implements PlaybackEngine {
         const baseTo = effectiveGain(to.source?.replaygainDb ?? null, this.volumeValue);
         const now = this.ctx!.currentTime;
         from.gain?.gain.setValueCurveAtTime(
-          TwoDeckEngine.sampleCurve(plan.gainOut, baseFrom, plan.durationSec),
+          TwoDeckEngine.sampleCurve(plan.gainOut, baseFrom, durationSec),
           now,
-          plan.durationSec,
+          durationSec,
         );
         to.gain?.gain.setValueCurveAtTime(
-          TwoDeckEngine.sampleCurve(plan.gainIn, baseTo, plan.durationSec),
+          TwoDeckEngine.sampleCurve(plan.gainIn, baseTo, durationSec),
           now,
-          plan.durationSec,
+          durationSec,
         );
 
         const startedAt = performance.now();
-        const durationMs = plan.durationSec * 1000;
+        const durationMs = durationSec * 1000;
         if (plan.kind === "beatmatched") {
           // Linear tempo ramps; audible pitch drift stays within ±8%.
           const tick = () => {
@@ -406,8 +418,18 @@ class TwoDeckEngine implements PlaybackEngine {
 
   togglePause(): void {
     const { audio } = this.activeDeck;
-    if (audio.paused) void audio.play();
-    else audio.pause();
+    if (audio.paused) {
+      void audio.play();
+    } else {
+      // Pausing mid-fade must silence the mix as one unit — reaching
+      // only the active (incoming) deck would leave the outgoing side
+      // sounding through the "pause". Same idiom as seek: finalize the
+      // transition (outgoing retires, incoming takes full gain), then
+      // pause. The UI already follows the incoming track, so resume
+      // lands on what the user sees.
+      this.finalizeTransition?.();
+      audio.pause();
+    }
   }
 
   seek(secs: number): void {

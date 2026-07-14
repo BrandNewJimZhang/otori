@@ -75,10 +75,10 @@ describe("XF-1 — pause mid-fade, then unpause", () => {
   // deck ownership flips to the INCOMING deck at arm time and
   // togglePause() reaches only the active deck — the outgoing deck is
   // left running. The frozen-clock assertion adjudicates that choice.
-  // PENDING GOLD ADJUDICATION (red on the current engine): pause
-  // reaches only the active deck; the outgoing deck keeps sounding.
-  // Unskip together with the engine fix once the human confirms.
-  it.skip("freezes both media clocks while paused and lands cleanly after unpause", async () => {
+  // Gold-adjudicated 2026-07-15: real bug, fixed — togglePause now
+  // finalizes an in-flight transition (outgoing retires, incoming at
+  // full gain) before pausing, the same idiom as seek.
+  it("freezes both media clocks while paused and lands cleanly after unpause", async () => {
     const engine = await createEngineWithAB();
     expect(engine.beginTransition(plan(4), "/a.flac")).toBe(true);
     await flushFadeAnchor();
@@ -307,10 +307,10 @@ describe("XF-5 — fade longer than the outgoing remainder", () => {
   // while transitioning) is the red condition: the outgoing deck dies
   // at gainOut² ≈ 0.5 with the incoming only halfway up. Outcome (b)
   // rejected: decks untouched, natural gapless handoff still works.
-  // PENDING GOLD ADJUDICATION (red on the current engine): the end
-  // window admits remaining < durationSec and the outgoing deck's
-  // death mid-fade drops Σgain² by ~0.5 in one sub-step.
-  it.skip("accepted: no loudness cliff at the outgoing deck's death — rejected: gapless still works", async () => {
+  // Gold-adjudicated 2026-07-15: real bug, fixed — the fade duration
+  // now clamps to the outgoing remainder at arming, so the ramp
+  // reaches silence exactly as the media ends.
+  it("accepted: no loudness cliff at the outgoing deck's death — rejected: gapless still works", async () => {
     const engine = await createEngineWithAB();
     audios[1].currentTime = 296;
 
@@ -348,10 +348,11 @@ describe("XF-4 — incoming track shorter than the fade", () => {
   // > 100ms while the engine still claims transitioning); afterwards no
   // deck may be left frozen at half gain. The endeds capture documents
   // the engine's actual mid-fade signal to the shell.
-  // PENDING GOLD ADJUDICATION (red on the current engine): arming
-  // never checks the incoming duration; a short incoming dies mid-fade
-  // leaving ≥150ms of dead air with `transitioning` still true.
-  it.skip("a 2s incoming under a 4s fade leaves no silence window and no stuck flag", async () => {
+  // Gold-adjudicated 2026-07-15: real bug, fixed — the fade duration
+  // also clamps to the incoming remainder, so a short incoming
+  // reaches unity exactly at its natural end (which then advances the
+  // shell as any track end would).
+  it("a 2s incoming under a 4s fade leaves no silence window and no stuck flag", async () => {
     const engine = await createFreshEngine();
     await engine.play(track("/a.flac"));
     engine.preloadNext(track("/b.flac"));

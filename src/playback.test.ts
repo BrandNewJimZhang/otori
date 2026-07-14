@@ -187,6 +187,7 @@ describe("TwoDeckEngine transitions", () => {
 
   it("schedules fades on the audio clock and completes without any rAF frames", async () => {
     const engine = await createEngineWithAB();
+    audios[1].currentTime = 295; // 5s left: the 4s fade fits physically
     engine.beginTransition(plainPlan(4), "/a.flac");
     await flushFadeAnchor();
 
@@ -207,6 +208,7 @@ describe("TwoDeckEngine transitions", () => {
 
   it("ramps playbackRate over rAF frames for beat-matched plans", async () => {
     const engine = await createEngineWithAB();
+    audios[1].currentTime = 295; // 5s left: the 4s fade fits physically
     const plan: TransitionPlan = {
       kind: "beatmatched",
       durationSec: 4,
