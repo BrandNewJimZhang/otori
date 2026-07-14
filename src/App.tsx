@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { getArtwork, listTracks, setDisplayAwake, setLyricsOffset, reopenAnalysis } from "./ipc";
+import { getArtwork, listTracks, setDisplayAwake, reopenAnalysis } from "./ipc";
 import { createEngine } from "./playback";
 import { Stage } from "./Stage";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -70,8 +70,6 @@ interface MenuState {
 function App() {
   const [mode, setMode] = useState<Mode>("backstage");
   const [tracks, setTracks] = useState<TrackRow[]>([]);
-  // Per-track sync nudge, mirrored from the index row; [ / ] update it.
-  const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   // Shared lazy cover cache for the table (dedup + IPC concurrency cap +
   // negative caching). Created once; the table drives it from view.
   const artworkCache = useRef(
@@ -133,6 +131,8 @@ function App() {
     position,
     lyrics,
     artwork,
+    lyricsOffsetMs,
+    nudgeLyrics,
     queue,
     setQueue,
     shuffle,
@@ -152,6 +152,11 @@ function App() {
     crossfadeSec,
     { shuffle: initialPrefs.shuffle, repeat: initialPrefs.repeat },
     setError,
+    // Keep the library rows coherent without a refetch round-trip.
+    (trackId, offsetMs) =>
+      setTracks((ts) =>
+        ts.map((t) => (t.id === trackId ? { ...t, lyrics_offset_ms: offsetMs } : t)),
+      ),
   );
 
   // Queue badge lookup: track id → 1-based position.
@@ -283,27 +288,6 @@ function App() {
     return () => {
       unlisten.then((off) => off());
     };
-  }, []);
-
-  // The playing track's sync nudge follows the current row (external
-  // writers may change it too — rows refresh on library-changed).
-  useEffect(() => {
-    setLyricsOffsetMs(current?.lyrics_offset_ms ?? 0);
-  }, [current]);
-  const lyricsOffsetRef = useRef(lyricsOffsetMs);
-  lyricsOffsetRef.current = lyricsOffsetMs;
-
-  /** Nudge lyric sync ±ms for the playing track; persists to the index. */
-  const nudgeLyrics = useCallback((deltaMs: number) => {
-    const cur = currentRef.current;
-    if (!cur) return;
-    const next = lyricsOffsetRef.current + deltaMs;
-    setLyricsOffsetMs(next);
-    setLyricsOffset(cur.id, next).catch((e) => setError(String(e)));
-    // Keep the library rows coherent without a refetch round-trip.
-    setTracks((ts) =>
-      ts.map((t) => (t.id === cur.id ? { ...t, lyrics_offset_ms: next } : t)),
-    );
   }, []);
 
   // Stage is a performance surface: keep the display awake while it

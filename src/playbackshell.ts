@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { planTransition } from "./djmix";
-import { getArtwork, getLyrics } from "./ipc";
+import { getArtwork, getLyrics, setLyricsOffset } from "./ipc";
 import { displayTitle } from "./library";
 import { headMixPoint, tailMixPoint } from "./mixpoints";
 import type { PlaybackEngine } from "./playback";
@@ -22,6 +22,10 @@ export interface PlaybackShell {
   position: number;
   lyrics: LyricsDoc | null;
   artwork: string | null;
+  /** Per-track lyric sync nudge, mirrored from the playing row. */
+  lyricsOffsetMs: number;
+  /** Nudge lyric sync ±ms for the playing track; persists to the index. */
+  nudgeLyrics(deltaMs: number): void;
   /** Play-next queue (audit P1): explicit picks preempt the play order. */
   queue: number[];
   setQueue: Dispatch<SetStateAction<number[]>>;
@@ -49,12 +53,16 @@ export function usePlaybackShell(
   crossfadeSec: number,
   initial: { shuffle: boolean; repeat: RepeatMode },
   onError: (message: string | null) => void,
+  /** A nudge persisted: let the owner keep its library rows coherent. */
+  onLyricsOffsetPersisted: (trackId: number, offsetMs: number) => void,
 ): PlaybackShell {
   const [current, setCurrent] = useState<TrackRow | null>(null);
   const [paused, setPaused] = useState(true);
   const [position, setPosition] = useState(0);
   const [lyrics, setLyrics] = useState<LyricsDoc | null>(null);
   const [artwork, setArtwork] = useState<string | null>(null);
+  // Per-track sync nudge, mirrored from the index row; [ / ] update it.
+  const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   const [queue, setQueue] = useState<number[]>([]);
   const [shuffle, setShuffle] = useState(initial.shuffle);
   const [repeat, setRepeat] = useState<RepeatMode>(initial.repeat);
@@ -78,6 +86,29 @@ export function usePlaybackShell(
   const frozenShuffleOrder = useCallback(
     () => (shuffleRef.current ? shuffleOrderRef.current : null),
     [],
+  );
+
+  // The playing track's sync nudge follows the current row (external
+  // writers may change it too — rows refresh on library-changed).
+  useEffect(() => {
+    setLyricsOffsetMs(current?.lyrics_offset_ms ?? 0);
+  }, [current]);
+  const lyricsOffsetRef = useRef(lyricsOffsetMs);
+  lyricsOffsetRef.current = lyricsOffsetMs;
+  const onLyricsOffsetPersistedRef = useRef(onLyricsOffsetPersisted);
+  onLyricsOffsetPersistedRef.current = onLyricsOffsetPersisted;
+
+  /** Nudge lyric sync ±ms for the playing track; persists to the index. */
+  const nudgeLyrics = useCallback(
+    (deltaMs: number) => {
+      const cur = currentRef.current;
+      if (!cur) return;
+      const next = lyricsOffsetRef.current + deltaMs;
+      setLyricsOffsetMs(next);
+      setLyricsOffset(cur.id, next).catch((e) => onError(String(e)));
+      onLyricsOffsetPersistedRef.current(cur.id, next);
+    },
+    [onError],
   );
 
   /** Sync the UI to a track the engine advanced into (gapless handoff
@@ -321,6 +352,8 @@ export function usePlaybackShell(
       position,
       lyrics,
       artwork,
+      lyricsOffsetMs,
+      nudgeLyrics,
       queue,
       setQueue,
       shuffle,
@@ -341,6 +374,8 @@ export function usePlaybackShell(
       position,
       lyrics,
       artwork,
+      lyricsOffsetMs,
+      nudgeLyrics,
       queue,
       shuffle,
       repeat,
