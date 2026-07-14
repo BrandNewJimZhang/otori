@@ -77,3 +77,29 @@ rather than stretched into this one: scan/drop (scanning, dragOver,
 scanDir), the lyrics-offset nudge (belongs in playbackshell), toasts,
 and the prefs-persistence effect. Each is small and independent; none
 blocks the next GAE step.
+
+## Follow-up round (2026-07-15, worktree `gae-step3b-shell-leftovers`)
+
+The four leftovers, one commit each, each independently green
+(typecheck + 303 frontend tests; production build at the end):
+
+| New file | Kind | Owns |
+| --- | --- | --- |
+| `toastshell.ts` | hook | toast list state + id sequence (`useToasts`); pure semantics stay in `toasts.ts`, the error slot stays in App |
+| `prefsshell.ts` | hooks | `usePrefs` (the seven persisted preference states) + `useSavePrefs` (the save-on-change effect); split because playbackshell needs `crossfadeSec` before it runs and the blob needs shuffle/repeat after |
+| `scanshell.ts` | hook | scanning flag, drop-zone affordance, folder pick, native drag-drop listener (`useScan`) |
+| — | — | lyrics nudge moved into `playbackshell.ts` (playing-track state, keyed by `current`, like lyrics/artwork) |
+
+| Metric | Round 1 after | Target | Round 2 after |
+| --- | --- | --- | --- |
+| App.tsx lines | 806 | ≤ 500 | 740 |
+| App.tsx `useState` calls | 24 | ≤ 12 | 13 |
+| App.tsx `useEffect` calls | 13 | ≤ 8 | 10 |
+| Frontend tests | 303 | ≥ 290 green | 303 |
+
+What remains in App is the composition root by the design's own
+definition: mode/selection/query/menus/overlay booleans, the keyboard
+router, the two surface layouts, and the shell-composition glue. The
+line target was set before measuring that floor; the state/effect
+counts are now within one hook of target and every remaining hook is
+cross-cutting. Calling this converged.
