@@ -59,7 +59,10 @@ export function nextId(
   if (repeat === "one" && !manual) return currentId;
   const next = idx + offset;
   if (next >= 0 && next < order.length) return order[next];
-  if (repeat === "all" && order.length > 0) {
+  // At the edge: repeat-all wraps; repeat-one wraps too on a manual
+  // skip — a skip always moves, and upcomingPreview promises it goes
+  // where repeat-all would (the transport must match the panel).
+  if ((repeat === "all" || repeat === "one") && order.length > 0) {
     return order[(next + order.length) % order.length];
   }
   return null;

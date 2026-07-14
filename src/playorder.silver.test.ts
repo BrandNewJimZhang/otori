@@ -81,3 +81,22 @@ describe("silver: the queue may hold the current track itself (PO-14)", () => {
     expect(r).toEqual({ id: 2, queue: [3], fromQueue: true });
   });
 });
+
+describe("silver: repeat-one manual skip at the order edge (PO-2b, gold-adjudicated)", () => {
+  // Derivation: upcomingPreview previews repeat-one as repeat-all
+  // ("the panel answers where skips go") — the transport must go
+  // where the panel promised. Gold ruling 2026-07-15: wrap.
+  it("wraps to the order head, matching the panel's promise", () => {
+    expect(upcomingPreview([1, 2, 3], [], 3, null, "one", 10)).toEqual([1, 2]);
+    expect(nextId([1, 2, 3], 3, 1, "one", true)).toBe(1);
+  });
+
+  it("wraps backward from the head symmetrically", () => {
+    expect(nextId([1, 2, 3], 1, -1, "one", true)).toBe(3);
+  });
+
+  it("still replays on a natural end, and still steps mid-order", () => {
+    expect(nextId([1, 2, 3], 3, 1, "one", false)).toBe(3); // natural end: replay
+    expect(nextId([1, 2, 3], 2, 1, "one", true)).toBe(3); // mid-order: neighbor
+  });
+});
