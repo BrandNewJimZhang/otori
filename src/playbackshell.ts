@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { planTransition } from "./djmix";
+import { mixFallbackNotice, planTransition } from "./djmix";
 import { getArtwork, getLyrics, setLyricsOffset } from "./ipc";
 import { displayTitle } from "./library";
 import { headMixPoint, tailMixPoint } from "./mixpoints";
@@ -59,6 +59,8 @@ export function usePlaybackShell(
   crossfadeSec: number,
   initial: { shuffle: boolean; repeat: RepeatMode },
   onError: (message: string | null) => void,
+  /** Transient info (toast stack): MIX fallback notices land here. */
+  onNotice: (message: string) => void,
   /** A nudge persisted: let the owner keep its library rows coherent. */
   onLyricsOffsetPersisted: (trackId: number, offsetMs: number) => void,
 ): PlaybackShell {
@@ -151,6 +153,11 @@ export function usePlaybackShell(
   // DJ crossfade arming state (effect below); seekTo voids both.
   const transitionArmed = useRef<string | null>(null);
   const planEpoch = useRef(0);
+  // Fallback-notice throttle: one toast per outgoing→incoming pair —
+  // re-arming after a transient engine rejection must not re-toast.
+  const fallbackNotified = useRef<string | null>(null);
+  const onNoticeRef = useRef(onNotice);
+  onNoticeRef.current = onNotice;
 
   const seekTo = useCallback(
     (secs: number) => {
@@ -321,6 +328,18 @@ export function usePlaybackShell(
       // track ends naturally: gapless takes over, same as before.
       if (!engine.beginTransition(plan, current.path)) {
         transitionArmed.current = null;
+        return;
+      }
+      // MIX degraded to a plain fade on a transition that actually ran:
+      // say why, once per pair (retries and re-arms stay silent).
+      if (plan.kind === "plain") {
+        const pairKey = `${current.path} ${next.path}`;
+        if (fallbackNotified.current !== pairKey) {
+          fallbackNotified.current = pairKey;
+          onNoticeRef.current(
+            mixFallbackNotice(plan.reason, displayTitle(current), displayTitle(next)),
+          );
+        }
       }
     })();
   }, [position, crossfadeSec, current, engine]);

@@ -152,6 +152,7 @@ function App() {
     crossfadeSec,
     { shuffle: initialPrefs.shuffle, repeat: initialPrefs.repeat },
     setError,
+    toast.push,
     // Keep the library rows coherent without a refetch round-trip.
     (trackId, offsetMs) =>
       setTracks((ts) =>

@@ -158,6 +158,15 @@ export function planTransition(
   };
 }
 
+/** Toast copy for a MIX transition that degraded to a plain fade —
+    keyed off the plan's reason so "mix sounds like crossfade" is
+    diagnosable at the moment it happens. */
+export function mixFallbackNotice(reason: PlainReason, fromTitle: string, toTitle: string): string {
+  const cause =
+    reason === "missing-anchor" ? "no beat grid on one end" : "tempos too far apart";
+  return `MIX: plain fade ${fromTitle} → ${toTitle} (${cause})`;
+}
+
 /**
  * Phase-lock the incoming entry to the outgoing deck at the fade
  * anchor: given where the outgoing track actually is the moment the

@@ -3,7 +3,7 @@
 // and gain curves a DJ would perform by hand.
 
 import { describe, expect, it } from "vitest";
-import { alignEntry, MAX_RATE_STRETCH, planTransition, type MixPoint } from "./djmix";
+import { alignEntry, MAX_RATE_STRETCH, mixFallbackNotice, planTransition, type MixPoint } from "./djmix";
 
 const point = (bpm: number, beatSec = 0): MixPoint => ({ bpm, beatSec });
 
@@ -146,5 +146,16 @@ describe("alignEntry", () => {
     const outPeriod = 60 / 120;
     // Anchor lands exactly on an outgoing beat → zero phase shift.
     expect(alignEntry(plan, 100 * outPeriod)).toBeCloseTo(plan.incoming.startOffsetSec, 9);
+  });
+});
+
+describe("mixFallbackNotice", () => {
+  it("describes each degrade reason with both track titles", () => {
+    expect(mixFallbackNotice("missing-anchor", "Alpha", "Beta")).toBe(
+      "MIX: plain fade Alpha → Beta (no beat grid on one end)",
+    );
+    expect(mixFallbackNotice("tempo-gap", "Alpha", "Beta")).toBe(
+      "MIX: plain fade Alpha → Beta (tempos too far apart)",
+    );
   });
 });
