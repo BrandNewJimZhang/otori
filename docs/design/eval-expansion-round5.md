@@ -1,8 +1,8 @@
 # Design: Eval-expansion engine, round 5
 
 Date: 2026-07-15
-Status: closed pending gold — 36 silver locked; 0 clear-bug reds;
-3 red-candidates pending gold ruling
+Status: closed — 36 silver locked; 0 clear-bug reds; 3 red-candidates
+gold-ruled (1 fix, 2 keep)
 
 Protocol: as round 4 (blind generation → adjudication; `it.skip` =
 confirmed-bug pending fix, `RED-CANDIDATE` comment = preference call
@@ -77,6 +77,22 @@ Suite: r5 worktree total after this round: 36 new tests across
    Recommend: keep (locked rendering doubles as the tripwire) or the
    one-line `models.length < 2` guard — preference call.
 
+## Gold ruling + constraint feedback (2026-07-15)
+
+The human approved the recommended dispositions in one pass (~1
+preference bit):
+
+| Finding | Ruling | Disposition |
+| --- | --- | --- |
+| PR-13f slider fractional passthrough | fix | the whole (0,2) interval rounds up to the 2s floor — the comment's promise is the contract; spec test flipped red-first, then green |
+| PR-14a out-of-range slider passthrough | keep | range inputs are min/max-bounded; loadPrefs gates persisted values |
+| AF-10a single-model registry self-cycle | keep | already-active guard eats the no-op; locked rendering is the tripwire |
+
+Rulings recorded at each case. Suite after feedback: 495 green + 1
+skip (VW-9, pre-existing), tsc clean. Round 5 fully closed. Cumulative
+human preference bits across five rounds: ~6. Cumulative silver: 166
+locked cases.
+
 ## Convergence data — fifth point
 
 | Metric | r1 | r2 | r3 | r4 | r5 |
@@ -85,7 +101,7 @@ Suite: r5 worktree total after this round: 36 new tests across
 | Locked silver | 26 | 29 | 36 | 39 | 36 |
 | Clear-bug reds | 6 | 0 | 8 | 0 | **0** |
 | Red-candidates | 0 | 3 | 6 | 8 | **3** |
-| Human bits in | ~2 | ~1 | ~1 | ~1 | pending |
+| Human bits in | ~2 | ~1 | ~1 | ~1 | ~1 |
 
 r5 is the second consecutive zero-clear-bug round, and the first where
 even the red-candidate count FELL on unswept ground (8 → 3). The r4

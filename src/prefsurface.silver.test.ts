@@ -210,25 +210,22 @@ describe("silver: savePrefs writes the canonical key (PR-1 remainder)", () => {
 });
 
 describe("silver: crossfadeFromSlider beyond the mapped points (PR-13, PR-14)", () => {
-  // RED-CANDIDATE (PR-13f): the doc comment says "rounds 1 up to the
-  // 2s floor so a tiny fade can't produce an inaudible half-
-  // crossfade", but the implementation maps ONLY the exact value 1 —
-  // 1.5 passes through as 1.5 seconds, inside the inaudible band the
-  // comment promises to close. Reachability: both production sliders
-  // step by 1 (PlayerBar step={1}, SettingsOverlay step={1}), so a
-  // fractional value needs a programmatic setValue or a future finer
-  // step. Asserting ACTUAL behavior; gold may revoke.
-  it("1.5 passes through below the 2s floor (comment promises the floor — flagged)", () => {
-    expect(crossfadeFromSlider(1.5)).toBe(1.5);
+  // PR-13f gold ruling (2026-07-15): fix — the doc comment's promise
+  // ("a tiny fade can't produce an inaudible half-crossfade") is the
+  // better contract, so the whole open interval (0,2) rounds up to
+  // the 2s floor, not just the exact value 1.
+  it("every value in (0,2) rounds up to the 2s floor", () => {
+    expect(crossfadeFromSlider(1.5)).toBe(2);
+    expect(crossfadeFromSlider(1)).toBe(2);
+    expect(crossfadeFromSlider(0.25)).toBe(2);
   });
 
-  // RED-CANDIDATE (PR-14a): out-of-range slider values pass through
-  // unclamped — 17 exceeds CROSSFADE_SLIDER_MAX and -1 emits a
-  // negative crossfade second. Reachability: the two production call
-  // sites feed range inputs bounded by min/max attributes, so
-  // out-of-range needs a programmatic dispatch; loadPrefs's own 0..30
-  // gate would keep a persisted 17 but reject -1 on next launch.
-  // Asserting ACTUAL behavior; gold may revoke.
+  // GOLD RULING 2026-07-15: keep as-is (range inputs are min/max-
+  // bounded, so out-of-range needs a programmatic dispatch; loadPrefs's
+  // 0..30 gate catches -1 on the next launch — same class as r4's
+  // unreachable-corruption findings). Was flagged: out-of-range slider
+  // values pass through unclamped — 17 exceeds CROSSFADE_SLIDER_MAX
+  // and -1 emits a negative crossfade second.
   it("out-of-range values pass through unclamped (flagged)", () => {
     expect(crossfadeFromSlider(17)).toBe(17);
     expect(crossfadeFromSlider(-1)).toBe(-1);

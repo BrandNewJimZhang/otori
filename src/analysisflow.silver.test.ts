@@ -150,14 +150,13 @@ describe("silver: nextModelId degenerate registries (AF-10)", () => {
     { id: "b", label: "B", available: false },
   ];
 
-  // RED-CANDIDATE (AF-10a): a single-model registry returns the
-  // active id itself — the cycle button offers a guaranteed no-op
-  // (performModelSelect's already-active guard catches it, so nothing
-  // breaks, but the contract says null = "nothing to cycle to" and a
-  // one-model registry has nothing to cycle to). Reachability: real
-  // whenever only the bundled model is registered. The wasted path is
-  // select() → guard → false; no user-visible harm. Asserting ACTUAL
-  // behavior; gold may revoke.
+  // GOLD RULING 2026-07-15: keep as-is (performModelSelect's
+  // already-active guard eats the no-op select, so no user-visible
+  // harm; the locked rendering doubles as the tripwire). Was flagged:
+  // a single-model registry returns the active id itself — the cycle
+  // button offers a guaranteed no-op, while the contract says null =
+  // "nothing to cycle to" and a one-model registry has nothing to
+  // cycle to.
   it("a single-model registry cycles to itself (contract says null — flagged)", () => {
     expect(nextModelId(one, "a")).toBe("a");
   });
