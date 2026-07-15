@@ -13,7 +13,7 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { effectiveGain } from "./gain";
-import type { TransitionPlan } from "./djmix";
+import { alignEntry, type TransitionPlan } from "./djmix";
 
 export interface TrackSource {
   path: string;
@@ -376,6 +376,14 @@ class TwoDeckEngine implements PlaybackEngine {
         // moved on and these decks belong to someone else now.
         if (epoch !== this.transitionEpoch) return;
         this.transitionPending = false;
+
+        // Phase-lock NOW, not at plan time: spin-up latency moved the
+        // outgoing deck an unknowable amount since begin. Re-place the
+        // entry so both decks' next beats coincide — the nudge is under
+        // one beat period, inside the already-buffered region.
+        if (plan.kind === "beatmatched") {
+          to.audio.currentTime = alignEntry(plan, from.audio.currentTime);
+        }
 
         // Both curves anchor here, where sound actually exists —
         // volume/ReplayGain sampled now so a mid-spin-up wheel of the

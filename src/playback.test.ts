@@ -10,7 +10,7 @@
 //  - the deferred preload materializes once the outgoing deck retires
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TransitionPlan } from "./djmix";
+import { alignEntry, planTransition, type TransitionPlan } from "./djmix";
 import {
   advanceWorld,
   audios,
@@ -32,6 +32,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const plainPlan = (durationSec: number): TransitionPlan => ({
   kind: "plain",
   durationSec,
+  reason: "missing-anchor",
   gainOut: (t) => 1 - t,
   gainIn: (t) => t,
 });
@@ -215,12 +216,14 @@ describe("TwoDeckEngine transitions", () => {
       durationSec: 4,
       outgoing: { rateFrom: 1, rateTo: 1.05, startOffsetSec: 0 },
       incoming: { rateFrom: 1 / 1.05, rateTo: 1, startOffsetSec: 2 },
+      outGrid: { bpm: 120, beatSec: 295 }, // anchor ON the beat: zero phase shift
+      inGrid: { bpm: 126, beatSec: 2 },
       gainOut: (t) => 1 - t,
       gainIn: (t) => t,
     };
     engine.beginTransition(plan, "/a.flac");
-    expect(audios[0].currentTime).toBe(2); // incoming enters on its offset
     await flushFadeAnchor();
+    expect(audios[0].currentTime).toBe(2); // incoming enters on its offset
 
     vi.advanceTimersByTime(2000); // halfway
     pumpFrames();
@@ -232,6 +235,31 @@ describe("TwoDeckEngine transitions", () => {
     vi.advanceTimersByTime(0); // completion timer already due
     expect(engine.transitioning).toBe(false);
     expect(audios[0].playbackRate).toBe(1); // settled at natural tempo
+  });
+
+  it("phase-aligns the beat-matched entry at the anchor instant (spin-up compensated)", async () => {
+    const engine = await createEngineWithAB();
+    const outgoing = audios[1];
+    const incoming = audios[0];
+    // Real planner output so the grids are consistent with the ramps.
+    const outGrid = { bpm: 125, beatSec: 290 };
+    const inGrid = { bpm: 128, beatSec: 0.25 };
+    const plan = planTransition(outGrid, inGrid, 8);
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+
+    // Park the outgoing deck mid-beat inside its end window, then make
+    // the incoming deck take 730ms to start sounding: the anchor
+    // instant (and thus the outgoing phase) is unknowable at plan time.
+    outgoing.currentTime = 292.3;
+    incoming.spinUpMs = 730;
+    expect(engine.beginTransition(plan, "/a.flac")).toBe(true);
+    await advanceWorld(730);
+
+    // The entry seek happened at the anchor, phase-locked to where the
+    // outgoing deck ACTUALLY is now — not to where it was at begin.
+    const expected = alignEntry(plan, outgoing.currentTime);
+    expect(incoming.currentTime).toBeCloseTo(expected, 3);
+    expect(expected).toBeGreaterThan(plan.incoming.startOffsetSec); // 730ms drift ≠ 0 phase
   });
 
   it("cancels scheduled fades when play() interrupts a transition", async () => {
