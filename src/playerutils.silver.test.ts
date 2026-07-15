@@ -38,7 +38,8 @@ describe("silver: seekMax non-finite and negative durations (PU-1, PU-2)", () =>
     expect(seekMax(-Infinity)).toBe(0);
   });
 
-  // RED-CANDIDATE (gold ruling pending): the spec argues seekMax(-3.5)
+  // GOLD RULING 2026-07-15: keep as-is (corrupt negative durations do
+  // not occur from the index; finite passthrough locked). Spec argued seekMax(-3.5)
   // should be 0 — a negative duration is corrupt metadata, and a range
   // control with max < min renders a dead-but-broken slider (UX
   // argument: same treatment as NaN/∞). The current implementation
@@ -104,7 +105,8 @@ describe("silver: effectiveGain NaN replaygain (PU-9)", () => {
 });
 
 describe("silver: shouldFollow under backwards clock skew (PU-11)", () => {
-  // RED-CANDIDATE (gold ruling pending): nowMs < lastManualScrollMs
+  // GOLD RULING 2026-07-15: keep as-is (no production call site yet;
+  // performance.now() is monotonic when Stage wires it). Spec noted: nowMs < lastManualScrollMs
   // (elapsed -9000ms) — the spec argues TRUE ("never freeze"): the
   // asymmetric cost is a lyrics pane frozen until the wall clock
   // catches up (~13s here) versus one spurious re-centering. The

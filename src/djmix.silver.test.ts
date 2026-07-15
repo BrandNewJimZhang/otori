@@ -128,7 +128,8 @@ describe("silver: acceptance-window boundaries (DJ-7, DJ-8, DJ-9)", () => {
     expect(planTransition(point(100), point(66), 8).kind).toBe("plain");
   });
 
-  // RED-CANDIDATE (gold ruling pending): 108/100 evaluates to 1.08
+  // GOLD RULING 2026-07-15: keep as-is (open-interval ceiling is a
+  // defensible reading of the ±8% heuristic). Was flagged: 108/100 evaluates to 1.08
   // exactly, but |1.08 - 1| = 0.08000000000000007 in IEEE-754, which
   // is > 0.08 — the nominal +8% pair is rejected by float dust. The
   // spec prefers an epsilon-tolerant acceptance (a DJ WOULD mix
@@ -140,7 +141,8 @@ describe("silver: acceptance-window boundaries (DJ-7, DJ-8, DJ-9)", () => {
     expect(plan.durationSec).toBe(8);
   });
 
-  // RED-CANDIDATE (gold ruling pending): acceptance is symmetric in
+  // GOLD RULING 2026-07-15: keep as-is (±8% is a heuristic, 1.087 on
+  // one deck is inside its tolerance). Was flagged: acceptance is symmetric in
   // the LINEAR ratio (|0.92 - 1| = 0.0799999... passes) but the
   // incoming deck's starting rate is the RECIPROCAL, 1/0.92 =
   // 1.0869565 — above the 1.08 comfort ceiling the constant
@@ -178,7 +180,8 @@ describe("silver: requestedSec degeneracy (DJ-10, DJ-11)", () => {
     expect(negative.durationSec).toBe(2); // max(1, round(-2.5)) = 1 bar
   });
 
-  // RED-CANDIDATE (gold ruling pending): the plain path passes
+  // GOLD RULING 2026-07-15: keep as-is (unreachable — crossfadeSec 0
+  // means MIX off, the shell never arms). Was flagged: the plain path passes
   // requestedSec through unquantized, so a 0 request yields a
   // zero-duration plan — a divide-by-duration NaN hazard for any
   // executor that normalizes t = elapsed/durationSec. Defensible
