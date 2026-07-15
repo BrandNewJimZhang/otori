@@ -194,19 +194,19 @@ describe("silver: requestedSec degeneracy (DJ-10, DJ-11)", () => {
 describe("silver: anchor-second edge cases (DJ-12, DJ-13)", () => {
   // RED-CANDIDATE (gold ruling pending): a negative incoming beatSec
   // (anchor before track zero, e.g. from an analysis offset) hits
-  // JS truncated `%`: -0.3 % 0.5 = -0.3, so startOffsetSec = -0.3 +
-  // 2.0 = 1.7 — BELOW the incoming bar length 2.0, i.e. not the
-  // documented "enter at bar 2" position (it is one beat early,
-  // though still ≥ 0 and on the beat grid). The spec prefers a
-  // Euclidean mod, which would give 0.2 + 2.0 = 2.2. Asserting
-  // actual: 1.7.
-  it("DJ-12: negative incoming beatSec enters one beat before bar 2", () => {
+  // JS truncated `%`: -0.3 % 0.5 = -0.3, so startOffsetSec came out
+  // 1.7 — one beat BEFORE the documented "enter at bar 2" position.
+  // Gold-adjudicated 2026-07-15: fixed with a Euclidean mod — the
+  // beat phase folds to [0, period) regardless of the anchor's sign,
+  // so entry is 0.2 + 2.0 = 2.2, on bar 2 of the incoming grid.
+  it("DJ-12: negative incoming beatSec still enters at bar 2 (Euclidean phase)", () => {
     const plan = planTransition(point(120), point(120, -0.3), 8);
     expect(plan.kind).toBe("beatmatched");
     if (plan.kind !== "beatmatched") return;
-    expect(plan.incoming.startOffsetSec).toBeCloseTo(1.7, 10);
+    expect(plan.incoming.startOffsetSec).toBeCloseTo(2.2, 10);
     const inBar = (60 / 120) * 4;
-    expect(plan.incoming.startOffsetSec).toBeLessThan(inBar); // the tension
+    expect(plan.incoming.startOffsetSec).toBeGreaterThanOrEqual(inBar);
+    expect(plan.incoming.startOffsetSec).toBeLessThan(inBar + 60 / 120);
   });
 
   // Derivation: multi-octave pairing (30 vs 240 = three fold steps)

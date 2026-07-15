@@ -99,10 +99,13 @@ export function planTransition(
   // Incoming starts on its own downbeat nearest to a musically useful
   // entry (skip at least the first beat; land on a bar boundary of its
   // own grid so the phrase lines up). Fold the anchor beat back to the
-  // first beat of the head window before stepping in.
+  // first beat of the head window before stepping in — Euclidean phase:
+  // beat grids extrapolated backward past track zero carry negative
+  // anchors, and JS truncated % would enter a beat early on those.
   const inPeriod = 60 / incomingHead.bpm;
   const inBar = inPeriod * 4;
-  const startOffsetSec = (incomingHead.beatSec % inPeriod) + inBar; // enter at bar 2
+  const beatPhase = ((incomingHead.beatSec % inPeriod) + inPeriod) % inPeriod;
+  const startOffsetSec = beatPhase + inBar; // enter at bar 2
 
   return {
     kind: "beatmatched",
