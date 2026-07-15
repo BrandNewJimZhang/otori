@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TransitionPlan } from "./djmix";
 import {
+  advanceWorld,
   audios,
   createEngineWithAB,
   ctxs,
@@ -288,5 +289,51 @@ describe("TwoDeckEngine transitions", () => {
     // No double-retire, no stray state flips.
     expect(audios[1].paused).toBe(pausesBefore);
     expect(engine.transitioning).toBe(false);
+  });
+});
+
+describe("TwoDeckEngine progress ticks", () => {
+  // WKWebView suspends the media element's `timeupdate` event (like
+  // rAF) when the window is occluded or not key, while the audio clock
+  // keeps running — the bar freezes but the music plays on. Progress
+  // ticks must therefore ride a timer sampling the deck clock, not the
+  // DOM event. This fake world never fires `timeupdate` and never pumps
+  // rAF — exactly the hidden-window condition.
+  it("ticks from the deck clock without timeupdate events or rAF frames", async () => {
+    const engine = await createEngineWithAB();
+    const ticks: number[] = [];
+    engine.onTimeUpdate((secs) => ticks.push(secs));
+
+    await advanceWorld(1000);
+
+    expect(ticks.length).toBeGreaterThanOrEqual(3); // ~4Hz cadence
+    // A parked at 297; after 1s of playback the clock reads ~298.
+    expect(ticks[ticks.length - 1]).toBeCloseTo(298, 1);
+  });
+
+  it("does not tick while paused", async () => {
+    const engine = await createEngineWithAB();
+    const ticks: number[] = [];
+    engine.onTimeUpdate((secs) => ticks.push(secs));
+
+    engine.togglePause();
+    await advanceWorld(1000);
+
+    expect(ticks).toEqual([]);
+  });
+
+  it("follows the incoming deck once a transition hands off", async () => {
+    const engine = await createEngineWithAB();
+    engine.beginTransition(plainPlan(4), "/a.flac");
+    await flushFadeAnchor(); // ownership flipped to the incoming deck
+    const ticks: number[] = [];
+    engine.onTimeUpdate((secs) => ticks.push(secs));
+
+    await advanceWorld(1000);
+
+    // The incoming track started from 0 — ticks report ITS clock, not
+    // the still-audible outgoing deck parked near 297.
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    for (const t of ticks) expect(t).toBeLessThan(5);
   });
 });

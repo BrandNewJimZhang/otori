@@ -248,7 +248,9 @@ export function installAudioFakes(): void {
   vi.stubGlobal("cancelAnimationFrame", (id: number) => {
     rafCallbacks.delete(id);
   });
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"],
+  });
 }
 
 export function uninstallAudioFakes(): void {

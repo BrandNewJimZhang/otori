@@ -57,7 +57,8 @@ export interface PlaybackEngine {
   /** Fires when a transition hands control to the incoming track. */
   onTransitionAdvance(cb: (path: string) => void): void;
   onError(cb: (message: string) => void): void;
-  /** ~4Hz progress ticks while playing (media timeupdate cadence). */
+  /** ~4Hz progress ticks while playing (interval-sampled deck clock —
+      survives a hidden window, unlike the media timeupdate event). */
   onTimeUpdate(cb: (secs: number) => void): void;
 }
 
@@ -87,6 +88,13 @@ class TwoDeckEngine implements PlaybackEngine {
   private transitionAdvanceCb: ((path: string) => void) | null = null;
   private errorCb: ((message: string) => void) | null = null;
   private timeCb: ((secs: number) => void) | null = null;
+  /** setInterval id of the progress ticker; 0 until a consumer
+      registers. Progress rides a timer sampling the deck clock, NOT
+      the media `timeupdate` event: WKWebView suspends that event
+      (like rAF) in a hidden/unfocused window while audio keeps
+      playing — the bar would freeze. Timers survive backgrounding
+      (worst case throttled to ~1Hz, not stopped). */
+  private tickTimer = 0;
   /** rAF id of the beat-matched rate-ramp loop; 0 when idle. */
   private transitionRaf = 0;
   /** setTimeout id of the transition finalizer; 0 when idle. Fades are
@@ -117,9 +125,6 @@ class TwoDeckEngine implements PlaybackEngine {
       if (this.deckIndex(deck) !== this.active) return;
       const advanced = this.tryGaplessAdvance();
       this.endedCb?.(advanced);
-    });
-    deck.audio.addEventListener("timeupdate", () => {
-      if (this.deckIndex(deck) === this.active) this.timeCb?.(deck.audio.currentTime);
     });
     deck.audio.addEventListener("error", () => {
       if (this.deckIndex(deck) !== this.active) return; // preload errors surface on switch
@@ -490,6 +495,11 @@ class TwoDeckEngine implements PlaybackEngine {
 
   onTimeUpdate(cb: (secs: number) => void): void {
     this.timeCb = cb;
+    if (this.tickTimer) clearInterval(this.tickTimer);
+    this.tickTimer = setInterval(() => {
+      const { audio } = this.activeDeck;
+      if (!audio.paused) this.timeCb?.(audio.currentTime);
+    }, 250);
   }
 }
 
