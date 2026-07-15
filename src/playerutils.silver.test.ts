@@ -96,8 +96,9 @@ describe("silver: effectiveGain NaN replaygain (PU-9)", () => {
   // index, so a NaN is unlikely from the normal path; only a
   // hypothetical tag-parsing edge could produce it. Gold may rule
   // won't-fix on reachability grounds.
-  // PENDING GOLD ADJUDICATION (red on the current engine): actual NaN.
-  it.skip("treats NaN replaygain as no-data and returns the volume", () => {
+  // Gold-adjudicated 2026-07-15, fixed: NaN now falls back to unity
+  // like null. Was: actual NaN.
+  it("treats NaN replaygain as no-data and returns the volume", () => {
     expect(effectiveGain(NaN, 0.7)).toBe(0.7);
   });
 });

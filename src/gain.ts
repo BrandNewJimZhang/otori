@@ -7,9 +7,14 @@ const MAX_LINEAR = 4;
 
 /**
  * Linear gain for a track: 10^(dB/20), scaled by user volume.
- * `null` (no RG data) is unity — absence of data is not a correction.
+ * `null` (no RG data) is unity — absence of data is not a correction,
+ * and neither is NaN (an unparseable one): a NaN here reaches the
+ * GainNode as silence or full-scale garbage.
  */
 export function effectiveGain(replaygainDb: number | null, volume = 1): number {
-  const rg = replaygainDb == null ? 1 : Math.min(MAX_LINEAR, Math.pow(10, replaygainDb / 20));
+  const rg =
+    replaygainDb == null || Number.isNaN(replaygainDb)
+      ? 1
+      : Math.min(MAX_LINEAR, Math.pow(10, replaygainDb / 20));
   return rg * volume;
 }
