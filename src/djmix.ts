@@ -35,6 +35,16 @@ export interface DeckRamp {
     "mix that sounds like crossfade" is diagnosable, not a mystery. */
 export type PlainReason = "missing-anchor" | "tempo-gap";
 
+/** When the low end changes hands during a beat-matched fade: at
+    `atSec` into the fade the incoming bass ramps in and the outgoing
+    ramps out, over `rampSec` (one outgoing beat). Before it, the
+    incoming deck plays with its lows shelved off — two full bass
+    lines stacked is mud, and the swap moment IS the drop a DJ rides. */
+export interface BassSwap {
+  atSec: number;
+  rampSec: number;
+}
+
 export type TransitionPlan =
   | {
       kind: "beatmatched";
@@ -46,6 +56,7 @@ export type TransitionPlan =
           time can't know the anchor instant — spin-up latency). */
       outGrid: MixPoint;
       inGrid: MixPoint;
+      bassSwap: BassSwap;
       gainOut: (t: number) => number;
       gainIn: (t: number) => number;
     }
@@ -130,6 +141,15 @@ export function planTransition(
   const bars = Math.max(1, Math.round(requestedSec / barSec));
   const durationSec = bars * barSec;
 
+  // Bass changes hands on the bar boundary nearest the fade midpoint
+  // (a 1-bar fade has no interior boundary: use the half-bar), ramping
+  // over one outgoing beat. Bar-aligned so the swap reads as a drop.
+  const swapBar = Math.min(Math.max(Math.round(bars / 2), 1), Math.max(bars - 1, 1));
+  const bassSwap: BassSwap = {
+    atSec: bars === 1 ? barSec / 2 : swapBar * barSec,
+    rampSec: 60 / outgoingTail.bpm,
+  };
+
   // Incoming starts on its own downbeat nearest to a musically useful
   // entry (skip at least the first beat; land on a bar boundary of its
   // own grid so the phrase lines up). Euclidean phase folds the anchor
@@ -154,6 +174,7 @@ export function planTransition(
     },
     outGrid: outgoingTail,
     inGrid: incomingHead,
+    bassSwap,
     ...equalPower,
   };
 }

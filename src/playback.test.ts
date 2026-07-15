@@ -16,6 +16,7 @@ import {
   audios,
   createEngineWithAB,
   ctxs,
+  filters,
   flushFadeAnchor,
   gains,
   installAudioFakes,
@@ -218,6 +219,7 @@ describe("TwoDeckEngine transitions", () => {
       incoming: { rateFrom: 1 / 1.05, rateTo: 1, startOffsetSec: 2 },
       outGrid: { bpm: 120, beatSec: 295 }, // anchor ON the beat: zero phase shift
       inGrid: { bpm: 126, beatSec: 2 },
+      bassSwap: { atSec: 2, rampSec: 0.5 },
       gainOut: (t) => 1 - t,
       gainIn: (t) => t,
     };
@@ -260,6 +262,41 @@ describe("TwoDeckEngine transitions", () => {
     const expected = alignEntry(plan, outgoing.currentTime);
     expect(incoming.currentTime).toBeCloseTo(expected, 3);
     expect(expected).toBeGreaterThan(plan.incoming.startOffsetSec); // 730ms drift ≠ 0 phase
+  });
+
+  it("swaps the low end at the planned bar boundary (beat-matched only)", async () => {
+    const engine = await createEngineWithAB();
+    // 120 BPM, 8s request → 4 bars (8s), swap at bar 2 (4s), 0.5s ramp.
+    const plan = planTransition({ bpm: 120, beatSec: 290 }, { bpm: 120, beatSec: 0 }, 8);
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+    audios[1].currentTime = 291;
+    expect(engine.beginTransition(plan, "/a.flac")).toBe(true);
+    await flushFadeAnchor();
+
+    const [inEq, outEq] = [filters[0], filters[1]]; // deck 0 incoming, deck 1 outgoing
+    const t0 = ctxs[0].currentTime;
+    // Incoming bass shelved off until the swap; outgoing at full.
+    expect(inEq.gain.valueAt(t0 + 1)).toBeLessThan(-20);
+    expect(outEq.gain.valueAt(t0 + 1)).toBeCloseTo(0, 5);
+    // Mid-ramp both are moving; after the swap the roles are traded.
+    expect(inEq.gain.valueAt(t0 + 4.5)).toBeCloseTo(0, 5);
+    expect(outEq.gain.valueAt(t0 + 4.5)).toBeLessThan(-20);
+
+    // Finalize restores flat EQ on both decks for normal playback.
+    await advanceWorld(8000);
+    const tEnd = ctxs[0].currentTime;
+    expect(engine.transitioning).toBe(false);
+    expect(inEq.gain.valueAt(tEnd)).toBe(0);
+    expect(outEq.gain.valueAt(tEnd)).toBe(0);
+  });
+
+  it("plain fades keep both decks' EQ flat", async () => {
+    const engine = await createEngineWithAB();
+    engine.beginTransition(plainPlan(4), "/a.flac");
+    await flushFadeAnchor();
+    const t = ctxs[0].currentTime + 2;
+    expect(filters[0].gain.valueAt(t)).toBe(0);
+    expect(filters[1].gain.valueAt(t)).toBe(0);
   });
 
   it("cancels scheduled fades when play() interrupts a transition", async () => {

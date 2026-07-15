@@ -13,6 +13,8 @@ import { vi } from "vitest";
 export const audios: FakeAudio[] = [];
 /** Every GainNode created by the engine graph, in deck order. */
 export const gains: FakeGainNode[] = [];
+/** Every BiquadFilterNode (per-deck lowshelf EQ), in deck order. */
+export const filters: FakeBiquadFilterNode[] = [];
 /** The engine's AudioContext (built once per engine, on first play). */
 export const ctxs: FakeAudioContext[] = [];
 
@@ -93,12 +95,28 @@ interface ScheduledCurve {
   duration: number;
 }
 
+/** setValueAtTime / linearRampToValueAtTime timeline entries. */
+interface ScheduledEvent {
+  type: "set" | "ramp";
+  time: number;
+  value: number;
+}
+
 export class FakeAudioParam {
   value = 1;
   private curves: ScheduledCurve[] = [];
+  private events: ScheduledEvent[] = [];
 
   setValueCurveAtTime = vi.fn((curve: Float32Array, startTime: number, duration: number) => {
     this.curves.push({ curve, startTime, duration });
+  });
+
+  setValueAtTime = vi.fn((value: number, time: number) => {
+    this.events.push({ type: "set", time, value });
+  });
+
+  linearRampToValueAtTime = vi.fn((value: number, time: number) => {
+    this.events.push({ type: "ramp", time, value });
   });
 
   cancelScheduledValues = vi.fn((time: number) => {
@@ -106,12 +124,15 @@ export class FakeAudioParam {
     // curves included, matching how the engine uses it (cancel, then
     // restore a static value).
     this.curves = this.curves.filter((c) => c.startTime + c.duration <= time);
+    this.events = this.events.filter((e) => e.time < time);
   });
 
   /** Evaluate the automation at an audio-clock time: the active curve
-      (linear interpolation between its samples) wins; otherwise the
-      static value. This is what lets tests assert the SHAPE of a fade
-      against the clock rather than just that a call happened. */
+      (linear interpolation between its samples) wins; then the event
+      timeline (WebAudio semantics: a ramp interpolates from the
+      previous event, a set holds). This is what lets tests assert the
+      SHAPE of a fade against the clock rather than just that a call
+      happened. */
   valueAt(time: number): number {
     for (let i = this.curves.length - 1; i >= 0; i--) {
       const c = this.curves[i];
@@ -123,7 +144,19 @@ export class FakeAudioParam {
         return c.curve[lo] * (1 - frac) + c.curve[hi] * frac;
       }
     }
-    return this.value;
+    let prev: ScheduledEvent | null = null;
+    for (const e of this.events) {
+      if (e.time <= time) {
+        prev = e;
+      } else {
+        if (e.type === "ramp" && prev) {
+          const frac = (time - prev.time) / (e.time - prev.time);
+          return prev.value + (e.value - prev.value) * frac;
+        }
+        break;
+      }
+    }
+    return prev ? prev.value : this.value;
   }
 }
 
@@ -131,6 +164,17 @@ export class FakeGainNode {
   gain = new FakeAudioParam();
   constructor() {
     gains.push(this);
+  }
+  connect(): void {}
+}
+
+/** Lowshelf EQ per deck: the bass-swap tests read `gain` automation. */
+export class FakeBiquadFilterNode {
+  type = "";
+  frequency = new FakeAudioParam();
+  gain = new FakeAudioParam();
+  constructor() {
+    filters.push(this);
   }
   connect(): void {}
 }
@@ -155,6 +199,9 @@ export class FakeAudioContext {
   }
   createGain(): FakeGainNode {
     return new FakeGainNode();
+  }
+  createBiquadFilter(): FakeBiquadFilterNode {
+    return new FakeBiquadFilterNode();
   }
 }
 
@@ -235,6 +282,7 @@ export async function createEngineWithAB() {
 export function installAudioFakes(): void {
   audios.length = 0;
   gains.length = 0;
+  filters.length = 0;
   ctxs.length = 0;
   rafCallbacks.clear();
   rafNextId = 1;

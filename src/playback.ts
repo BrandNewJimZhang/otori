@@ -62,10 +62,13 @@ export interface PlaybackEngine {
   onTimeUpdate(cb: (secs: number) => void): void;
 }
 
-/** One audio element + its gain node, addressable inside the graph. */
+/** One audio element + its per-deck processing chain (lowshelf EQ for
+    the bass swap, then gain), addressable inside the graph. */
 interface Deck {
   audio: HTMLAudioElement;
   gain: GainNode | null;
+  /** Lowshelf EQ the bass swap rides; flat (0 dB) outside transitions. */
+  eq: BiquadFilterNode | null;
   /** What's loaded (or loading) on this deck. */
   source: TrackSource | null;
 }
@@ -75,6 +78,12 @@ interface Deck {
     lead plus bar quantization shortening a beat-matched plan by up
     to half a bar (~1.7s at 70 BPM). */
 const END_WINDOW_SLACK_SEC = 3;
+
+/** Bass-swap shelf: lows below the crossover are cut this deep on the
+    deck that doesn't own the low end. ~130Hz covers kick + bass
+    fundamentals; -24dB is "gone" without the discontinuity of a mute. */
+const BASS_SHELF_HZ = 130;
+const BASS_CUT_DB = -24;
 
 class TwoDeckEngine implements PlaybackEngine {
   private decks: [Deck, Deck];
@@ -119,7 +128,7 @@ class TwoDeckEngine implements PlaybackEngine {
   }
 
   private makeDeck(index: number): Deck {
-    const deck: Deck = { audio: new Audio(), gain: null, source: null };
+    const deck: Deck = { audio: new Audio(), gain: null, eq: null, source: null };
     deck.audio.preload = "auto";
     deck.audio.addEventListener("ended", () => {
       if (this.deckIndex(deck) !== this.active) return;
@@ -165,8 +174,13 @@ class TwoDeckEngine implements PlaybackEngine {
       // WebKit ignores HTMLMediaElement.volume once the element is routed
       // through Web Audio — per-deck GainNodes are the authoritative
       // volume control (user volume × ReplayGain).
+      deck.eq = this.ctx.createBiquadFilter();
+      deck.eq.type = "lowshelf";
+      deck.eq.frequency.value = BASS_SHELF_HZ;
+      deck.eq.gain.value = 0; // flat outside transitions
       deck.gain = this.ctx.createGain();
-      source.connect(deck.gain);
+      source.connect(deck.eq);
+      deck.eq.connect(deck.gain);
       deck.gain.connect(this.analyserNode);
     }
   }
@@ -175,6 +189,16 @@ class TwoDeckEngine implements PlaybackEngine {
     if (deck.gain) {
       deck.gain.gain.value = effectiveGain(deck.source?.replaygainDb ?? null, this.volumeValue);
     }
+  }
+
+  /** Drop any bass-swap automation and restore a flat shelf. */
+  private resetEq(deck: Deck): void {
+    if (!deck.eq) return;
+    deck.eq.gain.cancelScheduledValues(this.ctx?.currentTime ?? 0);
+    deck.eq.gain.value = 0;
+    // A plain value write does not displace a scheduled event already
+    // in the timeline at this instant — pin flat explicitly.
+    deck.eq.gain.setValueAtTime(0, this.ctx?.currentTime ?? 0);
   }
 
   /** Hand off to the preloaded deck if it holds the queued track and is
@@ -264,6 +288,7 @@ class TwoDeckEngine implements PlaybackEngine {
       deck.gain?.gain.cancelScheduledValues(now);
       deck.audio.playbackRate = 1;
       this.applyGain(deck);
+      this.resetEq(deck);
     }
   }
 
@@ -365,6 +390,10 @@ class TwoDeckEngine implements PlaybackEngine {
       // (a no-op on natural completion; load-bearing on early finalize).
       to.gain?.gain.cancelScheduledValues(this.ctx!.currentTime);
       this.applyGain(to);
+      // Both decks leave the transition with a flat shelf — an early
+      // finalize (seek/pause mid-fade) may strand the swap half-way.
+      this.resetEq(from);
+      this.resetEq(to);
       // The outgoing deck just retired — load any preload that arrived
       // during the fade (it was deferred to protect this deck's audio).
       this.materializePreload();
@@ -401,6 +430,24 @@ class TwoDeckEngine implements PlaybackEngine {
           now,
           durationSec,
         );
+
+        // Bass swap (beat-matched only): the incoming deck enters with
+        // its lows shelved off — two stacked bass lines are mud — and
+        // takes the low end at the planned bar boundary while the
+        // outgoing surrenders it, one beat of ramp each way. Scheduled
+        // on the audio clock like the fades (rAF may be frozen). The
+        // clamped fade can end before the planned swap; keep the swap
+        // inside the audible window so the bass never goes missing.
+        if (plan.kind === "beatmatched" && to.eq && from.eq) {
+          const swapAt = Math.min(plan.bassSwap.atSec, Math.max(durationSec - plan.bassSwap.rampSec, 0));
+          const rampEnd = Math.min(swapAt + plan.bassSwap.rampSec, durationSec);
+          to.eq.gain.setValueAtTime(BASS_CUT_DB, now);
+          to.eq.gain.setValueAtTime(BASS_CUT_DB, now + swapAt);
+          to.eq.gain.linearRampToValueAtTime(0, now + rampEnd);
+          from.eq.gain.setValueAtTime(0, now);
+          from.eq.gain.setValueAtTime(0, now + swapAt);
+          from.eq.gain.linearRampToValueAtTime(BASS_CUT_DB, now + rampEnd);
+        }
 
         const startedAt = performance.now();
         const durationMs = durationSec * 1000;

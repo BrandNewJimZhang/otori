@@ -159,3 +159,29 @@ describe("mixFallbackNotice", () => {
     );
   });
 });
+
+describe("bass swap planning", () => {
+  it("places the swap on the bar boundary nearest the midpoint, one-beat ramp", () => {
+    // 120 BPM → barSec 2; 10s requested → 5 bars; swap at bar 3 (6s).
+    const plan = planTransition(point(120), point(122), 10);
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+    expect(plan.bassSwap.atSec).toBeCloseTo(6, 10);
+    expect(plan.bassSwap.rampSec).toBeCloseTo(0.5, 10);
+  });
+
+  it("single-bar fades swap at the half-bar (no interior bar boundary)", () => {
+    const plan = planTransition(point(120), point(120), 0.1); // floors at 1 bar
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+    expect(plan.durationSec).toBeCloseTo(2, 10);
+    expect(plan.bassSwap.atSec).toBeCloseTo(1, 10);
+  });
+
+  it("swap always lands strictly inside the fade", () => {
+    for (const req of [2, 4, 7, 9, 16, 31]) {
+      const plan = planTransition(point(133), point(128), req);
+      if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+      expect(plan.bassSwap.atSec).toBeGreaterThan(0);
+      expect(plan.bassSwap.atSec + plan.bassSwap.rampSec).toBeLessThanOrEqual(plan.durationSec + 1e-9);
+    }
+  });
+});
