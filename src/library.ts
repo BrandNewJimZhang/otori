@@ -125,11 +125,16 @@ const FIELD_QUALIFIERS = new Set<FieldKey>(["title", "artist", "album"]);
  */
 export function filterTracks(rows: TrackRow[], query: string): TrackRow[] {
   const terms = query.trim().split(/\s+/).filter(Boolean).map((raw) => {
-    const m = raw.match(/^(title|artist|album):(.+)$/i);
-    if (m && FIELD_QUALIFIERS.has(m[1].toLowerCase() as FieldKey)) {
-      return { field: m[1].toLowerCase() as FieldKey, q: norm(m[2]) };
+    // Fold BEFORE parsing the qualifier: an IME slip like ａｒｔｉｓｔ：
+    // (fullwidth colon U+FF1A) must qualify exactly like artist:. The
+    // regex still requires a non-empty needle — a dangling "artist:"
+    // stays a literal (gold ruling: the mid-typing state self-corrects).
+    const folded = norm(raw);
+    const m = folded.match(/^(title|artist|album):(.+)$/);
+    if (m && FIELD_QUALIFIERS.has(m[1] as FieldKey)) {
+      return { field: m[1] as FieldKey, q: m[2] };
     }
-    return { field: null, q: norm(raw) };
+    return { field: null, q: folded };
   });
   if (terms.length === 0) return rows;
 

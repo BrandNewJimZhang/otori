@@ -1,8 +1,8 @@
 # Design: Eval-expansion engine, round 2
 
 Date: 2026-07-15
-Status: closed — 29 silver locked, 0 confirmed reds, 3 red-candidates
-pending gold ruling
+Status: closed — 29 silver locked, 0 confirmed reds; 3 red-candidates
+gold-ruled (1 fixed, 1 kept, 1 won't-fix)
 
 Protocol: identical to round 1 (docs/design/eval-expansion-round1.md)
 — blind generation from contracts + PRODUCT.md anchors, adjudication
@@ -63,7 +63,7 @@ survival, input immutability under U+3000 queries.
 | Locked silver tests | 26 | 29 |
 | Confirmed real bugs | 6 | **0** |
 | Preference calls | 0 | 3 |
-| Human preference bits in | ~2 | pending (3 rulings queued) |
+| Human preference bits in | ~2 | ~1 (blanket approval of the three recommendations) |
 
 The direction the case study predicts is visible after one feedback
 cycle: r1's constraint feedback didn't just fix six bugs — it closed
@@ -72,3 +72,20 @@ green on guards built for r1's reds). The finding mix shifted from
 "engine violates its own invariants" to "the contract is ambiguous at
 the edges" — the discriminator is now probing product intent, which
 is exactly where the human's gold role lives.
+
+## Gold ruling (2026-07-15)
+
+The human approved all three recommendations in one pass:
+
+| Case | Ruling | Action |
+| --- | --- | --- |
+| LB-3 dangling `artist:` | keep as-is | ruling recorded at the case; literal interpretation locked |
+| LB-4 fullwidth colon | fix | `filterTracks` folds the raw term (NFKC) BEFORE the qualifier parse — `ａｒｔｉｓｔ：ryo` now qualifies; red-first, test flipped to the spec expectation |
+| LB-16f degenerate range | won't-fix | unreachable upstream (derive.rs STEADY_TOLERANCE); the locked "174–174" rendering doubles as a tripwire if the tolerance ever loosens |
+
+A protocol note the fix surfaced: folding before the parse also makes
+the qualifier regex operate on lowercased input (the explicit /i and
+per-branch toLowerCase became dead weight and were removed) — the
+qualifier path and the needle path now share one normalization point,
+which is the SSOT shape the r1 shaky-BPM fix established for
+constants. Round 2 fully closed.

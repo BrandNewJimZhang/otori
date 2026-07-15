@@ -4,9 +4,10 @@
 // generators (no implementation, no existing tests in context), then
 // adjudicated against the current engine. Each case carries its
 // derivation. Silver semantics: append-only for the model; a human may
-// revoke any case (gold wins). Red-candidates are asserted at ACTUAL
-// current behavior with a "RED-CANDIDATE (gold ruling pending)" note so
-// the suite stays green while the finding is preserved.
+// revoke any case (gold wins). The round's three red-candidates were
+// gold-adjudicated 2026-07-15: LB-3 keep-as-is, LB-4 fixed (fold
+// before qualifier parse), LB-16f won't-fix (unreachable upstream) —
+// rulings recorded inline at each case.
 //
 // Dedup notes (specs skipped as already covered by src/library.test.ts):
 //   LB-15 (scrollAnchorId precedence, all four branches) — fully covered.
@@ -105,13 +106,11 @@ describe("silver: dangling qualifier 'artist:' (LB-3)", () => {
   // preference: parse as a qualifier with an empty needle (empty-contains
   // is true on any non-null artist → matches X, null artist Y drops out).
   //
-  // RED-CANDIDATE (gold ruling pending): the qualifier regex
-  // /^(title|artist|album):(.+)$/ requires a non-empty rest, so "artist:"
-  // parses as a LITERAL term instead and matches Y via its title
-  // "artist: unknown" while missing X entirely. Asserting the actual
-  // literal-term behavior below; the spec's preferred alternative is
-  // filterTracks(rows, "artist:") → [X].
-  it("currently treats 'artist:' as a literal term, not an empty qualifier", () => {
+  // GOLD RULING 2026-07-15: keep as-is. The mid-typing state
+  // self-corrects on the next keystroke; switching to an empty-needle
+  // qualifier would flash "all rows with an artist" mid-type instead.
+  // The literal interpretation below is now the locked behavior.
+  it("treats 'artist:' as a literal term, not an empty qualifier", () => {
     const rows = [
       track(1, { artist: "ryo", title: "Melt" }),
       track(2, { artist: null, title: "artist: unknown" }),
@@ -120,25 +119,21 @@ describe("silver: dangling qualifier 'artist:' (LB-3)", () => {
   });
 });
 
-describe("silver: qualifier prefix normalization (LB-4)", () => {
+describe("silver: qualifier prefix normalization (LB-4, gold-adjudicated)", () => {
   // Derivation: the qualifier regex carries /i, so an uppercase prefix
-  // must still qualify; but term normalization (NFKC) happens AFTER the
-  // regex match on the raw term, so a fullwidth colon (U+FF1A) — an easy
-  // IME slip — never reaches the qualifier path.
+  // must still qualify; and a fullwidth colon (U+FF1A) — an easy IME
+  // slip — must qualify too. Gold ruling 2026-07-15: the raw term is
+  // NFKC-folded before the qualifier match, so ａｒｔｉｓｔ：ryo
+  // behaves exactly like artist:ryo (zero results were worse than
+  // either interpretation).
   const rows = [track(1, { artist: "Ryo" }), track(2, { artist: "miku" })];
 
   it("uppercase qualifier prefix still qualifies (regex /i)", () => {
     expect(filterTracks(rows, "ARTIST:RYO").map((t) => t.id)).toEqual([1]);
   });
 
-  // RED-CANDIDATE (gold ruling pending): spec prefers the fullwidth colon
-  // "ａｒｔｉｓｔ：ryo" to qualify like "artist:ryo" → [P]. Actually the
-  // regex runs on the raw term before norm(), so the whole term stays a
-  // literal ("artist:ryo" after NFKC) contained in no field → []. The
-  // spec's preferred alternative would require normalizing the raw term
-  // before the qualifier match.
-  it("currently drops a fullwidth-colon qualifier to a literal term (no match)", () => {
-    expect(filterTracks(rows, "ａｒｔｉｓｔ：ryo")).toEqual([]);
+  it("a fullwidth-colon qualifier folds and qualifies", () => {
+    expect(filterTracks(rows, "ａｒｔｉｓｔ：ryo").map((t) => t.id)).toEqual([1]);
   });
 });
 
@@ -348,11 +343,12 @@ describe("silver: formatBpm precedence chain (LB-16)", () => {
     expect(formatBpm(track(1, { bpm: 128, bpm_hint: 90 }))).toBe("128");
   });
 
-  // RED-CANDIDATE (gold ruling pending): spec prefers a degenerate range
-  // (bpm === bpm_max) to collapse to a single "174". The engine renders
-  // the range branch unconditionally whenever bpm_max is non-null, so the
-  // actual output is "174–174". Asserting actual behavior below.
-  it("currently renders a degenerate range as '174–174', not '174'", () => {
+  // GOLD RULING 2026-07-15: won't-fix. The analyzer's range branch
+  // requires hi/lo > 1 + STEADY_TOLERANCE (derive.rs, 0.05), so a
+  // degenerate range never reaches the UI from real data — this case
+  // documents the reliance on that upstream invariant. If derive.rs
+  // ever loosens the tolerance, this locked rendering surfaces it.
+  it("renders a degenerate range as '174–174' (unreachable upstream)", () => {
     expect(formatBpm(track(1, { bpm: 174, bpm_max: 174 }))).toBe("174–174");
   });
 });
