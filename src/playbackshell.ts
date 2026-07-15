@@ -12,7 +12,13 @@ import { getArtwork, getLyrics, setLyricsOffset } from "./ipc";
 import { displayTitle } from "./library";
 import { headMixPoint, tailMixPoint } from "./mixpoints";
 import type { PlaybackEngine } from "./playback";
-import { resolveAdvance, shuffledIds, type RepeatMode } from "./playorder";
+import {
+  resolveAdvance,
+  shuffledIds,
+  tempoChainedIds,
+  type EndTempos,
+  type RepeatMode,
+} from "./playorder";
 import type { LyricsDoc, TrackRow } from "./types";
 
 export interface PlaybackShell {
@@ -82,6 +88,8 @@ export function usePlaybackShell(
   repeatRef.current = repeat;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  const crossfadeRef = useRef(crossfadeSec);
+  crossfadeRef.current = crossfadeSec;
 
   const frozenShuffleOrder = useCallback(
     () => (shuffleRef.current ? shuffleOrderRef.current : null),
@@ -201,12 +209,24 @@ export function usePlaybackShell(
     setShuffle((on) => {
       const next = !on;
       if (next) {
-        // Freeze a permutation of what's visible now, current track first.
-        shuffleOrderRef.current = shuffledIds(
-          visibleRef.current.map((t) => t.id),
-          currentRef.current?.id ?? null,
-          Math.random,
-        );
+        // Freeze a permutation of what's visible now, current track
+        // first. With MIX on, chain tempo-compatible neighbors (same
+        // window as transition planning) so shuffled transitions can
+        // actually beat-match; persisted anchors only — this must not
+        // trigger a library-wide decode. Plain shuffle otherwise.
+        const rows = visibleRef.current;
+        const ids = rows.map((t) => t.id);
+        const cur = currentRef.current?.id ?? null;
+        if (crossfadeRef.current > 0) {
+          const byId = new Map(rows.map((t) => [t.id, t]));
+          const gridOf = (id: number): EndTempos => {
+            const t = byId.get(id);
+            return { tail: t?.mix_tail_bpm ?? null, head: t?.mix_head_bpm ?? null };
+          };
+          shuffleOrderRef.current = tempoChainedIds(ids, cur, Math.random, gridOf);
+        } else {
+          shuffleOrderRef.current = shuffledIds(ids, cur, Math.random);
+        }
       }
       return next;
     });

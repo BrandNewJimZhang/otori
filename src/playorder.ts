@@ -2,6 +2,7 @@
 // the interaction rules (repeat-one vs manual skip, shuffle freezing)
 // are testable without an <audio> element. App.tsx owns the state.
 
+import { temposCompatible } from "./djmix";
 import { dequeue } from "./queue";
 
 export type RepeatMode = "off" | "all" | "one";
@@ -39,6 +40,56 @@ export function effectiveOrder(visibleIds: number[], permutation: number[]): num
   const kept = permutation.filter((id) => visible.has(id));
   const inPerm = new Set(permutation);
   return [...kept, ...visibleIds.filter((id) => !inPerm.has(id))];
+}
+
+/** Per-end tempo grid for tempo-chained shuffle: the tail BPM leaves
+    a track, the head BPM enters the next. Null = no data (wildcard —
+    never blocks the chain; the transition degrades to plain there). */
+export interface EndTempos {
+  tail: number | null;
+  head: number | null;
+}
+
+/**
+ * Shuffle with DJ-set ordering: a greedy random chain where each next
+ * pick prefers tracks whose HEAD tempo is mixable from the previous
+ * pick's TAIL tempo (temposCompatible — the same authority transition
+ * planning gates on, so a compatible chain is exactly a beat-matchable
+ * chain). No candidate in window → fall back to a uniform pick and
+ * accept the break (the transition there degrades to a plain fade).
+ * Unknown grids are wildcards on both sides. Same contract as
+ * shuffledIds otherwise: permutation, current pinned first, `rng`
+ * injected. Greedy, not optimal — a global best path is TSP, and a
+ * listener only hears adjacent pairs.
+ */
+export function tempoChainedIds(
+  ids: number[],
+  currentId: number | null,
+  rng: () => number,
+  gridOf: (id: number) => EndTempos,
+): number[] {
+  const pinned = currentId != null && ids.includes(currentId);
+  const pool = pinned ? ids.filter((id) => id !== currentId) : [...ids];
+  const out: number[] = pinned ? [currentId] : [];
+  let prevTail: number | null = pinned ? gridOf(currentId).tail : null;
+
+  while (pool.length > 0) {
+    let pickFrom = pool;
+    if (prevTail != null) {
+      const mixable = pool.filter((id) => {
+        const head = gridOf(id).head;
+        return head == null || temposCompatible(prevTail!, head);
+      });
+      if (mixable.length > 0) pickFrom = mixable;
+    }
+    const pick = pickFrom[Math.floor(rng() * pickFrom.length)];
+    out.push(pick);
+    pool.splice(pool.indexOf(pick), 1);
+    // A wildcard keeps the previous tail alive: an unknown-grid track
+    // shouldn't reset the chain the next known track could continue.
+    prevTail = gridOf(pick).tail ?? prevTail;
+  }
+  return out;
 }
 
 /**

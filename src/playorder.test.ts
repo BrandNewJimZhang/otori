@@ -3,7 +3,8 @@
 // skip always moves.
 
 import { describe, expect, it } from "vitest";
-import { cycleRepeat, effectiveOrder, nextId, resolveAdvance, shuffledIds, upcomingPreview } from "./playorder";
+import { cycleRepeat, effectiveOrder, nextId, resolveAdvance, shuffledIds, tempoChainedIds, upcomingPreview } from "./playorder";
+import { temposCompatible } from "./djmix";
 
 describe("cycleRepeat", () => {
   it("cycles off → all → one → off", () => {
@@ -159,5 +160,64 @@ describe("upcomingPreview", () => {
 
   it("is empty when nothing is playing", () => {
     expect(upcomingPreview(visible, [], null, null, "off", 5)).toEqual([]);
+  });
+});
+
+describe("tempoChainedIds", () => {
+  // tail↔head grids: chain compatibility is outgoing-tail vs
+  // incoming-head, same authority as transition planning.
+  const grids = new Map<number, { tail: number | null; head: number | null }>([
+    [1, { tail: 128, head: 128 }],
+    [2, { tail: 126, head: 126 }],
+    [3, { tail: 174, head: 174 }],
+    [4, { tail: 172, head: 172 }],
+    [5, { tail: 90, head: 90 }],
+  ]);
+  const grid = (id: number) => grids.get(id) ?? { tail: null, head: null };
+  const seq = (...vals: number[]) => {
+    let i = 0;
+    return () => vals[i++ % vals.length];
+  };
+
+  it("returns a permutation of the input", () => {
+    const out = tempoChainedIds([1, 2, 3, 4, 5], null, seq(0.9, 0.1, 0.5, 0.3), grid);
+    expect([...out].sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("chains tempo-compatible neighbors when candidates exist", () => {
+    // 128/126 mix; 174/172 mix (and fold against 90 → 1.933/1.911: no).
+    // 90 folds vs 174 → 174/2/90 = 0.9667 ✓ compatible! But 90 vs 128:
+    // 128/90 = 1.42, no fold (≤1.5), incompatible.
+    for (let trial = 0; trial < 20; trial++) {
+      const out = tempoChainedIds([1, 2, 3, 4, 5], null, Math.random, grid);
+      // Count adjacent incompatible pairs: greedy chaining must leave
+      // at most the unavoidable minimum. This 5-track set always has a
+      // fully compatible hamiltonian path? 1-2 (128/126 ok), 2-... 126 vs
+      // 174: 174/126=1.38 no fold, incompatible. 126 vs 90: 90*... 126/90=1.4 no.
+      // So {1,2} island vs {3,4,5} chain (174-172-90 via folding).
+      // Any permutation has ≥1 break; greedy must not exceed 1.
+      let breaks = 0;
+      for (let i = 0; i + 1 < out.length; i++) {
+        const a = grid(out[i]).tail;
+        const b = grid(out[i + 1]).head;
+        if (a != null && b != null && !temposCompatible(a, b)) breaks++;
+      }
+      expect(breaks).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("pins the playing track first like shuffledIds", () => {
+    expect(tempoChainedIds([1, 2, 3], 2, Math.random, grid)[0]).toBe(2);
+  });
+
+  it("treats missing grids as wildcards, never blocking the chain", () => {
+    const nullGrid = () => ({ tail: null, head: null });
+    const out = tempoChainedIds([1, 2, 3, 4], null, Math.random, nullGrid);
+    expect([...out].sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it("handles empty and single-element lists", () => {
+    expect(tempoChainedIds([], null, Math.random, grid)).toEqual([]);
+    expect(tempoChainedIds([7], 7, Math.random, grid)).toEqual([7]);
   });
 });
