@@ -105,3 +105,25 @@ source reasoning without executing the nonterminating inputs — the
 discriminator can classify reds it cannot safely run. This is a
 capability the replay-infra oracle doesn't have; it belongs to the
 adjudicator layer.
+
+## Gold ruling + constraint feedback (2026-07-15)
+
+The human approved the recommended dispositions in one pass (~1
+preference bit). Fixes red-first where still red:
+
+| Finding | Ruling | Fix |
+| --- | --- | --- |
+| DJ-1/2/3/4 fold-loop corruption | fix | one positive-finite guard on both anchors before folding → plain fade (closes the hang trio AND the accepted-NaN plan) |
+| VW-1/VW-5 rendering gap | fix | `rowWindow` end derives from the intersected interval, not the aligned count; two companion assertions updated to the corrected semantics |
+| VW-9 reveal ping-pong | won't-fix | unreachable at production sizes; kept skipped as the executable fixpoint spec |
+| PU-9 NaN dB | fix | `Number.isNaN` joins the null gate — unparseable is no-data |
+| DJ-12 truncated mod | fix | Euclidean beat phase; bar-2 entry holds for negative anchors |
+| DJ-8 float dust | keep | open-interval ceiling is a defensible reading |
+| DJ-9 reciprocal rate | keep | ±8% is a heuristic; 1.087 on one deck is inside its tolerance |
+| DJ-11 zero-duration plain | keep | unreachable (crossfadeSec 0 = MIX off) |
+| PU-2 negative duration | keep | corrupt negatives don't occur from the index |
+| PU-11 clock skew | keep | no production call site; monotonic clock when wired |
+
+Suite after feedback: 408 green + 1 skip (VW-9, deliberately kept).
+Round 3 fully closed. Cumulative human preference bits across three
+rounds: ~4. Cumulative silver: 91 locked cases.
