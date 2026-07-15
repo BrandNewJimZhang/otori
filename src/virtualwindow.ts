@@ -58,9 +58,14 @@ export function rowWindow({ scrollTop, viewport, rowHeight, total, overscan }: W
     return { start: 0, end: 0, padTop: 0, padBottom: 0 };
   }
   const firstVisible = Math.floor(scrollTop / rowHeight);
-  const visibleCount = Math.ceil(viewport / rowHeight);
+  // Interval-based end: the last intersected row is ceil((scrollTop +
+  // viewport) / rowHeight), NOT firstVisible + ceil(viewport/rowHeight)
+  // — the aligned-rows count drops one row whenever the window
+  // straddles a boundary (fractional trackpad scrollTops do this
+  // constantly; the production overscan happened to mask the gap).
+  const lastVisible = Math.ceil((scrollTop + viewport) / rowHeight);
   const start = Math.max(0, Math.min(firstVisible - overscan, total));
-  const end = Math.min(total, firstVisible + visibleCount + overscan);
+  const end = Math.min(total, lastVisible + overscan);
   return {
     start,
     end: Math.max(start, end),

@@ -44,14 +44,15 @@ describe("silver: fractional scrollTop misalignment (VW-1)", () => {
   // rows only; a fractional offset makes the band straddle one more
   // row boundary than the count covers.
 
-  // PENDING GOLD ADJUDICATION (red on the current engine): actual
+  // Gold-adjudicated 2026-07-15, fixed by interval-based end
+  // counting. Was: actual
   // { start: 9, end: 19 }. Band [99.5, 199.5] touches rows 9..19
   // (11 rows), but firstVisible=floor(9.95)=9 + visibleCount=ceil(10)=10
   // renders only rows 9..18; row 19 ([190,200]) is visible at
   // [190,199.5] yet unrendered → visible gap, breaking the no-gap
   // invariant. Never shipped visibly because LibraryTable.tsx passes
   // overscan: 8 (line 146), which papers over the one-row undercount.
-  it.skip("renders the partially visible last row under a fractional scrollTop", () => {
+  it("renders the partially visible last row under a fractional scrollTop", () => {
     const w = rowWindow({ scrollTop: 99.5, viewport: 100, rowHeight: 10, total: 5000, overscan: 0 });
     expect(w.start).toBe(9);
     expect(w.end).toBe(20); // spec: last touched row 19 must be inside [start, end)
@@ -59,7 +60,7 @@ describe("silver: fractional scrollTop misalignment (VW-1)", () => {
 
   it("overscan 1 already papers over the fractional undercount (companion, green)", () => {
     const w = rowWindow({ scrollTop: 99.5, viewport: 100, rowHeight: 10, total: 5000, overscan: 1 });
-    expect(w).toEqual({ start: 8, end: 20, padTop: 80, padBottom: (5000 - 20) * 10 });
+    expect(w).toEqual({ start: 8, end: 21, padTop: 80, padBottom: (5000 - 21) * 10 });
     expectWindowInvariants(w, 10, 5000);
   });
 });
@@ -83,7 +84,7 @@ describe("silver: rowWindow at exact and out-of-range offsets", () => {
     // (At overscan 0 this same convention would undercount — that
     // family is the VW-1/VW-5 red; here the invariant holds.)
     const w = rowWindow({ scrollTop: -25, viewport: 100, rowHeight: 10, total: 5000, overscan: 2 });
-    expect(w).toEqual({ start: 0, end: 9, padTop: 0, padBottom: (5000 - 9) * 10 });
+    expect(w).toEqual({ start: 0, end: 10, padTop: 0, padBottom: (5000 - 10) * 10 });
     expectWindowInvariants(w, 10, 5000);
   });
 
@@ -103,10 +104,11 @@ describe("silver: sub-row viewport (VW-5)", () => {
   // class as VW-1, kept as a separate id (distinct trigger: tiny
   // viewport rather than fractional scrollTop).
 
-  // PENDING GOLD ADJUDICATION (red on the current engine): actual
+  // Gold-adjudicated 2026-07-15, fixed by interval-based end
+  // counting. Was: actual
   // { start: 9, end: 10 } — only row 9 rendered, but the band
   // [95, 101] also shows row 10 at [100, 101] → visible gap.
-  it.skip("renders both rows straddled by a viewport smaller than a row", () => {
+  it("renders both rows straddled by a viewport smaller than a row", () => {
     const w = rowWindow({ scrollTop: 95, viewport: 6, rowHeight: 10, total: 100, overscan: 0 });
     expect(w.start).toBe(9);
     expect(w.end).toBe(11); // spec: rows 9 and 10 both touch the band
@@ -139,7 +141,9 @@ describe("silver: revealOffset header math and idempotence", () => {
     expect(revealOffset({ index: 50, scrollTop: -50, ...VIEW })).toBe(140);
   });
 
-  // PENDING GOLD ADJUDICATION (red on the current engine): when
+  // Gold-adjudicated 2026-07-15: won't-fix — unreachable at production
+  // sizes (headroom 34, viewport >= 300); kept skipped as the executable
+  // spec of the fixpoint invariant should those sizes ever shrink. Was: when
   // usable viewport (viewport - headroom = 8) < rowHeight (10) the
   // row can never fit; the reveal↔apply cycle never reaches null.
   // Trace (index 20, top=230, bottom=240): scrollTop 0 → 202
