@@ -141,14 +141,13 @@ describe("silver: np-state duration boundary (QU-12/13)", () => {
     expect(buildNpState(track(), false, null, 0).durationSecs).toBe(0);
   });
 
-  // RED-CANDIDATE (QU-13a): a negative duration is finite, so the
+  // GOLD RULING 2026-07-15: keep as-is (the audio element never
+  // reports negative durations; literal finite-gate contract locked —
+  // same ruling as r3 PU-2). Was flagged: a negative duration is finite, so the
   // Number.isFinite gate passes it straight to the mini panel. The
   // contract only promises null for non-finite input, so this is the
   // literal reading; the product reading ("corrupt engine metadata
-  // must not leak") would null it. Reachability: durationSecs comes
-  // from the audio element, which never reports negative — same class
-  // as r3's PU-2 (negative duration passthrough, gold-ruled keep).
-  // Asserting ACTUAL behavior; gold may revoke.
+  // must not leak") would null it.
   it("passes a negative duration through (finite ≠ valid — flagged)", () => {
     expect(buildNpState(track(), false, null, -3).durationSecs).toBe(-3);
   });

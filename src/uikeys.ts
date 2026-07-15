@@ -127,8 +127,13 @@ function routeKeyBackstage(combo: KeyCombo, zone: KeyZone): KeyAction {
     return { kind: "native" };
   }
 
-  // A focused range slider owns its arrow keys (native nudge).
-  if (zone === "slider" && combo.key.startsWith("Arrow")) {
+  // A focused range slider owns its arrow keys (native nudge) and
+  // Home/End (native min/max jump — UK-2h gold ruling); table-edge
+  // navigation is one Tab away, so nothing is lost.
+  if (
+    zone === "slider" &&
+    (combo.key.startsWith("Arrow") || combo.key === "Home" || combo.key === "End")
+  ) {
     return { kind: "native" };
   }
 

@@ -91,29 +91,25 @@ describe("silver: zoneOf duck-typing probes (UK-4f/h/i/j)", () => {
     expect(zoneOf({ tagName: "input", type: "text" })).toBe("global");
   });
 
-  // RED-CANDIDATE (UK-4j): a focused SELECT classifies "global", so
+  // GOLD RULING 2026-07-15: keep as-is (the app renders no <select>
+  // today, grep-verified; the locked rendering doubles as the
+  // tripwire if a native select ever ships — same ruling as r3
+  // PU-11). Was flagged: a focused SELECT classifies "global", so
   // its arrow keys would route to select-step (and get preventDefault-
-  // ed away from the dropdown). Reachability: the app renders no
-  // <select> today (grep-verified), so the hole is latent — same
-  // class as r3 PU-11 (no production call site). If a native select
-  // ever ships, this locked rendering doubles as the tripwire.
-  // Asserting ACTUAL behavior; gold may revoke.
+  // ed away from the dropdown).
   it("SELECT is unrecognized → global (latent arrow-key hole — flagged)", () => {
     expect(zoneOf({ tagName: "SELECT" })).toBe("global");
   });
 });
 
 describe("silver: slider zone beyond the arrow carve-out (UK-2h)", () => {
-  // RED-CANDIDATE (UK-2h): a native range input also supports Home/End
-  // (jump to min/max), but the carve-out is arrows-only — Home on a
-  // focused slider routes to select-edge, stealing the native jump.
-  // Reachability: REAL — the player bar's volume/seek sliders are
-  // focusable today. Preference call: extend the carve-out to
-  // Home/End, or keep table navigation reachable from slider focus.
-  // Asserting ACTUAL behavior; gold may rule either way.
-  it("Home/End on a focused slider go to the table (native jump stolen — flagged)", () => {
-    expect(routeKey(combo("Home"), "slider")).toEqual({ kind: "select-edge", edge: "first" });
-    expect(routeKey(combo("End"), "slider")).toEqual({ kind: "select-edge", edge: "last" });
+  // UK-2h gold ruling (2026-07-15): fix — a native range input also
+  // supports Home/End (jump to min/max), so the carve-out extends past
+  // arrows. A keyboard user on the volume slider expects the native
+  // jump; table-edge navigation is one Tab away, so nothing is lost.
+  it("Home/End on a focused slider stay native (min/max jump)", () => {
+    expect(routeKey(combo("Home"), "slider")).toEqual({ kind: "native" });
+    expect(routeKey(combo("End"), "slider")).toEqual({ kind: "native" });
   });
 });
 
@@ -179,12 +175,12 @@ describe("silver: formatEta hour-boundary cliffs (UK-11a–d/f)", () => {
     expect(formatEta(60 * 60 * 1000)).toBe("~1h 0m");
   });
 
-  // RED-CANDIDATE (UK-11f): a negative ETA renders "~-1m" — a minus
-  // sign in the ambient line. Reachability: etaMs derives from a
-  // rolling mean of positive per-track durations times a non-negative
-  // remaining count, so a negative value requires a code bug upstream
-  // — same class as r3 PU-2. Asserting ACTUAL behavior; gold may
-  // revoke (clamp to ~0m would be the fix shape).
+  // GOLD RULING 2026-07-15: keep as-is (etaMs derives from a rolling
+  // mean of positive per-track durations times a non-negative
+  // remaining count; a negative value requires a code bug upstream —
+  // same ruling as r3 PU-2). Was flagged: a negative ETA renders
+  // "~-1m" — a minus sign in the ambient line; clamp to ~0m would be
+  // the fix shape.
   it("negative ETA leaks a minus sign (corrupt input — flagged)", () => {
     expect(formatEta(-60 * 1000)).toBe("~-1m");
   });
@@ -208,13 +204,12 @@ describe("silver: formatTime flooring and edges (UK-12f/g/i)", () => {
     expect(formatTime(3599)).toBe("59:59");
   });
 
-  // RED-CANDIDATE (UK-12i): -5 is finite, so the placeholder gate
+  // GOLD RULING 2026-07-15: keep as-is (durations come from the index
+  // and positions from the audio element, both non-negative; PlayerBar
+  // already clamps its remaining-time subtraction — same ruling as r3
+  // PU-2). Was flagged: -5 is finite, so the placeholder gate
   // passes it and the digits go negative: "-1:-5" — garbage text in a
-  // time cell. Reachability: durations come from the index and
-  // positions from the audio element, both non-negative; PlayerBar
-  // already clamps its remaining-time subtraction. Same class as r3
-  // PU-2 (corrupt negatives don't occur). Asserting ACTUAL behavior;
-  // gold may revoke.
+  // time cell.
   it("negative seconds render garbage digits (corrupt input — flagged)", () => {
     expect(formatTime(-5)).toBe("-1:-5");
   });

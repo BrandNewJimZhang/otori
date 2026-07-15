@@ -1,8 +1,8 @@
 # Design: Eval-expansion engine, round 4
 
 Date: 2026-07-15
-Status: closed pending gold — 39 silver locked; 0 clear-bug reds;
-8 red-candidates pending gold ruling
+Status: closed — 39 silver locked; 0 clear-bug reds; 8 red-candidates
+gold-ruled (1 fix, 7 keep)
 
 Protocol: as round 3 (blind generation → adjudication; `it.skip` =
 confirmed-bug pending fix, `RED-CANDIDATE` comment = preference call
@@ -88,6 +88,27 @@ PU-2/DJ-11 class — recommend keep):**
    losing table-edge navigation while a slider is focused costs
    nothing (Tab away first).
 
+## Gold ruling + constraint feedback (2026-07-15)
+
+The human approved the recommended dispositions in one pass (~1
+preference bit):
+
+| Finding | Ruling | Disposition |
+| --- | --- | --- |
+| UK-2h slider Home/End steal | fix | slider carve-out extends to Home/End → native min/max jump; spec test flipped red-first, then green |
+| QU-13a negative duration | keep | audio element never reports negative (r3 PU-2 class) |
+| GE-11a collapsed dB NaN | keep | default parameter pair only, no custom-bound caller |
+| GE-14c/d corrupt release | keep | literal 0.88/0.82 at both call sites |
+| UK-11f negative ETA | keep | rolling mean of positive durations |
+| UK-12i negative seconds | keep | index/audio element are non-negative |
+| GE-8a zero-width band | keep | fixed literal bands; locked rendering documents the contract disagreement |
+| UK-4j SELECT hole | keep | no `<select>` in the app; locked rendering doubles as the tripwire |
+
+Rulings recorded at each case (`GOLD RULING 2026-07-15` comments).
+Suite after feedback: 455 green + 1 skip (VW-9, pre-existing), tsc
+clean. Round 4 fully closed. Cumulative human preference bits across
+four rounds: ~5. Cumulative silver: 130 locked cases.
+
 ## Convergence data — fourth point
 
 | Metric | r1 | r2 | r3 | r4 |
@@ -96,7 +117,7 @@ PU-2/DJ-11 class — recommend keep):**
 | Locked silver | 26 | 29 | 36 | 39 |
 | Clear-bug reds | 6 | 0 | 8 | **0** |
 | Red-candidates | 0 | 3 | 6 | 8 |
-| Human bits in | ~2 | ~1 | ~1 | pending |
+| Human bits in | ~2 | ~1 | ~1 | ~1 |
 
 r4 sharpens the r3 correction rather than reverting it: convergence is
 per-surface, but not all unswept surfaces start at the same point on

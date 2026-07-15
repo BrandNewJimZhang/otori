@@ -136,13 +136,14 @@ describe("silver: bandEnergy corrupt geometry (GE-8/9/10)", () => {
     expect(bandEnergy(data, -10, 0, 40)).toBe(0);
   });
 
-  // RED-CANDIDATE (GE-8a): the contract's band is half-open
+  // GOLD RULING 2026-07-15: keep as-is (both production call sites
+  // pass fixed literal bands, a zero-width band cannot occur; the
+  // locked rendering documents the contract/implementation boundary
+  // disagreement). Was flagged: the contract's band is half-open
   // [freqLo, freqHi), so freqLo == freqHi selects nothing and should
   // read 0. The implementation rounds both edges to bin indices and
   // loops inclusively, so a zero-width band at 20Hz reads bin 2 and
-  // returns 0.8125. Reachability: both production call sites pass
-  // fixed literal bands (30–150, 4000–16000) — a zero-width band
-  // cannot occur. Asserting ACTUAL behavior; gold may revoke.
+  // returns 0.8125.
   it("a zero-width band reads the shared bin (contract says 0 — flagged)", () => {
     const data = new Float32Array(4).fill(-20);
     expect(bandEnergy(data, 10, 20, 20)).toBeCloseTo(0.8125);
@@ -157,13 +158,12 @@ describe("silver: bandEnergy degenerate dB range (GE-11)", () => {
     expect(bandEnergy(fft({ 0: -50 }), 10, 0, 40, -40, -40)).toBe(0);
   });
 
-  // RED-CANDIDATE (GE-11a): a bin EXACTLY at the collapsed threshold
+  // GOLD RULING 2026-07-15: keep as-is (the dB range is a default
+  // parameter pair (-72, -8); no caller passes custom bounds, so
+  // dbFloor == dbCeil requires a code change to occur — same ruling
+  // as r3 DJ-11). Was flagged: a bin EXACTLY at the collapsed threshold
   // is 0/0 = NaN, and both clamps pass NaN through (Math.min/max
-  // propagate it) — a NaN would reach the canvas. Reachability: the
-  // dB range is a default parameter pair (-72, -8); no caller passes
-  // custom bounds, so dbFloor == dbCeil requires a code change to
-  // occur. Same class as r3 DJ-11 (unreachable corrupt config, ruled
-  // keep). Asserting ACTUAL behavior; gold may revoke.
+  // propagate it) — a NaN would reach the canvas.
   it("NaN at an exactly-collapsed threshold (clamp forbids — flagged)", () => {
     expect(bandEnergy(fft({ 0: -40 }), 10, 0, 40, -40, -40)).toBeNaN();
   });
@@ -215,12 +215,12 @@ describe("silver: Smoother degenerate release configs (GE-14)", () => {
     expect(hold.push(0)).toBe(1);
   });
 
-  // RED-CANDIDATE (GE-14c/d): release > 1 GROWS the envelope above
-  // the max input seen (1 → 1.5 → 2.25), and a negative release emits
-  // a negative frame (1 → -0.5) — both violate the envelope invariant
-  // outright. Reachability: the only two constructor call sites pass
-  // literal 0.88/0.82; a corrupt release requires a code change. Same
-  // class as GE-11a. Asserting ACTUAL behavior; gold may revoke.
+  // GOLD RULING 2026-07-15: keep as-is (the only two constructor call
+  // sites pass literal 0.88/0.82; a corrupt release requires a code
+  // change — same ruling as GE-11a). Was flagged: release > 1 GROWS
+  // the envelope above the max input seen (1 → 1.5 → 2.25), and a
+  // negative release emits a negative frame (1 → -0.5) — both violate
+  // the envelope invariant outright.
   it("corrupt release configs leak through the envelope (flagged)", () => {
     const grow = new Smoother(1.5);
     grow.push(1.0);
