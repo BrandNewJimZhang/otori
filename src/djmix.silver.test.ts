@@ -128,17 +128,18 @@ describe("silver: acceptance-window boundaries (DJ-7, DJ-8, DJ-9)", () => {
     expect(planTransition(point(100), point(66), 8).kind).toBe("plain");
   });
 
-  // GOLD RULING 2026-07-15: keep as-is (open-interval ceiling is a
-  // defensible reading of the ±8% heuristic). Was flagged: 108/100 evaluates to 1.08
-  // exactly, but |1.08 - 1| = 0.08000000000000007 in IEEE-754, which
-  // is > 0.08 — the nominal +8% pair is rejected by float dust. The
-  // spec prefers an epsilon-tolerant acceptance (a DJ WOULD mix
-  // 108 over 100); the engine's strict `>` is defensible as "the
-  // ceiling is exclusive". Asserting actual: plain.
-  it("DJ-8: nominal +8% pair (100 vs 108) is rejected to plain by float dust", () => {
-    const plan = planTransition(point(100), point(108), 8);
+  // GOLD RULING 2026-07-15 (superseded same day by spec change): the
+  // stretch ceiling moved from ±8% to ±12% (MAX_RATE_STRETCH, user
+  // directive — modern controller pitch range). The original finding
+  // stands in spirit: the nominal boundary pair is still rejected by
+  // float dust under strict `>` (112/100 = 1.12, |1.12-1| =
+  // 0.12000000000000011 > 0.12). Probing the NEW boundary.
+  it("DJ-8: nominal +12% pair (100 vs 112) is rejected to plain by float dust", () => {
+    const plan = planTransition(point(100), point(112), 8);
     expect(plan.kind).toBe("plain");
     expect(plan.durationSec).toBe(8);
+    // The old-boundary pair (100 vs 108) is now comfortably inside.
+    expect(planTransition(point(100), point(108), 8).kind).toBe("beatmatched");
   });
 
   // GOLD RULING 2026-07-15: keep as-is (±8% is a heuristic, 1.087 on

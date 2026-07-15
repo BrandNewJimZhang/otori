@@ -3,9 +3,11 @@
 // and gain curves a DJ would perform by hand.
 
 import { describe, expect, it } from "vitest";
-import { planTransition, type MixPoint } from "./djmix";
+import { alignEntry, MAX_RATE_STRETCH, planTransition, type MixPoint } from "./djmix";
 
 const point = (bpm: number, beatSec = 0): MixPoint => ({ bpm, beatSec });
+
+const mod = (a: number, m: number) => ((a % m) + m) % m;
 
 describe("planTransition", () => {
   it("plans a beat-matched transition for compatible tempos", () => {
@@ -67,5 +69,82 @@ describe("planTransition", () => {
     expect(plan.kind).toBe("beatmatched");
     if (plan.kind !== "beatmatched") return;
     expect(plan.outgoing.rateTo).toBeCloseTo(174 / 2 / 87, 5);
+  });
+
+  it("accepts pairs up to ±12% (modern controller pitch range)", () => {
+    // 100 vs 108 (8%) and 100 vs 111 (11%) both mixable now.
+    expect(planTransition(point(100), point(108), 8).kind).toBe("beatmatched");
+    expect(planTransition(point(100), point(111), 8).kind).toBe("beatmatched");
+    // 100 vs 113 (13%) is past the stretch ceiling.
+    expect(planTransition(point(100), point(113), 8).kind).toBe("plain");
+    expect(MAX_RATE_STRETCH).toBeCloseTo(0.12, 10);
+  });
+
+  it("plain fallbacks carry the reason for the degrade", () => {
+    const noAnchor = planTransition(null, point(128), 8);
+    if (noAnchor.kind !== "plain") throw new Error("expected plain");
+    expect(noAnchor.reason).toBe("missing-anchor");
+
+    const badGrid = planTransition(point(NaN), point(128), 8);
+    if (badGrid.kind !== "plain") throw new Error("expected plain");
+    expect(badGrid.reason).toBe("missing-anchor");
+
+    const gap = planTransition(point(128), point(174), 8);
+    if (gap.kind !== "plain") throw new Error("expected plain");
+    expect(gap.reason).toBe("tempo-gap");
+  });
+
+  it("beatmatched plans carry both grids for execution-time alignment", () => {
+    const outG = point(126, 200.13);
+    const inG = point(128, 0.37);
+    const plan = planTransition(outG, inG, 8);
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+    expect(plan.outGrid).toEqual(outG);
+    expect(plan.inGrid).toEqual(inG);
+  });
+});
+
+describe("alignEntry", () => {
+  it("shifts the planned entry by the outgoing beat-phase fraction", () => {
+    const outG = point(128, 0);
+    const inG = point(128, 0.37);
+    const plan = planTransition(outG, inG, 8);
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+    const outPeriod = 60 / 128;
+    // Outgoing sits 40% through its current beat at the anchor instant.
+    const pos = 618 * outPeriod + 0.4 * outPeriod;
+    const entry = alignEntry(plan, pos);
+    const inPeriod = 60 / 128;
+    const phaseIn = mod(entry - 0.37, inPeriod) / inPeriod;
+    expect(phaseIn).toBeCloseTo(0.4, 6);
+    // Never enters earlier than the planned musical entry point.
+    expect(entry).toBeGreaterThanOrEqual(plan.incoming.startOffsetSec);
+    expect(entry).toBeLessThan(plan.incoming.startOffsetSec + inPeriod);
+  });
+
+  it("locks the next beat of both decks to the same wall-clock instant", () => {
+    // Different tempos: incoming runs at rateFrom until the ramp starts,
+    // so its beat interval in wall time equals the outgoing period.
+    const outG = point(126, 100.5);
+    const inG = point(132, 3.11);
+    const plan = planTransition(outG, inG, 8);
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+    const pos = 287.234; // arbitrary anchor instant
+    const entry = alignEntry(plan, pos);
+
+    const outPeriod = 60 / 126;
+    const inPeriod = 60 / 132;
+    const outToNext = outPeriod - mod(pos - 100.5, outPeriod); // wall secs at rate 1
+    // Incoming track-secs to its next beat, converted by its start rate.
+    const inToNext = (inPeriod - mod(entry - 3.11, inPeriod)) / plan.incoming.rateFrom;
+    expect(inToNext).toBeCloseTo(outToNext, 6);
+  });
+
+  it("is exact-phase idempotent: aligning on a beat leaves the plan entry", () => {
+    const plan = planTransition(point(120), point(120, 0), 8);
+    if (plan.kind !== "beatmatched") throw new Error("expected beatmatched");
+    const outPeriod = 60 / 120;
+    // Anchor lands exactly on an outgoing beat → zero phase shift.
+    expect(alignEntry(plan, 100 * outPeriod)).toBeCloseTo(plan.incoming.startOffsetSec, 9);
   });
 });
