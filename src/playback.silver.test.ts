@@ -387,3 +387,232 @@ describe("XF-4 — incoming track shorter than the fade", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Eval-expansion round 2 — the four remaining specs from round 1's blind
+// generation (XF-2, XF-7, XF-8, XF-10), adjudicated against the post-
+// round-1 engine (togglePause finalizes an in-flight transition; the
+// fade duration clamps to both decks' remainders at arming).
+// ---------------------------------------------------------------------------
+
+describe("XF-2 — manual skip (play a new track) at fade midpoint", () => {
+  // Derivation: 2s into a 4s crossfade the user skips to Z — the shell's
+  // step() calls engine.play(). Engine reading: play() runs
+  // cancelTransition() first (epoch bump strands the anchor, timer
+  // cleared, curves cancelled, static gains restored), then Z lands on
+  // the idle deck — which mid-fade is the OUTGOING deck (ownership
+  // flipped at arm), so A's element is src-swapped to Z and B (the
+  // fade's incoming deck) retires as "previous". Expected: a
+  // deterministic teardown — transitioning false once Z sounds, exactly
+  // one audible source (Z at unity base gain), no residual automation
+  // on either old gain, and no advance/ended callback after the skip
+  // that would move the queue past Z. Harness note: A parks at 294
+  // (6s left) so the 4s plan is unclamped and 2000ms is the true
+  // midpoint — at the default 297 the round-1 clamp shortens the fade
+  // to 3s.
+  it("tears the fade down deterministically: one audible source, static gains, no late callbacks", async () => {
+    const engine = await createEngineWithAB();
+    audios[1].currentTime = 294;
+    const advances: string[] = [];
+    const endeds: Array<string | null> = [];
+    engine.onTransitionAdvance((p) => advances.push(p));
+    engine.onEnded((p) => endeds.push(p));
+
+    expect(engine.beginTransition(plan(4), "/a.flac")).toBe(true);
+    await flushFadeAnchor();
+    expect(advances).toEqual(["/b.flac"]); // the one arm-time advance
+    await advanceWorld(2000, () => {
+      if (engine.transitioning) assertEqualPowerInvariant();
+    });
+
+    await engine.play(track("/z.flac")); // the shell's step() on user skip
+
+    // Z sounds on deck 1 (the old outgoing element, src-swapped);
+    // deck 0 (the fade's incoming) retired as "previous".
+    expect(engine.transitioning).toBe(false); // no stuck flag
+    expect(audios.length).toBe(2); // no third source exists at all
+    expect(audios[1].src).toBe("asset:///z.flac");
+    expect(audibleDecks()).toEqual([1]); // Z alone
+    expect(gains[1].gain.valueAt(ctxs[0].currentTime)).toBe(1); // at unity
+
+    await advanceWorld(5000, () => {
+      expect(engine.transitioning).toBe(false);
+      expect(audibleDecks()).toEqual([1]); // never zero, never two
+      const t = ctxs[0].currentTime;
+      // No residual automation: valueAt equals the static value on
+      // BOTH old gains — a curve still mid-flight would diverge.
+      expect(gains[0].gain.valueAt(t)).toBe(gains[0].gain.value);
+      expect(gains[1].gain.valueAt(t)).toBe(gains[1].gain.value);
+      expect(gains[1].gain.valueAt(t)).toBe(1);
+    });
+    // No callback after the skip may advance the queue past Z.
+    expect(advances).toEqual(["/b.flac"]);
+    expect(endeds).toEqual([]);
+  });
+});
+
+describe("XF-7 — togglePause landing on the fade's terminal sample", () => {
+  // Derivation: pause arrives in the same sub-step as the finalize
+  // timer's expiry (~3950ms of a 4s fade). Two legal serializations —
+  // pause-after-completion (timer won: transition already finalized,
+  // togglePause just pauses B) and pause-before (round-1 fix:
+  // togglePause finalizes first, then pauses). Both converge on the
+  // same end state: B paused at full gain, A retired, world silent.
+  // The test probes which one ran (at 3950ms the 4000ms timer has not
+  // fired, so pause-before is the deterministic choice), then asserts
+  // the shared end state, the silent paused window (no callback beyond
+  // the arm-time advance), and a one-sub-step resume at gain² ≈ 1.
+  // Harness note: A parks at 294 so the 4s plan is unclamped and the
+  // terminal sample really sits at ~4000ms.
+  it("pause at the terminal sample lands silent; resume restores one deck at unity", async () => {
+    const engine = await createEngineWithAB();
+    audios[1].currentTime = 294;
+    const advances: string[] = [];
+    engine.onTransitionAdvance((p) => advances.push(p));
+
+    expect(engine.beginTransition(plan(4), "/a.flac")).toBe(true);
+    await flushFadeAnchor();
+    await advanceWorld(3950, () => {
+      if (engine.transitioning) assertEqualPowerInvariant();
+    });
+
+    // Probe the serialization the engine took.
+    const finalizedBeforePause = !engine.transitioning;
+    expect(finalizedBeforePause).toBe(false); // pause-before path
+    engine.togglePause();
+
+    expect(engine.transitioning).toBe(false); // not stuck while paused
+    expect(audios[0].paused).toBe(true); // incoming paused...
+    expect(gains[0].gain.valueAt(ctxs[0].currentTime)).toBe(1); // ...at unity
+    expect(audios[1].paused).toBe(true); // A not sounding through the pause
+    expect(audios[1].src).toBe(""); // retired, not parked
+
+    // The fade window's remainder plus a paused stretch: silent, the
+    // original timer slot passes inertly, no further advances.
+    await advanceWorld(1100, () => {
+      expect(engine.transitioning).toBe(false);
+      expect(audios[0].paused).toBe(true);
+      expect(audios[1].paused).toBe(true);
+      expect(playingLoudness()).toBe(0);
+    });
+    expect(advances).toEqual(["/b.flac"]); // only the arm-time advance
+
+    engine.togglePause(); // resume within +2000ms
+    await advanceWorld(50, () => {
+      // Within one sub-step: exactly one audible deck at gain² ≈ 1 —
+      // no half-gain relic, no loudness jump beyond pause→unity.
+      expect(audibleDecks()).toEqual([0]);
+      expect(playingLoudness()).toBeCloseTo(1, 2);
+    });
+    await advanceWorld(850, () => {
+      expect(audibleDecks()).toEqual([0]);
+      expect(playingLoudness()).toBeCloseTo(1, 2);
+    });
+    expect(advances).toEqual(["/b.flac"]);
+  });
+});
+
+describe("XF-8 — outgoing deck with non-finite duration", () => {
+  // Derivation: a live stream (duration = Infinity) or missing metadata
+  // (NaN) makes `remaining` non-finite. Engine reading: the end-window
+  // check is `Number.isFinite(remaining) && remaining > durationSec + 3`
+  // — non-finite remaining short-circuits the check to "pass", so the
+  // plan is ACCEPTED (not rejected!), and the round-1 clamp also guards
+  // with Number.isFinite, leaving the full 8s duration. Adjudicated:
+  // acceptance is fine as long as nothing non-finite reaches a gain
+  // curve, I1 holds throughout, the wall-clock timer finalizes (the
+  // outgoing deck never fires "ended" — its duration is unreachable),
+  // A is hard-stopped afterward (paused, src removed — not left rolling
+  // silently), and exactly one advance fires.
+  const armWithOutgoingDuration = async (duration: number) => {
+    const engine = await createFreshEngine();
+    await engine.play(track("/a.flac"));
+    engine.preloadNext(track("/b.flac"));
+    audios[1].duration = duration;
+    audios[1].currentTime = 42;
+    return engine;
+  };
+
+  for (const [label, duration] of [
+    ["Infinity", Infinity],
+    ["NaN (metadata never loaded)", Number.NaN],
+  ] as const) {
+    it(`duration = ${label}: finite gains, timer-driven finalize, A hard-stopped`, async () => {
+      const engine = await armWithOutgoingDuration(duration);
+      const advances: string[] = [];
+      const endeds: Array<string | null> = [];
+      engine.onTransitionAdvance((p) => advances.push(p));
+      engine.onEnded((p) => endeds.push(p));
+
+      expect(engine.beginTransition(plan(8), "/a.flac")).toBe(true);
+      await flushFadeAnchor();
+
+      // Nothing non-finite reached the scheduled automation itself.
+      for (const g of [gains[0], gains[1]]) {
+        expect(g.gain.setValueCurveAtTime).toHaveBeenCalledTimes(1);
+        const curve = g.gain.setValueCurveAtTime.mock.calls[0][0];
+        expect(curve.every((v) => Number.isFinite(v))).toBe(true);
+      }
+
+      await advanceWorld(8500, () => {
+        const t = ctxs[0].currentTime;
+        expect(Number.isFinite(gains[0].gain.valueAt(t))).toBe(true);
+        expect(Number.isFinite(gains[1].gain.valueAt(t))).toBe(true);
+        if (engine.transitioning) assertEqualPowerInvariant();
+      });
+
+      // The wall-clock timer finalized: A hard-stopped, not left
+      // rolling silently on the idle deck.
+      expect(engine.transitioning).toBe(false);
+      expect(audios[1].paused).toBe(true);
+      expect(audios[1].src).toBe("");
+      expect(audibleDecks()).toEqual([0]);
+      expect(gains[0].gain.valueAt(ctxs[0].currentTime)).toBeCloseTo(1, 3);
+      expect(advances).toEqual(["/b.flac"]); // exactly one advance
+      expect(endeds).toEqual([]);
+    });
+  }
+});
+
+describe("XF-10 — beginTransition while playback is paused", () => {
+  // Derivation: the plan's premise is "this playback is ending NOW" —
+  // a paused deck is not ending. Engine reading: beginTransition checks
+  // `if (from.audio.paused) return false` before touching anything, so
+  // rejection with zero side effects is expected: A frozen at its
+  // position, B parked with src set and not playing, no callbacks, no
+  // queued/deferred transition firing later on its own. Resume must
+  // restore the premise: A plays on, and the same arm now returns true.
+  it("rejects with zero side effects; after resume the same arm succeeds", async () => {
+    const engine = await createEngineWithAB();
+    const advances: string[] = [];
+    const endeds: Array<string | null> = [];
+    engine.onTransitionAdvance((p) => advances.push(p));
+    engine.onEnded((p) => endeds.push(p));
+
+    engine.togglePause(); // A paused in its end window
+    expect(audios[1].paused).toBe(true);
+
+    expect(engine.beginTransition(plan(4), "/a.flac")).toBe(false);
+
+    expect(engine.transitioning).toBe(false);
+    await advanceWorld(2000, () => {
+      // No deck state change, and no deferred transition fires later.
+      expect(engine.transitioning).toBe(false);
+      expect(audios[1].paused).toBe(true);
+      expect(audios[1].currentTime).toBe(297); // A frozen at its position
+      expect(audios[0].paused).toBe(true);
+      expect(audios[0].currentTime).toBe(0);
+      expect(audios[0].src).toBe("asset:///b.flac"); // B still parked
+    });
+    expect(advances).toEqual([]);
+    expect(endeds).toEqual([]);
+
+    engine.togglePause(); // resume: normal life continues
+    await advanceWorld(500);
+    expect(audios[1].paused).toBe(false);
+    expect(audios[1].currentTime).toBeCloseTo(297.5, 3);
+
+    // The premise holds again: a re-arm now succeeds.
+    expect(engine.beginTransition(plan(4), "/a.flac")).toBe(true);
+  });
+});
