@@ -75,6 +75,17 @@ export function planTransition(
   if (!outgoingTail || !incomingHead) {
     return { kind: "plain", durationSec: requestedSec, ...equalPower };
   }
+  // Corrupt-anchor guard (silver DJ-1/2/3/4, gold-adjudicated): a bpm
+  // that is zero, negative, NaN, or infinite is a failed analysis, not
+  // a mixable grid. Unguarded, the fold loop diverges (0, ±Infinity)
+  // or — worse — NaN slips PAST every comparison and ships an all-NaN
+  // beatmatched plan to the engine. Positive-finite or plain fade.
+  const gridsUsable =
+    Number.isFinite(outgoingTail.bpm) && outgoingTail.bpm > 0 &&
+    Number.isFinite(incomingHead.bpm) && incomingHead.bpm > 0;
+  if (!gridsUsable) {
+    return { kind: "plain", durationSec: requestedSec, ...equalPower };
+  }
   const ratio = foldedRatio(outgoingTail.bpm, incomingHead.bpm);
   if (Math.abs(ratio - 1) > MAX_RATE_STRETCH) {
     return { kind: "plain", durationSec: requestedSec, ...equalPower };

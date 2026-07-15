@@ -23,49 +23,50 @@ describe("silver: degenerate BPM anchors (DJ-1..DJ-4)", () => {
   // loop (`while (ratio > 1.5) ratio /= 2; while (ratio < 0.66)
   // ratio *= 2`) has no guard against non-finite ratios.
 
-  // PENDING GOLD ADJUDICATION (red on the current engine):
-  // nontermination — outgoing bpm 0 gives ratio = 128/0 = Infinity;
+  // Gold-adjudicated 2026-07-15, fixed by the positive-finite anchor
+  // guard. Was: nontermination — outgoing bpm 0 gives ratio = 128/0 = Infinity;
   // Infinity / 2 === Infinity, so `while (ratio > 1.5)` never exits.
   // Verified by reading the source, not by running it.
-  it.skip("DJ-1: outgoing bpm 0 falls back to a plain finite fade", () => {
+  it("DJ-1: outgoing bpm 0 falls back to a plain finite fade", () => {
     const plan = planTransition(point(0), point(128), 8);
     expect(plan.kind).toBe("plain");
     expect(plan.durationSec).toBe(8);
     expect(Number.isFinite(plan.durationSec)).toBe(true);
   });
 
-  // PENDING GOLD ADJUDICATION (red on the current engine):
-  // nontermination — incoming bpm 0 gives ratio = 0/128 = 0;
+  // Gold-adjudicated 2026-07-15, fixed by the positive-finite anchor
+  // guard. Was: nontermination — incoming bpm 0 gives ratio = 0/128 = 0;
   // 0 * 2 === 0, so `while (ratio < 0.66)` never exits.
   // Verified by reading the source, not by running it.
-  it.skip("DJ-2: incoming bpm 0 falls back to a plain finite fade", () => {
+  it("DJ-2: incoming bpm 0 falls back to a plain finite fade", () => {
     const plan = planTransition(point(128), point(0), 8);
     expect(plan.kind).toBe("plain");
     expect(plan.durationSec).toBe(8);
     expect(Number.isFinite(plan.durationSec)).toBe(true);
   });
 
-  // PENDING GOLD ADJUDICATION (red on the current engine): NaN bpm
+  // Gold-adjudicated 2026-07-15, fixed by the positive-finite anchor
+  // guard. Was: NaN bpm
   // gives ratio = NaN; both fold-loop comparisons are false so the
   // loop exits, but |NaN - 1| > 0.08 is ALSO false, so the corrupt
   // pair is ACCEPTED as beatmatched: durationSec NaN (Math.max(1,
   // NaN) is NaN), rateTo NaN, rateFrom NaN, startOffsetSec NaN — a
   // fully NaN-poisoned plan handed to the playback engine. Spec
   // expects the corrupt anchor to be rejected to a plain fade.
-  it.skip("DJ-3: NaN bpm falls back to plain with no NaN anywhere", () => {
+  it("DJ-3: NaN bpm falls back to plain with no NaN anywhere", () => {
     const plan = planTransition(point(NaN), point(128), 8);
     expect(plan.kind).toBe("plain");
     expect(plan.durationSec).toBe(8);
     expect(Number.isNaN(plan.durationSec)).toBe(false);
   });
 
-  // PENDING GOLD ADJUDICATION (red on the current engine):
-  // nontermination — bpm -120 vs 120 gives ratio = -1 < 0.66; the
+  // Gold-adjudicated 2026-07-15, fixed by the positive-finite anchor
+  // guard. Was: nontermination — bpm -120 vs 120 gives ratio = -1 < 0.66; the
   // doubling loop drives it -2, -4, ... toward -Infinity, and
   // -Infinity * 2 === -Infinity stays < 0.66, so `while (ratio <
   // 0.66)` never exits. Verified by reading the source, not by
   // running it.
-  it.skip("DJ-4: negative bpm falls back to a plain finite fade", () => {
+  it("DJ-4: negative bpm falls back to a plain finite fade", () => {
     const plan = planTransition(point(-120), point(120), 8);
     expect(plan.kind).toBe("plain");
     expect(plan.durationSec).toBe(8);
