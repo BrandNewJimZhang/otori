@@ -716,6 +716,14 @@ tbody tr:hover .art-overlay-play {
   font-style: italic;
 }
 
+/* User-stated tempo (the trust tier above detection): solid, not hedged,
+   tinted so a manual value reads as a verdict the user owns. */
+.col-bpm.manual-bpm {
+  color: var(--accent);
+  font-style: normal;
+  opacity: 1;
+}
+
 .col-format {
   width: 92px;
   color: var(--text-dim);
@@ -2205,6 +2213,33 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 .inspector-analysis dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+/* Manual BPM override input — an inline editable that writes a manual
+   verdict (the trust tier above detection). Stays compact inside the
+   analysis grid; the Set button appears only while editing. */
+.inspector-bpm-input {
+  width: 5.5em;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+}
+.inspector-bpm-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.inspector-bpm-save {
+  margin-left: 4px;
+  padding: 0 6px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--bg);
+  cursor: pointer;
 }
 
 /* Lyrics section (design r2): collapsed one-line summary, expands to

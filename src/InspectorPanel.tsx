@@ -12,6 +12,7 @@ import {
   getLyricsRaw,
   getTagProvenance,
   removeArtwork,
+  setBpmManual,
   setLyricsRaw,
   setTags,
   type ArtworkInfo,
@@ -72,6 +73,11 @@ export function InspectorPanel({ tracks, onClose, onSaved, onNotice, onError }: 
   const [lyricsDraft, setLyricsDraft] = useState<string | null>(null);
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [lyricsSaving, setLyricsSaving] = useState(false);
+  // Manual BPM override editor: draft holds the edited text (null =
+  // untouched); committing calls setBpmManual. The detector stays the
+  // default authority — this is the escape hatch when it's wrong.
+  const [bpmDraft, setBpmDraft] = useState<string | null>(null);
+  const [bpmSaving, setBpmSaving] = useState(false);
   // Selection identity: switching rows discards unsaved edits (the
   // inputs are previews of the selection, not a persistent form).
   const selectionKey = tracks.map((t) => t.id).join(",");
@@ -79,6 +85,7 @@ export function InspectorPanel({ tracks, onClose, onSaved, onNotice, onError }: 
     setEdits(noEdits);
     setLyricsDraft(null);
     setLyricsOpen(false);
+    setBpmDraft(null);
   }, [selectionKey]);
 
   // Artwork + provenance + lyrics are single-track affordances; batch
@@ -117,6 +124,38 @@ export function InspectorPanel({ tracks, onClose, onSaved, onNotice, onError }: 
       onError(String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Parse a BPM draft into (floor, ceiling). Accepts "120", "120.5",
+  // and "100–180" / "100-180" ranges. null = not a number; an empty
+  // string = clear intent (the caller rejects it — manual needs a value).
+  function parseBpmDraft(
+    text: string,
+  ): { bpm: number; bpmMax: number | null } | null {
+    const [lo, hi] = text.split(/[–-]/);
+    const bpm = Number(lo);
+    if (!Number.isFinite(bpm)) return null;
+    const bpmMax = hi != null ? Number(hi) : null;
+    if (hi != null && !Number.isFinite(bpmMax)) return null;
+    return { bpm, bpmMax };
+  }
+
+  async function saveBpm() {
+    if (!single || bpmDraft == null || bpmSaving) return;
+    const parsed = parseBpmDraft(bpmDraft.trim());
+    if (!parsed) {
+      onError("BPM must be a number or a low–high range");
+      return;
+    }
+    setBpmSaving(true);
+    try {
+      await setBpmManual(single.id, parsed.bpm, parsed.bpmMax);
+      setBpmDraft(null);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBpmSaving(false);
     }
   }
 
@@ -321,15 +360,56 @@ export function InspectorPanel({ tracks, onClose, onSaved, onNotice, onError }: 
 
       {single && (
         <dl className="inspector-analysis">
-          <dt>BPM</dt>
+          <dt>
+            BPM
+            {single.bpm_source === "manual" && (
+              <span className="prov-badge prov-human" data-tip="User-stated; bulk reanalyze keeps it">
+                M
+              </span>
+            )}
+          </dt>
           <dd>
-            {single.bpm == null
-              ? single.mix_analyzed
-                ? "beatless"
-                : "pending"
-              : single.bpm_max != null
-                ? `${Math.round(single.bpm)}–${Math.round(single.bpm_max)}`
-                : `${Math.round(single.bpm)}`}
+            {/* Editing writes a manual verdict (the trust tier above
+                detection): shown value becomes the draft, Enter commits,
+                Esc reverts. The detector stays the default authority —
+                this is the escape hatch when it's wrong. */}
+            <input
+              className="inspector-bpm-input"
+              type="text"
+              inputMode="decimal"
+              value={
+                bpmDraft ??
+                (single.bpm == null
+                  ? ""
+                  : single.bpm_max != null
+                    ? `${single.bpm}–${single.bpm_max}`
+                    : `${single.bpm}`)
+              }
+              placeholder={
+                single.bpm == null
+                  ? single.mix_analyzed
+                    ? "beatless"
+                    : "pending"
+                  : ""
+              }
+              onChange={(e) => setBpmDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void saveBpm();
+                else if (e.key === "Escape" && bpmDraft != null) {
+                  e.stopPropagation();
+                  setBpmDraft(null);
+                }
+              }}
+            />
+            {bpmDraft != null && (
+              <button
+                className="inspector-bpm-save"
+                onClick={() => void saveBpm()}
+                disabled={bpmSaving}
+              >
+                {bpmSaving ? "…" : "Set"}
+              </button>
+            )}
           </dd>
           <dt>Mix anchors</dt>
           <dd>

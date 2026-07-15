@@ -122,6 +122,20 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Record a user-stated BPM as a manual verdict (the trust tier
+    /// above detection: written directly, never shaky, skipped by bulk
+    /// reanalyze). Use when the detector is wrong and you know better.
+    SetBpm {
+        path: PathBuf,
+        /// Tempo, or the range floor for variable-tempo tracks
+        #[arg(long)]
+        bpm: f64,
+        /// Range ceiling for variable-tempo (soflan) tracks
+        #[arg(long)]
+        bpm_max: Option<f64>,
+        #[arg(long)]
+        json: bool,
+    },
     /// List tracks whose tempo would benefit from an external hint
     /// (no hint yet; blank or low-confidence detection)
     HintCandidates {
@@ -678,6 +692,35 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             } else {
                 println!("BPM hint saved: {bpm}{} (provider:vocadb); detector verifies on next sweep",
                     hit.bpm_max.map(|m| format!("\u{2013}{m}")).unwrap_or_default());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::SetBpm { path, bpm, bpm_max, json } => {
+            let conn = open_library(cli.db.clone())?;
+            let path_str = path.to_string_lossy();
+            let track_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM tracks WHERE path = ?1",
+                    [path_str.as_ref()],
+                    |r| r.get(0),
+                )
+                .map_err(|_| CliError::bad_input("track is not in the library index (scan first)"))?;
+            otori_core::analysis::set_bpm_manual(&conn, track_id, bpm, bpm_max)
+                .map_err(|e| CliError::bad_input(e.to_string()))?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "applied": true, "bpm": bpm, "bpm_max": bpm_max,
+                        "source": "manual",
+                        "note": "manual verdict; bulk reanalyze keeps it, reanalyze selected overrides",
+                    })
+                );
+            } else {
+                println!(
+                    "manual BPM set: {bpm}{}",
+                    bpm_max.map(|m| format!("\u{2013}{m}")).unwrap_or_default()
+                );
             }
             Ok(ExitCode::SUCCESS)
         }

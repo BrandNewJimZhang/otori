@@ -125,6 +125,23 @@ export interface PendingTrack {
   hint_bpm_max: number | null;
 }
 
+/** Record a user-stated BPM as a manual verdict — the trust tier above
+    detection. Written directly, never shaky, kept by bulk reanalyze
+    (only "reanalyze selected" overrides it). Emits `library-changed`
+    so the table refreshes. `bpmMax` is the range ceiling for
+    variable-tempo (soflan) tracks. */
+export function setBpmManual(
+  trackId: number,
+  bpm: number,
+  bpmMax: number | null = null,
+): Promise<void> {
+  return invoke<void>("set_bpm_manual", {
+    trackId,
+    bpm,
+    bpmMax,
+  });
+}
+
 /** Tracks with analysis missing (index-side worklist for the sweeper). */
 export function listAnalysisPending(): Promise<PendingTrack[]> {
   return invoke<PendingTrack[]>("list_analysis_pending");

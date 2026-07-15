@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 /// Bumped on every schema change. `open` refuses newer versions (fail
 /// fast: a newer Ōtori wrote that library) and migrates older ones.
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 
 const SCHEMA: &str = r#"
 CREATE TABLE tracks (
@@ -30,7 +30,7 @@ CREATE TABLE tracks (
     bpm_max      REAL,             -- range ceiling when tempo varies (soflan); NULL = steady
     bpm_confidence REAL,           -- 0..1 detector confidence
     bpm_source   TEXT              -- how bpm was produced
-                 CHECK (bpm_source IN ('detected', 'detected+hint') OR bpm_source IS NULL),
+                 CHECK (bpm_source IN ('detected', 'detected+hint', 'manual') OR bpm_source IS NULL),
     bpm_analyzed_at TEXT,          -- set once analysis ran (bpm NULL = beatless)
     analysis_model  TEXT,          -- which beat model produced the verdict (model switch reopens foreign-model rows)
     bpm_hint     REAL,             -- external anchor (tag/provider); analysis input, not output
@@ -372,6 +372,19 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
         // active model, and a model switch re-runs them (ReopenScope::Model).
         conn.execute_batch("ALTER TABLE tracks ADD COLUMN analysis_model TEXT;")?;
         conn.pragma_update(None, "user_version", 14)?;
+    }
+    if (1..=14).contains(&version) {
+        // v15: bpm_source grows 'manual' for user-stated BPM overrides
+        // (the trust tier above detection). SQLite cannot relax a column
+        // CHECK in place; drop + re-add (v8 precedent). Existing values
+        // are all 'detected'/'detected+hint'/NULL, so no data rewrite.
+        conn.execute_batch(
+            "ALTER TABLE tracks DROP COLUMN bpm_source;
+             ALTER TABLE tracks ADD COLUMN bpm_source TEXT
+                 CHECK (bpm_source IN ('detected', 'detected+hint', 'manual')
+                        OR bpm_source IS NULL);",
+        )?;
+        conn.pragma_update(None, "user_version", 15)?;
     }
     Ok(conn)
 }

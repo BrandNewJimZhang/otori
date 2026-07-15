@@ -380,6 +380,126 @@ fn reopen_unknown_track_fails_fast() {
 
 // ---- model switch reanalysis (v14: analysis_model provenance) ----
 
+// ---- manual BPM override (the third trust tier: user verdict) ----
+
+/// A manual override writes bpm/bpm_max directly, stamps bpm_source =
+/// 'manual', marks the track analyzed, and is never shaky — the user
+/// said so, so the badge and the hint-candidate list must leave it
+/// alone. Range floor sanity (20..400, max >= floor) mirrors the hint
+/// gate so a typo can't poison mix planning.
+#[test]
+fn manual_override_stamps_source_and_is_never_shaky() {
+    let (conn, id) = seeded_library();
+    analysis::set_bpm_manual(&conn, id, 174.0, None).unwrap();
+    let (bpm, bpm_max, source, analyzed_at): (f64, Option<f64>, String, Option<String>) =
+        conn.query_row(
+            "SELECT bpm, bpm_max, bpm_source, bpm_analyzed_at FROM tracks WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert!((bpm - 174.0).abs() < 1e-9);
+    assert_eq!(bpm_max, None);
+    assert_eq!(source, "manual");
+    assert!(analyzed_at.is_some(), "a manual verdict is a verdict, not pending");
+    // The ONE shaky authority folds manual out: no warning, no hint fetch.
+    assert!(!analysis::is_shaky_bpm(Some(bpm), bpm_max, None, None, Some("manual")));
+    assert!(!analysis::is_shaky_bpm(Some(bpm), Some(200.0), None, None, Some("manual")));
+    // Without the manual flag the same value WOULD be shaky (no confidence).
+    assert!(analysis::is_shaky_bpm(Some(bpm), bpm_max, None, None, None));
+}
+
+#[test]
+fn manual_override_accepts_a_range() {
+    let (conn, id) = seeded_library();
+    analysis::set_bpm_manual(&conn, id, 100.0, Some(180.0)).unwrap();
+    let (bpm, bpm_max, source): (f64, Option<f64>, String) = conn
+        .query_row(
+            "SELECT bpm, bpm_max, bpm_source FROM tracks WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert!((bpm - 100.0).abs() < 1e-9);
+    assert_eq!(bpm_max, Some(180.0));
+    assert_eq!(source, "manual");
+}
+
+#[test]
+fn manual_override_rejects_out_of_range_and_inverted() {
+    let (conn, id) = seeded_library();
+    assert!(analysis::set_bpm_manual(&conn, id, 0.0, None).is_err());
+    assert!(analysis::set_bpm_manual(&conn, id, 4000.0, None).is_err());
+    // range ceiling below the floor is nonsense, not a tempo range
+    assert!(analysis::set_bpm_manual(&conn, id, 180.0, Some(100.0)).is_err());
+    assert!(analysis::set_bpm_manual(&conn, id, 180.0, Some(500.0)).is_err());
+}
+
+#[test]
+fn manual_override_on_unknown_track_fails_fast() {
+    let (conn, _) = seeded_library();
+    assert!(analysis::set_bpm_manual(&conn, 9999, 120.0, None).is_err());
+}
+
+/// Manual is the highest trust: it is not reaped by any bulk reopen
+/// (All / LowConfidence / Model). A whole-library reanalyze after an
+/// algorithm change must not silently discard a human's verdict.
+#[test]
+fn bulk_reopen_skips_manual_verdicts() {
+    let (conn, a, b) = seeded_pair();
+    analyzed(&conn, a, 0.9); // detected, small — bulk reopen requeues it
+    analysis::set_bpm_manual(&conn, b, 174.0, None).unwrap();
+    // Give b mix anchors too so it is fully analyzed (only its BPM is
+    // manual; the reopen we test below is on the bpm axis). Without
+    // anchors b would already sit in the worklist for the anchor axis.
+    analysis::set_mix_anchors(&conn, b, None, None, "small").unwrap();
+    assert!(analysis::list_analysis_pending(&conn).unwrap().is_empty());
+
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::All).unwrap();
+    assert_eq!(n, 1, "only the detected track reopens; manual is kept");
+    let pending = analysis::list_analysis_pending(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, a);
+
+    // LowConfidence and Model reopen likewise skip manual.
+    analysis::set_bpm(&conn, a, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.9 }), "small").unwrap();
+    analysis::set_mix_anchors(&conn, a, None, None, "small").unwrap();
+    assert_eq!(
+        analysis::reopen_analysis(&conn, analysis::ReopenScope::LowConfidence(0.99)).unwrap(),
+        1
+    );
+    // Re-analyze a so it leaves the worklist before the Model reopen,
+    // so the only pending track after Model is a again (manual b kept).
+    analysis::set_bpm(&conn, a, Some(analysis::DetectedBpm { bpm: 120.0, bpm_max: None, confidence: 0.9 }), "small").unwrap();
+    analysis::set_mix_anchors(&conn, a, None, None, "small").unwrap();
+    assert_eq!(
+        analysis::reopen_analysis(&conn, analysis::ReopenScope::Model("standard")).unwrap(),
+        1
+    );
+    // The manual track never re-entered the worklist.
+    assert_eq!(analysis::list_analysis_pending(&conn).unwrap().len(), 1);
+}
+
+/// The one deliberate override: "reanalyze selected" (Tracks scope) is a
+/// direct user gesture on those exact rows, so it DOES reopen a manual
+/// track the user picked — "reanalyze these" means "replace whatever's
+/// here, including my own earlier call." Every other entry keeps manual.
+#[test]
+fn reanalyze_selected_does_override_manual() {
+    let (conn, a, _b) = seeded_pair();
+    analysis::set_bpm_manual(&conn, a, 174.0, None).unwrap();
+    // Mix anchors too, so a is fully analyzed before the reopen — the
+    // pending list is empty solely because of the manual BPM verdict.
+    analysis::set_mix_anchors(&conn, a, None, None, "small").unwrap();
+    // Only a was manual+anchored; the other seeded track is untouched,
+    // so filter the worklist to a before asserting the reopen's effect.
+    assert!(analysis::list_analysis_pending(&conn).unwrap().iter().all(|t| t.id != a));
+
+    let n = analysis::reopen_analysis(&conn, analysis::ReopenScope::Tracks(&[a])).unwrap();
+    assert_eq!(n, 1);
+    assert!(analysis::list_analysis_pending(&conn).unwrap().iter().any(|t| t.id == a));
+}
+
 #[test]
 fn verdict_stamps_the_model_that_produced_it() {
     let (conn, id) = seeded_library();

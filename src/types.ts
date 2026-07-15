@@ -12,6 +12,10 @@ export interface TrackRow {
   bpm_max: number | null;
   bpm_confidence: number | null;
   bpm_hint: number | null;
+  /** How bpm was produced: 'detected' | 'detected+hint' | 'manual'
+      (null = pending). 'manual' is the user-stated tier above
+      detection — the UI marks it and bulk reanalyze keeps it. */
+  bpm_source: "detected" | "detected+hint" | "manual" | null;
   /** Whether the BPM cell should warn — computed by otori-core from
       the one shaky authority (analysis::is_shaky_bpm); the UI renders
       it without owning a cutoff. */

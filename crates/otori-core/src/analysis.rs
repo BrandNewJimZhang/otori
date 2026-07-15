@@ -9,6 +9,16 @@
 //! `bpm_source` records whether a hint anchored the verification
 //! ('detected+hint') or not ('detected').
 //!
+//! A manual override is the third tier, above detection: the user
+//! states the tempo directly, so `set_bpm_manual` writes bpm/bpm_max
+//! with source 'manual' and marks the track analyzed. Manual verdicts
+//! are never shaky (`is_shaky_bpm` folds them out) and are skipped by
+//! every bulk reopen — a whole-library reanalyze must not silently
+//! discard a human's verdict. The one deliberate override is
+//! ReanalyzeScope::Tracks ("reanalyze selected"): a direct gesture on
+//! those exact rows means "replace whatever's here, including my own
+//! earlier call."
+//!
 //! Besides the BPM column verdict, each pass records mix anchors:
 //! per-end local beat grids (bpm + a measured beat) for crossfade
 //! planning. Always detected — no external source knows beat phase —
@@ -41,12 +51,17 @@ pub fn is_shaky_detection(
 
 /// Should a BPM value warn in a listing? Shaky detections and
 /// unverified external hints do; a blank row has nothing to warn about.
+/// A manual verdict (the user said so) is never shaky.
 pub fn is_shaky_bpm(
     bpm: Option<f64>,
     bpm_max: Option<f64>,
     confidence: Option<f64>,
     hint: Option<f64>,
+    bpm_source: Option<&str>,
 ) -> bool {
+    if bpm_source == Some("manual") {
+        return false;
+    }
     if bpm.is_some() {
         return is_shaky_detection(bpm_max, confidence, SHAKY_CONFIDENCE);
     }
@@ -90,9 +105,16 @@ pub struct MixAnchor {
 pub fn list_analysis_pending(conn: &Connection) -> rusqlite::Result<Vec<PendingTrack>> {
     // Blank cells fill before stale re-verifications: a track with no
     // number at all hurts more than one showing a probably-right value.
+    // Manual BPM verdicts are never pending on the BPM axis — the user
+    // settled it — but mix anchors are still detector work, so a manual
+    // track lacking anchors still appears (needs_bpm false, anchors only).
     let mut stmt = conn.prepare(
-        "SELECT id, path, bpm_analyzed_at IS NULL, bpm_hint, bpm_hint_max FROM tracks
-         WHERE bpm_analyzed_at IS NULL OR mix_analyzed_at IS NULL
+        "SELECT id, path,
+                (bpm_analyzed_at IS NULL AND bpm_source IS DISTINCT FROM 'manual'),
+                bpm_hint, bpm_hint_max
+         FROM tracks
+         WHERE (bpm_analyzed_at IS NULL AND bpm_source IS DISTINCT FROM 'manual')
+            OR mix_analyzed_at IS NULL
          ORDER BY bpm IS NOT NULL, id",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -287,22 +309,68 @@ pub enum ReopenScope<'a> {
     Model(&'a str),
 }
 
+/// Record a manual (user-stated) BPM verdict. The third trust tier,
+/// above detection: writes bpm/bpm_max directly with source 'manual'
+/// and marks the track analyzed, so it leaves the pending worklist and
+/// never warns as shaky. Sanity-gated like a hint (20..400 BPM, range
+/// ceiling >= floor) so a typo can't poison mix planning. Fails fast on
+/// unknown ids. Bulk reopen scopes (All/LowConfidence/Model) skip
+/// manual rows; only ReopenScope::Tracks ("reanalyze selected")
+/// overrides one — see the trust-model note at the top of this module.
+pub fn set_bpm_manual(
+    conn: &Connection,
+    track_id: i64,
+    bpm: f64,
+    bpm_max: Option<f64>,
+) -> rusqlite::Result<()> {
+    let bpm_ok = (20.0..=400.0).contains(&bpm);
+    let range_ok = bpm_max.is_none_or(|max| max >= bpm && max <= 400.0);
+    if !bpm_ok || !range_ok {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "invalid manual bpm: bpm={bpm} bpm_max={bpm_max:?}"
+        )));
+    }
+    let updated = conn.execute(
+        "UPDATE tracks
+         SET bpm = ?1, bpm_max = ?2, bpm_confidence = NULL,
+             bpm_source = 'manual', bpm_analyzed_at = datetime('now')
+         WHERE id = ?3",
+        rusqlite::params![bpm, bpm_max, track_id],
+    )?;
+    if updated == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
 /// Reopen analysis for a scope: clears `bpm_analyzed_at` and
 /// `mix_analyzed_at` so the sweep re-verdicts. Detected values and
 /// hints stay in place until overwritten — a probably-right number
 /// beats a blank column mid-resweep (v10 migration precedent).
-/// Returns the number of tracks reopened. Fails fast when a `Tracks`
-/// scope names an unknown id.
+/// Manual verdicts (source 'manual') are skipped by every bulk scope
+/// (All/LowConfidence/Model): a whole-library reanalyze must not
+/// discard a human's verdict. `Tracks` is the one deliberate override
+/// — "reanalyze selected" replaces whatever's on those exact rows,
+/// manual included. Returns the number of tracks reopened. Fails fast
+/// when a `Tracks` scope names an unknown id.
 pub fn reopen_analysis(conn: &Connection, scope: ReopenScope) -> rusqlite::Result<usize> {
+    // Manual verdicts survive every bulk reopen; only a direct Tracks
+    // gesture on those exact rows overrides one (see trust model above).
+    const SKIP_MANUAL: &str = " AND bpm_source IS DISTINCT FROM 'manual'";
     let reopened = match scope {
         ReopenScope::All => conn.execute(
-            "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL",
+            &format!(
+                "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
+                 WHERE 1=1{SKIP_MANUAL}"
+            ),
             [],
         )?,
         ReopenScope::LowConfidence(threshold) => conn.execute(
-            "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
-             WHERE bpm_analyzed_at IS NOT NULL
-               AND (bpm IS NULL OR bpm_confidence < ?1)",
+            &format!(
+                "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
+                 WHERE bpm_analyzed_at IS NOT NULL
+                   AND (bpm IS NULL OR bpm_confidence < ?1){SKIP_MANUAL}"
+            ),
             [threshold],
         )?,
         ReopenScope::Tracks(ids) => {
@@ -320,13 +388,16 @@ pub fn reopen_analysis(conn: &Connection, scope: ReopenScope) -> rusqlite::Resul
             n
         }
         ReopenScope::Model(model) => conn.execute(
-            // Reopen verdicts whose recorded model differs from the
-            // active one (or is NULL — a pre-v14 library). Same-model
-            // verdicts stay: a small→standard→small round trip must not
-            // re-run the whole library on the way back.
-            "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
-             WHERE bpm_analyzed_at IS NOT NULL
-               AND (analysis_model IS NULL OR analysis_model != ?1)",
+            &format!(
+                // Reopen verdicts whose recorded model differs from the
+                // active one (or is NULL — a pre-v14 library). Same-model
+                // verdicts stay: a small→standard→small round trip must not
+                // re-run the whole library on the way back. Manual verdicts
+                // are kept regardless of model — they are not detector output.
+                "UPDATE tracks SET bpm_analyzed_at = NULL, mix_analyzed_at = NULL
+                 WHERE bpm_analyzed_at IS NOT NULL
+                   AND (analysis_model IS NULL OR analysis_model != ?1){SKIP_MANUAL}"
+            ),
             [model],
         )?,
     };

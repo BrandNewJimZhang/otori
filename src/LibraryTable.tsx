@@ -423,13 +423,15 @@ export function LibraryTable({
                     return (
                       <td
                         key={c.key}
-                        className={`col-bpm ${t.bpm_shaky ? "low-confidence" : ""}`}
+                        className={`col-bpm ${t.bpm_shaky ? "low-confidence" : ""} ${t.bpm_source === "manual" ? "manual-bpm" : ""}`}
                         title={
-                          t.bpm != null && t.bpm_confidence != null
-                            ? `confidence ${(t.bpm_confidence * 100).toFixed(0)}%`
-                            : t.bpm_hint != null
-                              ? "external value, not yet verified by analysis"
-                              : undefined
+                          t.bpm_source === "manual"
+                            ? "user-stated (manual); bulk reanalyze keeps it"
+                            : t.bpm != null && t.bpm_confidence != null
+                              ? `confidence ${(t.bpm_confidence * 100).toFixed(0)}%`
+                              : t.bpm_hint != null
+                                ? "external value, not yet verified by analysis"
+                                : undefined
                         }
                       >
                         {formatBpm(t)}

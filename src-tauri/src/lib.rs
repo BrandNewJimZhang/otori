@@ -346,6 +346,28 @@ fn reopen_analysis(
     analysis::reopen_analysis(&conn, scope).map_err(|e| e.to_string())
 }
 
+/// Record a user-stated BPM as a manual verdict — the trust tier above
+/// detection. Written directly with source 'manual', never shaky, and
+/// skipped by bulk reanalyze (only "reanalyze selected" overrides it).
+/// `(async)` mirrors the other index writers; the write itself is a
+/// single UPDATE, but keeping it off the main thread is uniform with
+/// `set_tags` and the analysis commands. Emits `library-changed` so the
+/// table's BPM cell and shaky badge refresh immediately.
+#[tauri::command(async)]
+fn set_bpm_manual(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Library>,
+    track_id: i64,
+    bpm: f64,
+    bpm_max: Option<f64>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    analysis::set_bpm_manual(&conn, track_id, bpm, bpm_max).map_err(|e| e.to_string())?;
+    drop(conn);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
 /// Set the active analysis model for the sweep. Mount-time sync from
 /// the user's pref (no reopen); the next `analyze_track` loads the
 /// engine under it. A bogus id fails fast — the pref layer should have
@@ -995,6 +1017,7 @@ pub fn run() {
             list_analysis_pending,
             analyze_track,
             reopen_analysis,
+            set_bpm_manual,
             set_analysis_model,
             switch_analysis_model,
             list_analysis_models,

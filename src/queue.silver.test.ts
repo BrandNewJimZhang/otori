@@ -41,6 +41,7 @@ function track(over: Partial<TrackRow> = {}): TrackRow {
     bpm_max: null,
     bpm_confidence: null,
     bpm_hint: null,
+    bpm_source: null,
     bpm_shaky: false,
     mix_head_bpm: null,
     mix_head_beat_sec: null,

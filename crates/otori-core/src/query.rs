@@ -55,7 +55,7 @@ pub struct TrackRow {
 pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
     let mut stmt = conn.prepare(
         "SELECT t.id, t.path, t.format, t.duration_secs, t.replaygain_db,
-                t.bpm, t.bpm_max, t.bpm_confidence, t.bpm_hint,
+                t.bpm, t.bpm_max, t.bpm_confidence, t.bpm_hint, t.bpm_source,
                 t.mix_head_bpm, t.mix_head_beat_sec, t.mix_tail_bpm, t.mix_tail_beat_sec,
                 t.mix_analyzed_at IS NOT NULL, t.lyrics_offset_ms,
                 t.first_seen, t.bpm_analyzed_at,
@@ -72,6 +72,7 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
         let bpm_max: Option<f64> = row.get(6)?;
         let bpm_confidence: Option<f64> = row.get(7)?;
         let bpm_hint: Option<f64> = row.get(8)?;
+        let bpm_source: Option<String> = row.get(9)?;
         Ok(TrackRow {
             id: row.get(0)?,
             path: row.get(1)?,
@@ -82,18 +83,24 @@ pub fn list_tracks(conn: &Connection) -> rusqlite::Result<Vec<TrackRow>> {
             bpm_max,
             bpm_confidence,
             bpm_hint,
-            bpm_shaky: analysis::is_shaky_bpm(bpm, bpm_max, bpm_confidence, bpm_hint),
-            mix_head_bpm: row.get(9)?,
-            mix_head_beat_sec: row.get(10)?,
-            mix_tail_bpm: row.get(11)?,
-            mix_tail_beat_sec: row.get(12)?,
-            mix_analyzed: row.get(13)?,
-            lyrics_offset_ms: row.get(14)?,
-            first_seen: row.get(15)?,
-            bpm_analyzed_at: row.get(16)?,
-            title: row.get(17)?,
-            artist: row.get(18)?,
-            album: row.get(19)?,
+            bpm_shaky: analysis::is_shaky_bpm(
+                bpm,
+                bpm_max,
+                bpm_confidence,
+                bpm_hint,
+                bpm_source.as_deref(),
+            ),
+            mix_head_bpm: row.get(10)?,
+            mix_head_beat_sec: row.get(11)?,
+            mix_tail_bpm: row.get(12)?,
+            mix_tail_beat_sec: row.get(13)?,
+            mix_analyzed: row.get(14)?,
+            lyrics_offset_ms: row.get(15)?,
+            first_seen: row.get(16)?,
+            bpm_analyzed_at: row.get(17)?,
+            title: row.get(18)?,
+            artist: row.get(19)?,
+            album: row.get(20)?,
         })
     })?;
     rows.collect()
