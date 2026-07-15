@@ -4,11 +4,12 @@
 // core:window:allow-start-dragging, dragging silently dies (core:default
 // does NOT include it; verified against the 2.11.5 acl manifest).
 
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const conf = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
-const capability = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8"));
+// Direct JSON imports (resolveJsonModule) — no node:fs, so the suite
+// stays free of @types/node globals that would shadow DOM timer types.
+import conf from "../src-tauri/tauri.conf.json";
+import capability from "../src-tauri/capabilities/default.json";
 
 describe("drag region ACL", () => {
   it("grants start-dragging when a window uses an Overlay title bar", () => {
